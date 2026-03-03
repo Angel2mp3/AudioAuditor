@@ -25,6 +25,9 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
+<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/cbdf1187-94c8-4213-99ca-b480b62c0ad0" />
+<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/6f9927bc-53c0-46ed-9a2f-1f272ce67634" />
+
 ## Features
 
 ### Core Analysis
@@ -343,3 +346,4 @@ This project is licensed under the [MIT License](LICENSE).
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
+
