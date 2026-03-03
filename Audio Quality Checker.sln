@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioQualityChecker", "AudioQualityChecker.csproj", "{F664182F-787F-2EA1-EAB2-17297842CD9E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F664182F-787F-2EA1-EAB2-17297842CD9E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F664182F-787F-2EA1-EAB2-17297842CD9E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F664182F-787F-2EA1-EAB2-17297842CD9E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F664182F-787F-2EA1-EAB2-17297842CD9E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {AD58D6D4-6B48-4B79-A743-5A3DF83A2465}
+	EndGlobalSection
+EndGlobal
