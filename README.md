@@ -25,6 +25,9 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
+<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/9a1a5be8-66e0-4a58-8947-f7d0a4501293" />
+<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/1573ce0a-82d7-46fa-b5c6-6f0e40525771" />
+
 ## Features
 
 ### Core Analysis
@@ -153,12 +156,6 @@ Each theme covers window backgrounds, panels, toolbars, headers, DataGrid rows (
 Blue Fire · Neon Pulse · Sunset Glow · Purple Haze · Minimal · Golden Wave · Emerald Wave · Blurple Wave · Crimson Wave · Brown Wave
 
 Each playbar theme has unique gradient colors and animation speed for the waveform visualization.
-
----
-
-## Screenshots
-
-> *Add screenshots here*
 
 ---
 
