@@ -5,7 +5,7 @@
 <h1 align="center">AudioAuditor</h1>
 
 <p align="center">
-  <b>Professional audio quality analysis, verification and playing for your music library</b>
+  <b>Professional audio quality analysis &amp; verification for your music library</b>
 </p>
 
 <p align="center">
@@ -25,9 +25,6 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
-<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/9a1a5be8-66e0-4a58-8947-f7d0a4501293" />
-<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/1573ce0a-82d7-46fa-b5c6-6f0e40525771" />
-
 ## Features
 
 ### Core Analysis
@@ -40,6 +37,19 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **BPM Detection** — Algorithmic beat detection with tag-based BPM fallback
 - **Replay Gain** — Extracts and displays Replay Gain metadata from tags
 - **Comprehensive Metadata** — Artist, title, sample rate, bit depth, channels, duration, file size, and bitrate (reported vs. actual)
+
+### AI Detection Details
+
+AudioAuditor's AI detection uses **verifiable evidence only** — no heuristics or guesswork:
+
+| Method | What It Checks |
+|--------|---------------|
+| **Metadata Tags** | ID3v2, Vorbis, APE, MP4 tags for AI service markers (TXXX frames, comments, encoder fields, free-form atoms) |
+| **Raw Byte Patterns** | First 64KB, middle 32KB, and last 64KB of the file for embedded identifiers |
+| **C2PA / Content Credentials** | JUMBF box markers, claim manifests, and provenance data |
+| **AI Watermarks** | AudioSeal, SynthID, and WavMark watermark identifiers |
+| **Confidence Scoring** | Strong markers (named services) score higher than generic phrases; minimum 0.4 threshold required |
+| **False-Positive Filtering** | Files produced by known DAWs (Audacity, FL Studio, Ableton, etc.) or encoders (LAME, FFmpeg, etc.) have weak generic markers filtered out |
 
 ### Supported Formats
 
@@ -119,19 +129,6 @@ All columns exported including: Status, Title, Artist, File Name, File Path, Sam
 - Both limits apply to file analysis and spectrogram batch export
 - Prevents CPU and memory spikes that could lag or freeze your system when processing large folders
 
-### AI Detection Details
-
-AudioAuditor's AI detection uses **verifiable evidence only**. However, that being said please do not use these finding to make acusations, defame, or harrass anyone as these are never 100% accurate.
-
-| Method | What It Checks |
-|--------|---------------|
-| **Metadata Tags** | ID3v2, Vorbis, APE, MP4 tags for AI service markers (TXXX frames, comments, encoder fields, free-form atoms) |
-| **Raw Byte Patterns** | First 64KB, middle 32KB, and last 64KB of the file for embedded identifiers |
-| **C2PA / Content Credentials** | JUMBF box markers, claim manifests, and provenance data |
-| **AI Watermarks** | AudioSeal, SynthID, and WavMark watermark identifiers |
-| **Confidence Scoring** | Strong markers (named services) score higher than generic phrases; minimum 0.4 threshold required |
-| **False-Positive Filtering** | Files produced by known DAWs (Audacity, FL Studio, Ableton, etc.) or encoders (LAME, FFmpeg, etc.) have weak generic markers filtered out |
-
 ### Theming
 
 10 carefully crafted themes with full UI consistency:
@@ -156,6 +153,12 @@ Each theme covers window backgrounds, panels, toolbars, headers, DataGrid rows (
 Blue Fire · Neon Pulse · Sunset Glow · Purple Haze · Minimal · Golden Wave · Emerald Wave · Blurple Wave · Crimson Wave · Brown Wave
 
 Each playbar theme has unique gradient colors and animation speed for the waveform visualization.
+
+---
+
+## Screenshots
+
+> *Add screenshots here*
 
 ---
 
@@ -228,8 +231,8 @@ AudioAuditor is designed with privacy in mind:
 | Theme preference | `theme.txt` | `%AppData%\AudioAuditor\` |
 | Settings & options | `options.txt` | `%AppData%\AudioAuditor\` |
 | Last.fm credentials | `session.dat` | `Documents\AudioAuditor\` |
+| Analyzed file data | Memory only | Not persisted — cleared on exit |
 | Audio queue | Memory only | Not persisted — cleared on exit |
-| Analyzed file data | Memory only | Only saved if user explicitly exports |
 | Spectrograms | Memory only | Only saved if user explicitly exports |
 
 Stored settings include: theme names, boolean flags, service slot names, custom URLs/icons, EQ gains, concurrency/memory limits. No sensitive data in this file. Last.fm session keys are stored separately in your Documents folder.
@@ -321,9 +324,6 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 |------------|-----|-------|
 | [**.NET 8**](https://github.com/dotnet/runtime) | Microsoft | Application runtime |
 | [**WPF**](https://github.com/dotnet/wpf) | Microsoft | UI framework — all windows, controls, data binding, styling, and rendering |
-
-## Known Bugs
-Some flac's tend to fail for reasons im unsure of.
 
 ### References
 
