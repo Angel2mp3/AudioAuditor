@@ -7,6 +7,17 @@ using NAudio.Vorbis;
 
 namespace AudioQualityChecker.Services
 {
+    /// <summary>
+    /// Channel mode for spectrogram rendering.
+    /// </summary>
+    public enum SpectrogramChannel
+    {
+        /// <summary>Mono downmix (L+R)/2</summary>
+        Mono,
+        /// <summary>Left minus Right difference</summary>
+        Difference
+    }
+
     public static class SpectrogramGenerator
     {
         private const int FftSize = 4096;
@@ -30,7 +41,12 @@ namespace AudioQualityChecker.Services
         /// Generates a spectrogram bitmap using sequential reading (no seeking).
         /// Returns a frozen BitmapSource safe for cross-thread access.
         /// </summary>
-        public static BitmapSource? Generate(string filePath, int width = 1200, int height = 400)
+        /// <param name="linearScale">If true, use linear frequency axis instead of logarithmic.</param>
+        /// <param name="channel">Channel mode (Mono or L-R Difference).</param>
+        /// <param name="endZoomSeconds">If > 0, only render the last N seconds of the file.</param>
+        public static BitmapSource? Generate(string filePath, int width = 1200, int height = 400,
+            bool linearScale = false, SpectrogramChannel channel = SpectrogramChannel.Mono,
+            double endZoomSeconds = 0)
         {
             try
             {
@@ -54,13 +70,25 @@ namespace AudioQualityChecker.Services
 
                 if (totalFrames < FftSize * 2) return null;
 
+                // If endZoomSeconds > 0, only render the tail portion
+                long startFrame = 0;
+                long rangeFrames = totalFrames;
+                if (endZoomSeconds > 0)
+                {
+                    long zoomFrames = (long)(endZoomSeconds * sampleRate);
+                    if (zoomFrames < totalFrames)
+                    {
+                        startFrame = totalFrames - zoomFrames;
+                        rangeFrames = zoomFrames;
+                    }
+                }
+
                 int columns = width;
                 int rows = height;
                 int spectrumSize = FftSize / 2;
 
-                // How to divide the file into 'columns' FFT frames
-                // We'll read sequentially and advance by stepFrames between FFTs
-                long stepFrames = Math.Max(1, (totalFrames - FftSize) / columns);
+                // How to divide the range into 'columns' FFT frames
+                long stepFrames = Math.Max(1, (rangeFrames - FftSize) / columns);
 
                 // Pre-compute Hanning window
                 double[] window = new double[FftSize];
@@ -76,9 +104,15 @@ namespace AudioQualityChecker.Services
 
                 long currentFrame = 0;
 
+                // Skip to startFrame if needed
+                if (startFrame > 0)
+                {
+                    SkipFrames(samples, channels, startFrame, ref currentFrame);
+                }
+
                 for (int col = 0; col < columns; col++)
                 {
-                    long targetFrame = col * stepFrames;
+                    long targetFrame = startFrame + col * stepFrames;
 
                     // Skip forward if needed (read and discard)
                     long framesToSkip = targetFrame - currentFrame;
@@ -99,16 +133,30 @@ namespace AudioQualityChecker.Services
                         continue;
                     }
 
-                    // Down-mix to mono, apply window, FFT
+                    // Mix samples according to channel mode, apply window, FFT
                     double[] real = new double[FftSize];
                     double[] imag = new double[FftSize];
 
-                    for (int i = 0; i < FftSize; i++)
+                    if (channel == SpectrogramChannel.Difference && channels >= 2)
                     {
-                        float sum = 0;
-                        for (int ch = 0; ch < channels; ch++)
-                            sum += frameBuf[i * channels + ch];
-                        real[i] = (sum / channels) * window[i];
+                        // L-R difference channel
+                        for (int i = 0; i < FftSize; i++)
+                        {
+                            float left = frameBuf[i * channels];
+                            float right = frameBuf[i * channels + 1];
+                            real[i] = (left - right) * window[i];
+                        }
+                    }
+                    else
+                    {
+                        // Mono downmix
+                        for (int i = 0; i < FftSize; i++)
+                        {
+                            float sum = 0;
+                            for (int ch = 0; ch < channels; ch++)
+                                sum += frameBuf[i * channels + ch];
+                            real[i] = (sum / channels) * window[i];
+                        }
                     }
 
                     FFT(real, imag);
@@ -128,39 +176,76 @@ namespace AudioQualityChecker.Services
                 if (globalMax < -150) return null;
 
                 // Render to pixels
-                double dynamicRange = 80; // dB
+                // Use 130 dB dynamic range to clearly show the noise floor
+                double dynamicRange = 130;
                 double minDb = globalMax - dynamicRange;
 
                 byte[] pixels = new byte[columns * rows * 3];
-                double logMin = Math.Log10(20.0);
-                double logMax = Math.Log10(sampleRate / 2.0);
-                double logRange = logMax - logMin;
 
-                for (int col = 0; col < columns; col++)
+                if (linearScale)
                 {
-                    var colData = specData[col];
+                    // Linear frequency scale: top = Nyquist, bottom = 0 Hz
+                    double nyquist = sampleRate / 2.0;
 
-                    for (int row = 0; row < rows; row++)
+                    for (int col = 0; col < columns; col++)
                     {
-                        // Log-frequency: top = high freq, bottom = low freq
-                        double t = 1.0 - (double)row / (rows - 1);
-                        double freq = Math.Pow(10, logMin + t * logRange);
+                        var colData = specData[col];
 
-                        // Map to FFT bin with linear interpolation
-                        double bin = freq / sampleRate * FftSize;
-                        int b0 = Math.Clamp((int)bin, 0, spectrumSize - 1);
-                        int b1 = Math.Clamp(b0 + 1, 0, spectrumSize - 1);
-                        double frac = bin - (int)bin;
+                        for (int row = 0; row < rows; row++)
+                        {
+                            double t = 1.0 - (double)row / (rows - 1);
+                            double freq = t * nyquist;
 
-                        double val = colData[b0] * (1.0 - frac) + colData[b1] * frac;
+                            // Map to FFT bin with linear interpolation
+                            double bin = freq / sampleRate * FftSize;
+                            int b0 = Math.Clamp((int)bin, 0, spectrumSize - 1);
+                            int b1 = Math.Clamp(b0 + 1, 0, spectrumSize - 1);
+                            double frac = bin - (int)bin;
 
-                        double norm = Math.Clamp((val - minDb) / dynamicRange, 0, 1);
-                        var (r, g, b) = MapColor(norm);
+                            double val = colData[b0] * (1.0 - frac) + colData[b1] * frac;
 
-                        int idx = (row * columns + col) * 3;
-                        pixels[idx] = r;
-                        pixels[idx + 1] = g;
-                        pixels[idx + 2] = b;
+                            double norm = Math.Clamp((val - minDb) / dynamicRange, 0, 1);
+                            var (r, g, b) = MapColor(norm);
+
+                            int idx = (row * columns + col) * 3;
+                            pixels[idx] = r;
+                            pixels[idx + 1] = g;
+                            pixels[idx + 2] = b;
+                        }
+                    }
+                }
+                else
+                {
+                    // Logarithmic frequency scale (original behavior)
+                    double logMin = Math.Log10(20.0);
+                    double logMax = Math.Log10(sampleRate / 2.0);
+                    double logRange = logMax - logMin;
+
+                    for (int col = 0; col < columns; col++)
+                    {
+                        var colData = specData[col];
+
+                        for (int row = 0; row < rows; row++)
+                        {
+                            double t = 1.0 - (double)row / (rows - 1);
+                            double freq = Math.Pow(10, logMin + t * logRange);
+
+                            // Map to FFT bin with linear interpolation
+                            double bin = freq / sampleRate * FftSize;
+                            int b0 = Math.Clamp((int)bin, 0, spectrumSize - 1);
+                            int b1 = Math.Clamp(b0 + 1, 0, spectrumSize - 1);
+                            double frac = bin - (int)bin;
+
+                            double val = colData[b0] * (1.0 - frac) + colData[b1] * frac;
+
+                            double norm = Math.Clamp((val - minDb) / dynamicRange, 0, 1);
+                            var (r, g, b) = MapColor(norm);
+
+                            int idx = (row * columns + col) * 3;
+                            pixels[idx] = r;
+                            pixels[idx + 1] = g;
+                            pixels[idx + 2] = b;
+                        }
                     }
                 }
 

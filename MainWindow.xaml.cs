@@ -80,6 +80,11 @@ namespace AudioQualityChecker
         private bool _visualizerMode;
         private bool _visualizerActive;
 
+        // Spectrogram options
+        private bool _spectrogramLinearScale;
+        private SpectrogramChannel _spectrogramChannel = SpectrogramChannel.Mono;
+        private bool _spectrogramEndZoom;
+
         // Integrations
         private readonly DiscordRichPresenceService _discord = new();
         private readonly LastFmService _lastFm = new();
@@ -125,6 +130,12 @@ namespace AudioQualityChecker
             // Restore visualizer mode
             _visualizerMode = ThemeManager.VisualizerMode;
             UpdateVisualizerToggleText();
+
+            // Restore spectrogram display preferences
+            _spectrogramLinearScale = ThemeManager.SpectrogramLinearScale;
+            _spectrogramChannel = ThemeManager.SpectrogramDifferenceChannel ? SpectrogramChannel.Difference : SpectrogramChannel.Mono;
+            UpdateSpectrogramScaleText();
+            UpdateSpectrogramChannelText();
 
             // Initialize equalizer UI
             InitializeEqualizerSliders();
@@ -473,11 +484,13 @@ namespace AudioQualityChecker
             int fake = _files.Count(f => f.Status == AudioStatus.Fake);
             int unknown = _files.Count(f => f.Status == AudioStatus.Unknown);
             int corrupt = _files.Count(f => f.Status == AudioStatus.Corrupt);
+            int optimized = _files.Count(f => f.Status == AudioStatus.Optimized);
             int mqa = _files.Count(f => f.IsMqa);
             int ai = _files.Count(f => f.IsAiGenerated);
+            string optimizedPart = optimized > 0 ? $", {optimized} optimized" : "";
             string mqaPart = mqa > 0 ? $", {mqa} MQA" : "";
             string aiPart = ai > 0 ? $", {ai} AI" : "";
-            StatusText.Text = $"{_files.Count} files — {valid} real, {fake} fake, {unknown} unknown, {corrupt} corrupted{mqaPart}{aiPart}";
+            StatusText.Text = $"{_files.Count} files — {valid} real, {fake} fake, {unknown} unknown, {corrupt} corrupted{optimizedPart}{mqaPart}{aiPart}";
         }
 
         // ═══════════════════════════════════════════
@@ -528,8 +541,14 @@ namespace AudioQualityChecker
                 {
                     if (_player.IsPlaying) StartVisualizer();
                 }
-                SpectrogramTitle.Text = BuildSpectrogramTitle(selectedFile);
-                _currentSpectrogramFile = selectedFile;
+                // Only update title if nothing is playing, or the selected file IS the playing file
+                if (!_player.IsPlaying && !_player.IsPaused ||
+                    _player.CurrentFile == null ||
+                    string.Equals(selectedFile.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
+                {
+                    SpectrogramTitle.Text = BuildSpectrogramTitle(selectedFile);
+                    _currentSpectrogramFile = selectedFile;
+                }
             }
             else
             {
@@ -545,7 +564,9 @@ namespace AudioQualityChecker
                 try
                 {
                     bitmap = await Task.Run(() =>
-                        SpectrogramGenerator.Generate(selectedFile.FilePath, 1200, 400), token);
+                        SpectrogramGenerator.Generate(selectedFile.FilePath, 1200, 400,
+                            _spectrogramLinearScale, _spectrogramChannel,
+                            _spectrogramEndZoom ? 10 : 0), token);
                 }
                 finally
                 {
@@ -559,12 +580,11 @@ namespace AudioQualityChecker
                     SpectrogramImage.Source = bitmap;
                     _currentSpectrogramFile = selectedFile;
 
-                    // In visualizer mode while playing, keep showing the currently playing song's info
-                    // instead of the one that was just clicked/selected
+                    // Only update title info if nothing is playing, or the selected file IS the playing file
+                    // This prevents confusion when clicking other songs while one is playing
                     bool showSelectedInTitle = true;
-                    if (_visualizerMode && (_player.IsPlaying || _player.IsPaused) && _player.CurrentFile != null)
+                    if ((_player.IsPlaying || _player.IsPaused) && _player.CurrentFile != null)
                     {
-                        // Only update title if the selected file IS the playing file
                         if (!string.Equals(selectedFile.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
                             showSelectedInTitle = false;
                     }
@@ -575,15 +595,27 @@ namespace AudioQualityChecker
                     }
 
                     int nyquist = selectedFile.SampleRate / 2;
-                    double logMin = Math.Log10(20.0);
-                    double logMax = Math.Log10(nyquist);
-                    double logRange = logMax - logMin;
 
-                    FreqLabelTop.Text = $"{nyquist:N0} Hz";
-                    FreqLabelUpperMid.Text = $"{(int)Math.Pow(10, logMin + 0.75 * logRange):N0} Hz";
-                    FreqLabelMid.Text = $"{(int)Math.Pow(10, logMin + 0.5 * logRange):N0} Hz";
-                    FreqLabelLowerMid.Text = $"{(int)Math.Pow(10, logMin + 0.25 * logRange):N0} Hz";
-                    FreqLabelBot.Text = "20 Hz";
+                    if (_spectrogramLinearScale)
+                    {
+                        FreqLabelTop.Text = $"{nyquist:N0} Hz";
+                        FreqLabelUpperMid.Text = $"{(int)(nyquist * 0.75):N0} Hz";
+                        FreqLabelMid.Text = $"{(int)(nyquist * 0.50):N0} Hz";
+                        FreqLabelLowerMid.Text = $"{(int)(nyquist * 0.25):N0} Hz";
+                        FreqLabelBot.Text = "0 Hz";
+                    }
+                    else
+                    {
+                        double logMin = Math.Log10(20.0);
+                        double logMax = Math.Log10(nyquist);
+                        double logRange = logMax - logMin;
+
+                        FreqLabelTop.Text = $"{nyquist:N0} Hz";
+                        FreqLabelUpperMid.Text = $"{(int)Math.Pow(10, logMin + 0.75 * logRange):N0} Hz";
+                        FreqLabelMid.Text = $"{(int)Math.Pow(10, logMin + 0.5 * logRange):N0} Hz";
+                        FreqLabelLowerMid.Text = $"{(int)Math.Pow(10, logMin + 0.25 * logRange):N0} Hz";
+                        FreqLabelBot.Text = "20 Hz";
+                    }
 
                     SpectrogramLoading.Visibility = Visibility.Collapsed;
                     SpectrogramPanel.Visibility = Visibility.Visible;
@@ -739,7 +771,7 @@ namespace AudioQualityChecker
         {
             if (ShuffleIcon != null)
             {
-                ShuffleIcon.Foreground = _shuffleMode
+                ShuffleIcon.Stroke = _shuffleMode
                     ? (System.Windows.Media.Brush)FindResource("AccentColor")
                     : (System.Windows.Media.Brush)FindResource("TextMuted");
             }
@@ -891,14 +923,16 @@ namespace AudioQualityChecker
             _player.Volume = (float)(VolumeSlider.Value / 100.0);
             if (VolumeLabel != null)
                 VolumeLabel.Text = $"{(int)VolumeSlider.Value}%";
-            if (VolumeIcon != null)
+            if (VolumeIconPath != null)
             {
                 if (VolumeSlider.Value <= 0)
-                    VolumeIcon.Text = "\uE74F"; // Muted icon
-                else if (VolumeSlider.Value < 50)
-                    VolumeIcon.Text = "\uE993"; // Low volume icon
+                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 12,5 L 15,8 M 15,5 L 12,8");
+                else if (VolumeSlider.Value < 34)
+                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,6 Q 12.5,8 11,10");
+                else if (VolumeSlider.Value < 67)
+                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11 M 13,3.5 Q 15.5,8 13,12.5");
                 else
-                    VolumeIcon.Text = "\uE767"; // Normal volume icon
+                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11 M 13,3 Q 16,8 13,13 M 15,1 Q 19,8 15,15");
             }
         }
 
@@ -1175,9 +1209,15 @@ namespace AudioQualityChecker
         private void UpdatePlayerUI()
         {
             if (_player.IsPlaying)
-                PlayPauseIcon.Text = "\uE769"; // Pause icon
+            {
+                PlayIcon.Visibility = Visibility.Collapsed;
+                PauseIcon.Visibility = Visibility.Visible;
+            }
             else
-                PlayPauseIcon.Text = "\uE768"; // Play icon
+            {
+                PlayIcon.Visibility = Visibility.Visible;
+                PauseIcon.Visibility = Visibility.Collapsed;
+            }
 
             PlayerFileText.Text = _player.CurrentFile != null
                 ? IOPath.GetFileName(_player.CurrentFile)
@@ -1525,12 +1565,22 @@ namespace AudioQualityChecker
         {
             string titlePrefix = _visualizerMode ? "Visualizer" : "Spectrogram";
             string statusDisplay = StatusDisplayText(file.Status);
-            string statusExtra = file.HasClipping ? " | CLIPPING DETECTED" : "";
+            string statusExtra = file.HasClipping ? " | CLIPPING DETECTED"
+                               : file.HasScaledClipping ? $" | SCALED CLIPPING ({file.MaxSampleLevelDb:F1} dB)"
+                               : "";
 
             var extras = new List<string>();
             if (file.Bpm > 0) extras.Add($"BPM: {file.Bpm}");
             if (file.IsMqa) extras.Add($"MQA: {file.MqaDisplay}");
             if (file.IsAiGenerated) extras.Add($"AI: {file.AiSource}");
+
+            // Spectrogram mode indicators
+            var modeIndicators = new List<string>();
+            if (_spectrogramChannel == SpectrogramChannel.Difference) modeIndicators.Add("L-R");
+            if (_spectrogramLinearScale) modeIndicators.Add("Linear");
+            if (_spectrogramEndZoom) modeIndicators.Add("End 10s");
+            if (modeIndicators.Count > 0) extras.Add(string.Join(", ", modeIndicators));
+
             string extraInfo = extras.Count > 0 ? "   |   " + string.Join("   |   ", extras) : "";
 
             return $"{titlePrefix}: {file.FileName}   |   " +
@@ -1910,7 +1960,8 @@ namespace AudioQualityChecker
         /// </summary>
         private BitmapSource? RenderSpectrogramWithLabels(AudioFileInfo file, int spectWidth, int spectHeight, BitmapSource? preGenerated = null)
         {
-            var rawBitmap = preGenerated ?? SpectrogramGenerator.Generate(file.FilePath, spectWidth, spectHeight);
+            var rawBitmap = preGenerated ?? SpectrogramGenerator.Generate(file.FilePath, spectWidth, spectHeight,
+                _spectrogramLinearScale, _spectrogramChannel, _spectrogramEndZoom ? 10 : 0);
             if (rawBitmap == null) return null;
 
             int leftMargin = 70;   // Hz labels
@@ -1939,17 +1990,31 @@ namespace AudioQualityChecker
                     13, Brushes.White, 96);
                 dc.DrawText(titleText, new System.Windows.Point(leftMargin + 4, 6));
 
-                // Hz labels (5 labels on log-frequency scale)
+                // Hz labels (5 labels)
                 int nyquist = file.SampleRate / 2;
-                double logMinF = Math.Log10(20.0);
-                double logMaxF = Math.Log10(nyquist);
-                double logRangeF = logMaxF - logMinF;
 
-                string topHz = $"{nyquist:N0} Hz";
-                string upperMidHz = $"{(int)Math.Pow(10, logMinF + 0.75 * logRangeF):N0} Hz";
-                string midHz = $"{(int)Math.Pow(10, logMinF + 0.5 * logRangeF):N0} Hz";
-                string lowerMidHz = $"{(int)Math.Pow(10, logMinF + 0.25 * logRangeF):N0} Hz";
-                string botHz = "20 Hz";
+                string topHz, upperMidHz, midHz, lowerMidHz, botHz;
+
+                if (_spectrogramLinearScale)
+                {
+                    topHz = $"{nyquist:N0} Hz";
+                    upperMidHz = $"{(int)(nyquist * 0.75):N0} Hz";
+                    midHz = $"{(int)(nyquist * 0.50):N0} Hz";
+                    lowerMidHz = $"{(int)(nyquist * 0.25):N0} Hz";
+                    botHz = "0 Hz";
+                }
+                else
+                {
+                    double logMinF = Math.Log10(20.0);
+                    double logMaxF = Math.Log10(nyquist);
+                    double logRangeF = logMaxF - logMinF;
+
+                    topHz = $"{nyquist:N0} Hz";
+                    upperMidHz = $"{(int)Math.Pow(10, logMinF + 0.75 * logRangeF):N0} Hz";
+                    midHz = $"{(int)Math.Pow(10, logMinF + 0.5 * logRangeF):N0} Hz";
+                    lowerMidHz = $"{(int)Math.Pow(10, logMinF + 0.25 * logRangeF):N0} Hz";
+                    botHz = "20 Hz";
+                }
 
                 var labelBrush = new SolidColorBrush(Color.FromRgb(180, 180, 180));
                 labelBrush.Freeze();
@@ -2039,7 +2104,9 @@ namespace AudioQualityChecker
 
                     // Generate spectrogram on background thread (CPU-heavy)
                     var rawBitmap = await Task.Run(() =>
-                        SpectrogramGenerator.Generate(fileRef.FilePath, 1800, 600));
+                        SpectrogramGenerator.Generate(fileRef.FilePath, 1800, 600,
+                            _spectrogramLinearScale, _spectrogramChannel,
+                            _spectrogramEndZoom ? 10 : 0));
 
                     if (rawBitmap != null)
                     {
@@ -2371,6 +2438,119 @@ namespace AudioQualityChecker
         {
             if (VisualizerToggleText != null)
                 VisualizerToggleText.Text = _visualizerMode ? "Spectrogram" : "Visualizer";
+        }
+
+        // ═══════════════════════════════════════════
+        //  Spectrogram Scale / Channel / End-Zoom
+        // ═══════════════════════════════════════════
+
+        private void SpectrogramScale_Click(object sender, RoutedEventArgs e)
+        {
+            _spectrogramLinearScale = !_spectrogramLinearScale;
+            ThemeManager.SpectrogramLinearScale = _spectrogramLinearScale;
+            ThemeManager.SavePlayOptions();
+            UpdateSpectrogramScaleText();
+            RefreshSpectrogram();
+        }
+
+        private void SpectrogramChannel_Click(object sender, RoutedEventArgs e)
+        {
+            _spectrogramChannel = _spectrogramChannel == SpectrogramChannel.Mono
+                ? SpectrogramChannel.Difference
+                : SpectrogramChannel.Mono;
+            ThemeManager.SpectrogramDifferenceChannel = _spectrogramChannel == SpectrogramChannel.Difference;
+            ThemeManager.SavePlayOptions();
+            UpdateSpectrogramChannelText();
+            RefreshSpectrogram();
+        }
+
+        private void JumpToEnd_Click(object sender, RoutedEventArgs e)
+        {
+            _spectrogramEndZoom = !_spectrogramEndZoom;
+            UpdateJumpToEndText();
+            RefreshSpectrogram();
+        }
+
+        private void UpdateSpectrogramScaleText()
+        {
+            if (SpectrogramScaleText != null)
+                SpectrogramScaleText.Text = _spectrogramLinearScale ? "Log" : "Linear";
+        }
+
+        private void UpdateSpectrogramChannelText()
+        {
+            if (SpectrogramChannelText != null)
+                SpectrogramChannelText.Text = _spectrogramChannel == SpectrogramChannel.Mono ? "L-R" : "Mono";
+        }
+
+        private void UpdateJumpToEndText()
+        {
+            if (JumpToEndText != null)
+                JumpToEndText.Text = _spectrogramEndZoom ? "Full" : "End";
+        }
+
+        /// <summary>
+        /// Re-generates and displays the spectrogram for the currently selected file
+        /// using the current display options (scale, channel, zoom).
+        /// </summary>
+        private async void RefreshSpectrogram()
+        {
+            if (_currentSpectrogramFile is not AudioFileInfo file) return;
+            if (file.Status == AudioStatus.Corrupt) return;
+
+            _spectrogramCts?.Cancel();
+            _spectrogramCts = new CancellationTokenSource();
+            var token = _spectrogramCts.Token;
+
+            try
+            {
+                await _spectrogramSemaphore.WaitAsync(token);
+                BitmapSource? bitmap;
+                try
+                {
+                    bitmap = await Task.Run(() =>
+                        SpectrogramGenerator.Generate(file.FilePath, 1200, 400,
+                            _spectrogramLinearScale, _spectrogramChannel,
+                            _spectrogramEndZoom ? 10 : 0), token);
+                }
+                finally
+                {
+                    _spectrogramSemaphore.Release();
+                }
+
+                if (token.IsCancellationRequested) return;
+
+                if (bitmap != null)
+                {
+                    SpectrogramImage.Source = bitmap;
+
+                    int nyquist = file.SampleRate / 2;
+                    if (_spectrogramLinearScale)
+                    {
+                        FreqLabelTop.Text = $"{nyquist:N0} Hz";
+                        FreqLabelUpperMid.Text = $"{(int)(nyquist * 0.75):N0} Hz";
+                        FreqLabelMid.Text = $"{(int)(nyquist * 0.50):N0} Hz";
+                        FreqLabelLowerMid.Text = $"{(int)(nyquist * 0.25):N0} Hz";
+                        FreqLabelBot.Text = "0 Hz";
+                    }
+                    else
+                    {
+                        double logMin = Math.Log10(20.0);
+                        double logMax = Math.Log10(nyquist);
+                        double logRange = logMax - logMin;
+
+                        FreqLabelTop.Text = $"{nyquist:N0} Hz";
+                        FreqLabelUpperMid.Text = $"{(int)Math.Pow(10, logMin + 0.75 * logRange):N0} Hz";
+                        FreqLabelMid.Text = $"{(int)Math.Pow(10, logMin + 0.5 * logRange):N0} Hz";
+                        FreqLabelLowerMid.Text = $"{(int)Math.Pow(10, logMin + 0.25 * logRange):N0} Hz";
+                        FreqLabelBot.Text = "20 Hz";
+                    }
+
+                    SpectrogramTitle.Text = BuildSpectrogramTitle(file);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch { }
         }
 
         private void StartVisualizer()
