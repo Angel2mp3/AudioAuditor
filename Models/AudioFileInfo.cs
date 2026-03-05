@@ -44,6 +44,10 @@ namespace AudioQualityChecker.Models
         public bool HasClipping { get; set; }
         public double ClippingPercentage { get; set; }
         public long ClippingSamples { get; set; }
+        public double MaxSampleLevel { get; set; } // 0.0 to 1.0 peak
+        public double MaxSampleLevelDb { get; set; } // peak in dB
+        public bool HasScaledClipping { get; set; } // clipping at reduced level
+        public double ScaledClippingPercentage { get; set; }
 
         // BPM, Replay Gain, Frequency
         public int Bpm { get; set; }
@@ -75,7 +79,15 @@ namespace AudioQualityChecker.Models
         public string ActualBitrateDisplay => ActualBitrate > 0 ? $"{ActualBitrate} kbps" : "-";
         public string EffectiveFrequencyDisplay => EffectiveFrequency > 0 ? $"{EffectiveFrequency:N0} Hz" : "-";
         public string ChannelsDisplay => Channels > 0 ? (Channels == 1 ? "Mono" : Channels == 2 ? "Stereo" : $"{Channels}ch") : "-";
-        public string ClippingDisplay => HasClipping ? $"YES ({ClippingPercentage:F2}%)" : "No";
+        public string ClippingDisplay
+        {
+            get
+            {
+                if (HasClipping) return $"YES ({ClippingPercentage:F2}%)";
+                if (HasScaledClipping) return $"SCALED ({MaxSampleLevelDb:F1} dB, {ScaledClippingPercentage:F2}%)";
+                return "No";
+            }
+        }
         public string BpmDisplay => Bpm > 0 ? $"{Bpm}" : "-";
         public string ReplayGainDisplay => HasReplayGain ? $"{ReplayGain:+0.00;-0.00;0.00} dB" : "-";
         public string FrequencyDisplay => Frequency > 0 ? $"{Frequency:N0} Hz" : "-";

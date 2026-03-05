@@ -197,6 +197,7 @@ namespace AudioQualityChecker.Services
             long clippingSamples = 0;
             long totalSamplesRead = 0;
             int validSegments = 0;
+            float maxAbsSample = 0f;
 
             long currentFrame = 0;
 
@@ -246,8 +247,10 @@ namespace AudioQualityChecker.Services
                     for (int ch = 0; ch < channels; ch++)
                     {
                         float s = readBuf[i * channels + ch];
+                        float absSample = Math.Abs(s);
                         sum += s;
-                        if (Math.Abs(s) >= ClippingThreshold) clippingSamples++;
+                        if (absSample >= ClippingThreshold) clippingSamples++;
+                        if (absSample > maxAbsSample) maxAbsSample = absSample;
                         totalSamplesRead++;
                     }
                     real[i] = (sum / channels) * window[i];
@@ -273,12 +276,61 @@ namespace AudioQualityChecker.Services
             for (int i = 0; i < spectrumSize; i++)
                 avgSpectrum[i] /= validSegments;
 
-            // Clipping
+            // Clipping analysis
             if (totalSamplesRead > 0)
             {
                 info.ClippingSamples = clippingSamples;
                 info.ClippingPercentage = (double)clippingSamples / totalSamplesRead * 100.0;
                 info.HasClipping = info.ClippingPercentage > 0.01;
+
+                // Track maximum sample level
+                info.MaxSampleLevel = maxAbsSample;
+                info.MaxSampleLevelDb = maxAbsSample > 1e-10 ? 20.0 * Math.Log10(maxAbsSample) : -200;
+
+                // Scaled-down clipping detection:
+                // If level is below 0 dBFS but samples are clustered at the peak
+                // (e.g., clipping happened then the whole file was scaled down),
+                // detect a "plateau" at the max level.
+                if (!info.HasClipping && maxAbsSample > 0.5f && maxAbsSample < ClippingThreshold)
+                {
+                    long scaledClipSamples = 0;
+                    // Threshold: within 0.01% of the peak (tight plateau)
+                    float scaledThreshold = maxAbsSample * 0.9999f;
+                    // Re-scan the counted samples via a second pass isn't practical,
+                    // but we already tracked per-segment. Use a ratio heuristic:
+                    // recount how many of the total are near the peak by re-reading.
+                    // For efficiency, use a quick scan of a portion of the file.
+                    try
+                    {
+                        var (disp2, samp2, wf2) = OpenAudioFile(filePath);
+                        using var _d2 = disp2;
+                        int ch2 = wf2.Channels;
+                        float[] scanBuf = new float[4096 * ch2];
+                        long scannedTotal = 0;
+                        // Scan up to 2M samples (quick)
+                        while (scannedTotal < 2_000_000)
+                        {
+                            int got = samp2.Read(scanBuf, 0, scanBuf.Length);
+                            if (got <= 0) break;
+                            for (int si = 0; si < got; si++)
+                            {
+                                if (Math.Abs(scanBuf[si]) >= scaledThreshold)
+                                    scaledClipSamples++;
+                            }
+                            scannedTotal += got;
+                        }
+                        if (scannedTotal > 0)
+                        {
+                            double pct = (double)scaledClipSamples / scannedTotal * 100.0;
+                            if (pct > 0.01)
+                            {
+                                info.HasScaledClipping = true;
+                                info.ScaledClippingPercentage = pct;
+                            }
+                        }
+                    }
+                    catch { /* scaled clipping check is best-effort */ }
+                }
             }
 
             // ── Find the cutoff frequency ──
@@ -288,8 +340,14 @@ namespace AudioQualityChecker.Services
             bool isLossless = IsLosslessExtension(info.Extension);
             int estimated = EstimateBitrateFromCutoff(info.EffectiveFrequency, sampleRate, isLossless);
 
-            // Cap actual at reported so it never exceeds what the container says
-            if (info.ReportedBitrate > 0)
+            // For lossless files, compute actual data rate from file size/duration
+            // instead of estimating from frequency cutoff (which is designed for lossy)
+            if (isLossless && info.DurationSeconds > 0 && info.FileSizeBytes > 0)
+            {
+                int fileDataRate = (int)(info.FileSizeBytes * 8 / info.DurationSeconds / 1000);
+                info.ActualBitrate = fileDataRate;
+            }
+            else if (info.ReportedBitrate > 0)
                 info.ActualBitrate = Math.Min(estimated, info.ReportedBitrate);
             else
                 info.ActualBitrate = estimated;
@@ -446,9 +504,12 @@ namespace AudioQualityChecker.Services
                 // Otherwise fall through — it's an upconvert from lossy
             }
 
-            // Map cutoff frequency to the bitrate whose encoder would produce that cutoff
-            if (cutoffHz >= 19500) return 320;
-            if (cutoffHz >= 18500) return 256;
+            // Map cutoff frequency to the bitrate whose encoder would produce that cutoff.
+            // Important: a steep lowpass around 19-20 kHz does NOT necessarily mean lossy.
+            // Real CDs and hi-res recordings can have lowpass filters from the mastering chain.
+            // Only confident at lower cutoffs where it's clearly encoder-related.
+            if (cutoffHz >= 20000) return isLossless ? 1411 : 320; // no meaningful cutoff
+            if (cutoffHz >= 19000) return isLossless ? 1411 : 256; // could be 256 or natural rolloff; report conservatively
             if (cutoffHz >= 17500) return 192;
             if (cutoffHz >= 16500) return 160;
             if (cutoffHz >= 15500) return 128;
@@ -1081,7 +1142,19 @@ namespace AudioQualityChecker.Services
                     throw;
                 }
             }
-            catch { /* all strategies exhausted */ }
+            catch { /* fall through to managed FLAC */ }
+
+            // Managed FLAC decoder (handles hi-res and files MediaFoundation can't decode)
+            if (ext is ".flac" or ".fla")
+            {
+                try
+                {
+                    var flac = new FlacFileReader(filePath);
+                    var flacSample = new SampleChannel(flac, false);
+                    return (flac, flacSample, flacSample.WaveFormat);
+                }
+                catch { /* fall through */ }
+            }
 
             throw new InvalidOperationException($"Cannot open audio file: {Path.GetFileName(filePath)}");
         }

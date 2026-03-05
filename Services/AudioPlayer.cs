@@ -561,6 +561,27 @@ namespace AudioQualityChecker.Services
                     }
                 }
 
+                // Try managed FLAC decoder (handles hi-res and files MediaFoundation can't decode)
+                if (!opened && (ext == ".flac" || ext == ".fla"))
+                {
+                    try
+                    {
+                        // Decode on thread pool to avoid UI freeze on large hi-res files
+                        var flacReader = System.Threading.Tasks.Task.Run(() => new FlacFileReader(filePath)).Result;
+                        _sampleChannel = new SampleChannel(flacReader, true);
+                        playbackSource = new SampleToWaveProvider(_sampleChannel);
+                        _extraDisposable = flacReader;
+                        _waveStreamReader = flacReader;
+                        opened = true;
+                    }
+                    catch
+                    {
+                        _sampleChannel = null;
+                        _extraDisposable = null;
+                        _waveStreamReader = null;
+                    }
+                }
+
                 // Try VorbisWaveReader as fallback for any Ogg-based format
                 if (!opened)
                 {
@@ -623,6 +644,26 @@ namespace AudioQualityChecker.Services
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
                         _extraDisposable = opusReader;
                         _waveStreamReader = opusReader;
+                        opened = true;
+                    }
+                    catch
+                    {
+                        _sampleChannel = null;
+                        _extraDisposable = null;
+                        _waveStreamReader = null;
+                    }
+                }
+
+                // Try managed FLAC decoder as absolute last resort (may be FLAC with wrong extension)
+                if (!opened)
+                {
+                    try
+                    {
+                        var flacReader = System.Threading.Tasks.Task.Run(() => new FlacFileReader(filePath)).Result;
+                        _sampleChannel = new SampleChannel(flacReader, true);
+                        playbackSource = new SampleToWaveProvider(_sampleChannel);
+                        _extraDisposable = flacReader;
+                        _waveStreamReader = flacReader;
                         opened = true;
                     }
                     catch
