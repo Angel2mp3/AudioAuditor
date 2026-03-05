@@ -15,6 +15,13 @@
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"/>
 </p>
 
+<p align="center">
+  <a href="https://ko-fi.com/angelsoftware">
+    <img src="https://storage.ko-fi.com/cdn/cup-border.png" alt="Ko-fi" width="20"/>
+    Support on Ko-fi
+  </a>
+</p>
+
 ---
 
 ## Overview
@@ -40,19 +47,6 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **BPM Detection** — Algorithmic beat detection with tag-based BPM fallback
 - **Replay Gain** — Extracts and displays Replay Gain metadata from tags
 - **Comprehensive Metadata** — Artist, title, sample rate, bit depth, channels, duration, file size, and bitrate (reported vs. actual)
-
-### AI Detection Details
-
-AudioAuditor's AI detection uses **verifiable evidence only** — no heuristics or guesswork:
-
-| Method | What It Checks |
-|--------|---------------|
-| **Metadata Tags** | ID3v2, Vorbis, APE, MP4 tags for AI service markers (TXXX frames, comments, encoder fields, free-form atoms) |
-| **Raw Byte Patterns** | First 64KB, middle 32KB, and last 64KB of the file for embedded identifiers |
-| **C2PA / Content Credentials** | JUMBF box markers, claim manifests, and provenance data |
-| **AI Watermarks** | AudioSeal, SynthID, and WavMark watermark identifiers |
-| **Confidence Scoring** | Strong markers (named services) score higher than generic phrases; minimum 0.4 threshold required |
-| **False-Positive Filtering** | Files produced by known DAWs (Audacity, FL Studio, Ableton, etc.) or encoders (LAME, FFmpeg, etc.) have weak generic markers filtered out |
 
 ### Supported Formats
 
@@ -98,6 +92,20 @@ AudioAuditor's AI detection uses **verifiable evidence only** — no heuristics 
 ### Music Service Integration
 - **6 fully configurable slots** — Each toolbar button can be set to any service: Spotify, YouTube Music, Tidal, Qobuz, Amazon Music, Apple Music, Deezer, SoundCloud, Bandcamp, Last.fm, or a fully custom search URL with custom icon
 - Click any service button with a track selected to instantly search for it online
+
+### AI Detection (BETA)
+
+AudioAuditor's AI detection tries its best to use **verifiable evidence** - However that being said, these results **can be inacurate**, regardless **please do not use these finding to defame or harrass anyone** :)
+
+| Method | What It Checks |
+|--------|---------------|
+| **Metadata Tags** | ID3v2, Vorbis, APE, MP4 tags for AI service markers (TXXX frames, comments, encoder fields, free-form atoms) |
+| **Raw Byte Patterns** | First 64KB, middle 32KB, and last 64KB of the file for embedded identifiers |
+| **C2PA / Content Credentials** | JUMBF box markers, claim manifests, and provenance data |
+| **AI Watermarks** | AudioSeal, SynthID, and WavMark watermark identifiers |
+| **Confidence Scoring** | Strong markers (named services) score higher than generic phrases; minimum 0.4 threshold required |
+| **False-Positive Filtering** | Files produced by known DAWs (Audacity, FL Studio, Ableton, etc.) or encoders (LAME, FFmpeg, etc.) have weak generic markers filtered out |
+
 
 ### Export & Reporting
 
@@ -156,12 +164,6 @@ Each theme covers window backgrounds, panels, toolbars, headers, DataGrid rows (
 Blue Fire · Neon Pulse · Sunset Glow · Purple Haze · Minimal · Golden Wave · Emerald Wave · Blurple Wave · Crimson Wave · Brown Wave
 
 Each playbar theme has unique gradient colors and animation speed for the waveform visualization.
-
----
-
-## Screenshots
-
-> *Add screenshots here*
 
 ---
 
@@ -243,6 +245,7 @@ Stored settings include: theme names, boolean flags, service slot names, custom 
 - **No telemetry or analytics** — zero network calls except when you click a music service search button, use Discord Rich Presence, or scrobble to Last.fm
 - **No temp files or cache** — nothing written to disk beyond the small settings files
 - **No logging** — no log files are created
+- **Zero AI Training** - nothing analyzed/played is *ever* used to train generative AI
 
 ---
 
@@ -346,4 +349,3 @@ This project is licensed under the [MIT License](LICENSE).
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
-
