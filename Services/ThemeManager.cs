@@ -43,6 +43,10 @@ namespace AudioQualityChecker.Services
         // Visualizer mode (false=spectrogram, true=visualizer)
         public static bool VisualizerMode { get; set; }
 
+        // Spectrogram display preferences
+        public static bool SpectrogramLinearScale { get; set; }
+        public static bool SpectrogramDifferenceChannel { get; set; }
+
         // Rainbow Visualizer: each bar gets its own cycling spectrum color
         public static bool RainbowVisualizerEnabled { get; set; }
 
@@ -390,6 +394,8 @@ namespace AudioQualityChecker.Services
                     $"Service5={MusicServiceSlots[4]}",
                     $"Service6={MusicServiceSlots[5]}",
                     $"VisualizerMode={VisualizerMode}",
+                    $"SpectrogramLinearScale={SpectrogramLinearScale}",
+                    $"SpectrogramDifferenceChannel={SpectrogramDifferenceChannel}",
                     $"RainbowVisualizer={RainbowVisualizerEnabled}",
                     $"CustomUrl1={CustomServiceUrls[0]}",
                     $"CustomIcon1={CustomServiceIcons[0]}",
@@ -474,6 +480,8 @@ namespace AudioQualityChecker.Services
                         case "Service5": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[4] = val; break;
                         case "Service6": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[5] = val; break;
                         case "VisualizerMode": VisualizerMode = bool.TryParse(val, out var bv) && bv; break;
+                        case "SpectrogramLinearScale": SpectrogramLinearScale = bool.TryParse(val, out var bsl) && bsl; break;
+                        case "SpectrogramDifferenceChannel": SpectrogramDifferenceChannel = bool.TryParse(val, out var bsd) && bsd; break;
                         case "RainbowVisualizer": RainbowVisualizerEnabled = bool.TryParse(val, out var brv) && brv; break;
                         case "CustomUrl1": CustomServiceUrls[0] = val; break;
                         case "CustomIcon1": CustomServiceIcons[0] = val; break;

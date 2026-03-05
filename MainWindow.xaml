@@ -837,13 +837,20 @@
                     <DataGridTextColumn Header="Ext" Binding="{Binding Extension}" Width="60"/>
                     <DataGridTextColumn Header="Max Freq" Binding="{Binding EffectiveFrequencyDisplay}" Width="100"/>
 
-                    <DataGridTemplateColumn Header="Clipping" Width="95" SortMemberPath="HasClipping">
+                    <DataGridTemplateColumn Header="Clipping" Width="250" SortMemberPath="HasClipping">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding ClippingDisplay}"
-                                           Foreground="{Binding HasClipping, Converter={StaticResource ClippingToColor}}"
                                            FontWeight="SemiBold" FontSize="11" FontFamily="Segoe UI"
-                                           HorizontalAlignment="Center"/>
+                                           HorizontalAlignment="Center"
+                                           TextTrimming="None">
+                                    <TextBlock.Foreground>
+                                        <MultiBinding Converter="{StaticResource ClippingToColor}">
+                                            <Binding Path="HasClipping"/>
+                                            <Binding Path="HasScaledClipping"/>
+                                        </MultiBinding>
+                                    </TextBlock.Foreground>
+                                </TextBlock>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -911,34 +918,61 @@
                             <Button Grid.Column="0" x:Name="BtnShuffle"
                                     Click="Shuffle_Click" Style="{StaticResource PlayerButton}"
                                     ToolTip="Shuffle">
-                                <TextBlock x:Name="ShuffleIcon" Text="&#xE8B1;"
-                                           FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                           Foreground="{DynamicResource TextMuted}"/>
+                                <Viewbox Width="16" Height="16" Margin="-2">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="ShuffleIcon" Data="M 1,12 L 10,3 M 10,3 L 7,3 M 10,3 L 10,6 M 1,4 L 10,13 M 10,13 L 7,13 M 10,13 L 10,10"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="2.2" Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
                             <Button Grid.Column="1" x:Name="BtnPrevTrack"
                                     Click="PrevTrack_Click" Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Previous Track">
-                                <TextBlock Text="&#xE76B;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                                <Viewbox Width="14" Height="14">
+                                    <Canvas Width="16" Height="14">
+                                        <Path Data="M 2,1 L 2,13" Stroke="{DynamicResource TextPrimary}" StrokeThickness="2"/>
+                                        <Path Data="M 5,7 L 14,1 L 14,13 Z" Fill="{DynamicResource TextPrimary}"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
                             <Button Grid.Column="2" Click="Rewind_Click"
                                     Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Rewind 5s">
-                                <TextBlock Text="&#xEB9E;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                                <Viewbox Width="14" Height="14">
+                                    <Canvas Width="18" Height="14">
+                                        <Path Data="M 1,7 L 9,1 L 9,13 Z" Fill="{DynamicResource TextPrimary}"/>
+                                        <Path Data="M 9,7 L 17,1 L 17,13 Z" Fill="{DynamicResource TextPrimary}"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
                             <Button Grid.Column="3" x:Name="BtnPlayPause"
                                     Click="PlayPause_Click" Style="{StaticResource PlayerButton}" Margin="4,0,0,0">
-                                <TextBlock x:Name="PlayPauseIcon" Text="&#xE768;"
-                                           FontFamily="Segoe MDL2 Assets" FontSize="16"/>
+                                <Viewbox x:Name="PlayPauseIcon" Width="16" Height="16">
+                                    <Canvas x:Name="PlayPauseCanvas" Width="16" Height="16">
+                                        <Path x:Name="PlayIcon" Data="M 3,1 L 3,15 L 15,8 Z" Fill="{DynamicResource TextPrimary}"/>
+                                        <Path x:Name="PauseIcon" Data="M 2,1 L 2,15 L 6,15 L 6,1 Z M 10,1 L 10,15 L 14,15 L 14,1 Z" Fill="{DynamicResource TextPrimary}" Visibility="Collapsed"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
                             <Button Grid.Column="4" Click="Forward_Click"
                                     Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Forward 5s">
-                                <TextBlock Text="&#xEB9D;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                                <Viewbox Width="14" Height="14">
+                                    <Canvas Width="18" Height="14">
+                                        <Path Data="M 1,1 L 1,13 L 9,7 Z" Fill="{DynamicResource TextPrimary}"/>
+                                        <Path Data="M 9,1 L 9,13 L 17,7 Z" Fill="{DynamicResource TextPrimary}"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
                             <Button Grid.Column="5" x:Name="BtnNextTrack"
                                     Click="NextTrack_Click" Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Next Track">
-                                <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="14"/>
+                                <Viewbox Width="14" Height="14">
+                                    <Canvas Width="16" Height="14">
+                                        <Path Data="M 2,1 L 2,13 L 12,7 Z" Fill="{DynamicResource TextPrimary}"/>
+                                        <Path Data="M 14,1 L 14,13" Stroke="{DynamicResource TextPrimary}" StrokeThickness="2"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
 
                             <!-- Seek bar + waveform + time -->
@@ -969,11 +1003,16 @@
                             </Grid>
 
                             <!-- Volume -->
-                            <TextBlock Grid.Column="7" x:Name="VolumeIcon" Text="&#xE767;"
-                                       FontFamily="Segoe MDL2 Assets" FontSize="14"
-                                       Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
-                                       Margin="0,0,4,0" Cursor="Hand"
-                                       MouseLeftButtonDown="VolumeIcon_Click"/>
+                            <Viewbox Grid.Column="7" x:Name="VolumeIcon" Width="14" Height="14"
+                                     VerticalAlignment="Center" Margin="0,0,4,0" Cursor="Hand"
+                                     MouseLeftButtonDown="VolumeIcon_Click">
+                                <Canvas Width="16" Height="16">
+                                    <Path x:Name="VolumeIconPath"
+                                          Data="M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11"
+                                          Fill="{DynamicResource TextMuted}"
+                                          Stroke="{DynamicResource TextMuted}" StrokeThickness="0.5"/>
+                                </Canvas>
+                            </Viewbox>
                             <TextBlock Grid.Column="8" x:Name="VolumeLabel" Text="100%"
                                        Foreground="{DynamicResource TextMuted}" FontSize="11"
                                        FontFamily="Segoe UI"
@@ -1104,6 +1143,24 @@
                                            Foreground="{DynamicResource TextPrimary}" FontSize="12"
                                            FontWeight="SemiBold" FontFamily="Segoe UI"/>
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button x:Name="BtnSpectrogramChannel" Click="SpectrogramChannel_Click"
+                                            Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
+                                            ToolTip="Switch between Mono and L-R Difference channel" Margin="0,0,6,0">
+                                        <TextBlock x:Name="SpectrogramChannelText" Text="L-R"
+                                                   FontSize="10" FontFamily="Segoe UI"/>
+                                    </Button>
+                                    <Button x:Name="BtnSpectrogramScale" Click="SpectrogramScale_Click"
+                                            Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
+                                            ToolTip="Switch between Log and Linear frequency scale" Margin="0,0,6,0">
+                                        <TextBlock x:Name="SpectrogramScaleText" Text="Linear"
+                                                   FontSize="10" FontFamily="Segoe UI"/>
+                                    </Button>
+                                    <Button x:Name="BtnJumpToEnd" Click="JumpToEnd_Click"
+                                            Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
+                                            ToolTip="Show last 10 seconds of the recording zoomed in" Margin="0,0,6,0">
+                                        <TextBlock x:Name="JumpToEndText" Text="End"
+                                                   FontSize="10" FontFamily="Segoe UI"/>
+                                    </Button>
                                     <Button x:Name="BtnToggleAlbumCover" Click="ToggleAlbumCover_Click"
                                             Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
                                             ToolTip="Toggle Album Cover" Margin="0,0,6,0">

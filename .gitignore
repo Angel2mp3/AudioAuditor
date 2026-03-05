@@ -1,0 +1,98 @@
+# ═══════════════════════════════════════════════
+#  AudioAuditor .gitignore
+# ═══════════════════════════════════════════════
+
+# Build outputs
+bin/
+obj/
+publish/
+out/
+build/
+release/
+Release/
+Debug/
+x64/
+x86/
+artifacts/
+*.exe
+*_wpftmp.csproj
+!*.csproj
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+*.nuget.props
+*.nuget.targets
+*.nuget.g.*
+
+# User-specific files
+*.user
+*.suo
+*.userprefs
+*.vspscc
+*.vssscc
+*.sln.docstates
+
+# IDE / VS files
+.vs/
+*.rsuser
+launchSettings.json
+Properties/launchSettings.json
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+._*
+$RECYCLE.BIN/
+
+# Sensitive / session data — NEVER commit these
+session.dat
+*.dat
+*.key
+*.pem
+*.pfx
+*.p12
+*.credentials
+*.secret
+
+# Dev / temp / personal files
+to-do.txt
+todo.txt
+TODO.txt
+notes.txt
+*.tmp
+*.bak
+*.swp
+*.log
+*.orig
+*.cache
+~$*
+*.~*
+
+# Publish profiles
+Properties/PublishProfiles/
+
+# Windows Installer
+*.msi
+*.msm
+*.msp
+*.cab
+
+# Crash dumps
+*.dmp
+crashdumps/
+
+# Test results
+TestResults/
+*.trx

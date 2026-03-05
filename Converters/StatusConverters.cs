@@ -54,16 +54,28 @@ namespace AudioQualityChecker.Converters
             => throw new NotImplementedException();
     }
 
-    public class ClippingToColorConverter : IValueConverter
+    public class ClippingToColorConverter : IMultiValueConverter
     {
-        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        private static readonly SolidColorBrush Red = new(Color.FromRgb(244, 67, 54));
+        private static readonly SolidColorBrush YellowOrange = new(Color.FromRgb(255, 183, 77));
+        private static readonly SolidColorBrush Default = new(Color.FromRgb(212, 212, 212));
+
+        static ClippingToColorConverter()
         {
-            if (value is bool hasClipping && hasClipping)
-                return new SolidColorBrush(Color.FromRgb(244, 67, 54));
-            return new SolidColorBrush(Color.FromRgb(212, 212, 212));
+            Red.Freeze(); YellowOrange.Freeze(); Default.Freeze();
         }
 
-        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+        {
+            bool hasClipping = values.Length > 0 && values[0] is bool b1 && b1;
+            bool hasScaledClipping = values.Length > 1 && values[1] is bool b2 && b2;
+
+            if (hasClipping) return Red;
+            if (hasScaledClipping) return YellowOrange;
+            return Default;
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
             => throw new NotImplementedException();
     }
 
