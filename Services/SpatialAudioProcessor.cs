@@ -12,10 +12,10 @@ namespace AudioQualityChecker.Services
         private readonly ISampleProvider _source;
         private volatile bool _enabled;
 
-        // Crossfeed parameters — kept subtle to avoid distortion
-        private const float CrossfeedAmount = 0.18f;  // Gentle bleed to opposite channel
-        private const float WideningAmount = 0.20f;    // Subtle stereo widening
-        private const float OutputGain = 0.85f;        // Compensate for summed signals
+        // Crossfeed parameters — balanced for natural speaker-like imaging
+        private const float CrossfeedAmount = 0.30f;  // Moderate bleed to opposite channel
+        private const float WideningAmount = 0.35f;    // Noticeable stereo widening
+        private const float OutputGain = 0.82f;        // Compensate for summed signals
 
         // Simple delay line for HRTF-like interaural time difference (ITD)
         private readonly float[] _delayBufferL;
@@ -33,7 +33,7 @@ namespace AudioQualityChecker.Services
         private readonly float[] _reflectionBufferR;
         private int _reflectionWritePos;
         private readonly int _reflectionDelaySamples; // ~15ms delay
-        private const float ReflectionGain = 0.06f;   // Very subtle room cue
+        private const float ReflectionGain = 0.10f;   // Subtle room cue
 
         public SpatialAudioProcessor(ISampleProvider source)
         {
@@ -41,8 +41,8 @@ namespace AudioQualityChecker.Services
 
             int sampleRate = source.WaveFormat.SampleRate;
 
-            // ITD delay: ~0.3ms (interaural time difference)
-            _delaySamples = Math.Max(1, (int)(sampleRate * 0.0003));
+            // ITD delay: ~0.5ms (interaural time difference — more realistic)
+            _delaySamples = Math.Max(1, (int)(sampleRate * 0.0005));
             _delayBufferL = new float[_delaySamples + 1];
             _delayBufferR = new float[_delaySamples + 1];
 

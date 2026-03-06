@@ -338,19 +338,59 @@ namespace AudioQualityChecker.Services
 
             // ── Map cutoff → estimated bitrate ──
             bool isLossless = IsLosslessExtension(info.Extension);
-            int estimated = EstimateBitrateFromCutoff(info.EffectiveFrequency, sampleRate, isLossless);
+            string codec = info.Extension.TrimStart('.');
+            int estimated = EstimateBitrateFromCutoff(info.EffectiveFrequency, sampleRate, isLossless, codec);
 
-            // For lossless files, compute actual data rate from file size/duration
-            // instead of estimating from frequency cutoff (which is designed for lossy)
-            if (isLossless && info.DurationSeconds > 0 && info.FileSizeBytes > 0)
+            if (isLossless)
             {
-                int fileDataRate = (int)(info.FileSizeBytes * 8 / info.DurationSeconds / 1000);
-                info.ActualBitrate = fileDataRate;
+                // For lossless, the "actual bitrate" reflects the real compressed file bitrate
+                // when content is genuine, or the estimated lossy source bitrate for upconverts.
+                int cutoff = info.EffectiveFrequency;
+                int nyquist = sampleRate / 2;
+
+                if (cutoff >= (int)(nyquist * 0.90))
+                {
+                    // True lossless — report actual compressed file bitrate
+                    if (info.DurationSeconds > 0 && info.FileSizeBytes > 0)
+                        info.ActualBitrate = (int)(info.FileSizeBytes * 8.0 / info.DurationSeconds / 1000.0);
+                    else
+                    {
+                        int bitsPerSample = info.BitsPerSample > 0 ? info.BitsPerSample : 16;
+                        int ch = info.Channels > 0 ? info.Channels : 2;
+                        info.ActualBitrate = sampleRate * bitsPerSample * ch / 1000;
+                    }
+                }
+                else
+                {
+                    // Upconvert from lossy — report what the real source quality was
+                    info.ActualBitrate = estimated;
+                }
             }
-            else if (info.ReportedBitrate > 0)
-                info.ActualBitrate = Math.Min(estimated, info.ReportedBitrate);
             else
-                info.ActualBitrate = estimated;
+            {
+                // For lossy files, use the spectral estimate. If reported bitrate is available
+                // and the estimate is close, prefer the reported value since it's exact for CBR.
+                // For VBR, the reported bitrate is an average which may differ from spectral estimate.
+                if (info.ReportedBitrate > 0)
+                {
+                    double ratio = (double)estimated / info.ReportedBitrate;
+                    if (ratio >= 0.78 && ratio <= 1.20)
+                    {
+                        // Estimate matches reported — file is genuine, use reported (more precise)
+                        info.ActualBitrate = info.ReportedBitrate;
+                    }
+                    else
+                    {
+                        // Significant mismatch — likely a transcode. Use the lower value
+                        // as that represents the real quality bottleneck.
+                        info.ActualBitrate = Math.Min(estimated, info.ReportedBitrate);
+                    }
+                }
+                else
+                {
+                    info.ActualBitrate = estimated;
+                }
+            }
         }
 
         // ═══════════════════════════════════════════════════════
@@ -408,53 +448,58 @@ namespace AudioQualityChecker.Services
                 smooth[i] = runCount > 0 ? runSum / runCount : -120.0;
             }
 
-            // Step 3: Compute energy in wider bands (~2 kHz each) and look for the drop
-            int bandBins = Math.Max(8, (int)(2000.0 / binHz));
-            int halfBand = bandBins / 2;
+            // Step 3: Multi-scale band analysis for robust cutoff detection.
+            // Use two band sizes to catch both sharp cutoffs (low bitrate) and
+            // gradual rolloffs (high bitrate / natural content).
+            int[] bandSizes = { Math.Max(8, (int)(1500.0 / binHz)), Math.Max(8, (int)(2500.0 / binHz)) };
 
-            // We look for the biggest drop between adjacent bands.
-            // Start from ~5 kHz (below this, lossy codecs don't cut off)
-            int startBin = Math.Max(10, (int)(5000.0 / binHz));
-            // Stop before we get too close to Nyquist
-            int stopBin = specLen - bandBins - 1;
+            // Start from ~4 kHz (below this, lossy codecs don't cut off)
+            int startBin = Math.Max(10, (int)(4000.0 / binHz));
+            int stopBin = specLen - bandSizes[1] - 1;
 
             double bestDropDb = 0;
             int bestDropBin = 0;
 
-            for (int i = startBin; i < stopBin; i += halfBand)
+            foreach (int bandBins in bandSizes)
             {
-                // Average energy of band centered at i
-                double bandBelow = 0;
-                int cntBelow = 0;
-                for (int j = Math.Max(0, i - halfBand); j < i; j++)
-                {
-                    bandBelow += smooth[j];
-                    cntBelow++;
-                }
-                if (cntBelow > 0) bandBelow /= cntBelow;
+                int halfBand = bandBins / 2;
 
-                double bandAbove = 0;
-                int cntAbove = 0;
-                for (int j = i; j < Math.Min(specLen, i + halfBand); j++)
+                for (int i = startBin; i < stopBin; i += Math.Max(1, halfBand / 2))
                 {
-                    bandAbove += smooth[j];
-                    cntAbove++;
-                }
-                if (cntAbove > 0) bandAbove /= cntAbove;
+                    // Average energy of band below and above this point
+                    double bandBelow = 0;
+                    int cntBelow = 0;
+                    for (int j = Math.Max(0, i - halfBand); j < i; j++)
+                    {
+                        bandBelow += smooth[j];
+                        cntBelow++;
+                    }
+                    if (cntBelow > 0) bandBelow /= cntBelow;
 
-                double drop = bandBelow - bandAbove; // positive = energy dropped
+                    double bandAbove = 0;
+                    int cntAbove = 0;
+                    for (int j = i; j < Math.Min(specLen, i + halfBand); j++)
+                    {
+                        bandAbove += smooth[j];
+                        cntAbove++;
+                    }
+                    if (cntAbove > 0) bandAbove /= cntAbove;
 
-                // Only count if the band below has meaningful content (not already in the noise)
-                if (bandBelow > -60 && drop > bestDropDb)
-                {
-                    bestDropDb = drop;
-                    bestDropBin = i;
+                    double drop = bandBelow - bandAbove; // positive = energy dropped
+
+                    // Only count if the band below has meaningful content (not already in the noise)
+                    if (bandBelow > -55 && drop > bestDropDb)
+                    {
+                        bestDropDb = drop;
+                        bestDropBin = i;
+                    }
                 }
             }
 
-            // If the biggest drop is < 8 dB, there's no clear cutoff —
-            // content extends across the full spectrum (truly high quality)
-            if (bestDropDb < 8.0)
+            // If the biggest drop is < 6 dB, there's no clear cutoff —
+            // content extends across the full spectrum (truly high quality).
+            // Lowered from 8 dB to catch subtler encoder cutoffs (e.g., high-bitrate AAC).
+            if (bestDropDb < 6.0)
             {
                 // No sharp cutoff found → content goes to Nyquist
                 return sampleRate / 2;
@@ -463,7 +508,8 @@ namespace AudioQualityChecker.Services
             // Refine: walk backwards from the drop point to find exactly
             // where the smooth curve starts descending significantly
             // (the actual "knee" of the shelf)
-            double refLevel = smooth[Math.Max(0, bestDropBin - halfBand)];
+            int halfBandRef = bandSizes[0] / 2;
+            double refLevel = smooth[Math.Max(0, bestDropBin - halfBandRef)];
             int cutoffBin = bestDropBin;
             for (int i = bestDropBin; i >= startBin; i--)
             {
@@ -492,7 +538,7 @@ namespace AudioQualityChecker.Services
         //     32 kbps  →  ~8 kHz
         // ═══════════════════════════════════════════════════════
 
-        private static int EstimateBitrateFromCutoff(int cutoffHz, int sampleRate, bool isLossless)
+        private static int EstimateBitrateFromCutoff(int cutoffHz, int sampleRate, bool isLossless, string codec)
         {
             int nyquist = sampleRate / 2;
 
@@ -504,12 +550,61 @@ namespace AudioQualityChecker.Services
                 // Otherwise fall through — it's an upconvert from lossy
             }
 
-            // Map cutoff frequency to the bitrate whose encoder would produce that cutoff.
-            // Important: a steep lowpass around 19-20 kHz does NOT necessarily mean lossy.
-            // Real CDs and hi-res recordings can have lowpass filters from the mastering chain.
-            // Only confident at lower cutoffs where it's clearly encoder-related.
-            if (cutoffHz >= 20000) return isLossless ? 1411 : 320; // no meaningful cutoff
-            if (cutoffHz >= 19000) return isLossless ? 1411 : 256; // could be 256 or natural rolloff; report conservatively
+            // Codec-aware cutoff-to-bitrate mapping.
+            // Different encoders apply different lowpass filters at each bitrate.
+
+            // AAC encoders (FDK-AAC, Apple AAC) generally preserve higher frequencies
+            // at lower bitrates compared to MP3/LAME.
+            if (codec is "m4a" or "aac" or "mp4" or "alac")
+            {
+                if (cutoffHz >= 20000) return isLossless ? 1411 : 320;
+                if (cutoffHz >= 19500) return isLossless ? 1411 : 256;
+                if (cutoffHz >= 18500) return 192;
+                if (cutoffHz >= 17500) return 160;
+                if (cutoffHz >= 16500) return 128;
+                if (cutoffHz >= 15000) return 96;
+                if (cutoffHz >= 13000) return 80;
+                if (cutoffHz >= 11000) return 64;
+                if (cutoffHz >= 8000)  return 48;
+                if (cutoffHz >= 5500)  return 32;
+                return 24;
+            }
+
+            // Opus uses a psychoacoustic bandwidth model — tends to have content
+            // at higher frequencies even at low bitrates due to bandwidth extension.
+            if (codec is "opus")
+            {
+                if (cutoffHz >= 20000) return 256;
+                if (cutoffHz >= 19000) return 192;
+                if (cutoffHz >= 18000) return 160;
+                if (cutoffHz >= 16500) return 128;
+                if (cutoffHz >= 15000) return 96;
+                if (cutoffHz >= 12000) return 64;
+                if (cutoffHz >= 8000)  return 48;
+                if (cutoffHz >= 5000)  return 32;
+                return 24;
+            }
+
+            // Vorbis has smooth rolloff rather than a hard lowpass.
+            if (codec is "ogg")
+            {
+                if (cutoffHz >= 20000) return isLossless ? 1411 : 320;
+                if (cutoffHz >= 19000) return 256;
+                if (cutoffHz >= 18000) return 192;
+                if (cutoffHz >= 17000) return 160;
+                if (cutoffHz >= 15500) return 128;
+                if (cutoffHz >= 14000) return 96;
+                if (cutoffHz >= 11000) return 64;
+                if (cutoffHz >= 8000)  return 48;
+                if (cutoffHz >= 5000)  return 32;
+                return 24;
+            }
+
+            // MP3 (LAME defaults) — the most common case.
+            // WMA uses similar lowpass behavior to MP3.
+            // This is also the fallback for unknown codecs.
+            if (cutoffHz >= 20000) return isLossless ? 1411 : 320;
+            if (cutoffHz >= 19000) return isLossless ? 1411 : 256;
             if (cutoffHz >= 17500) return 192;
             if (cutoffHz >= 16500) return 160;
             if (cutoffHz >= 15500) return 128;
@@ -539,30 +634,14 @@ namespace AudioQualityChecker.Services
             {
                 if (cutoff >= (int)(nyquist * 0.90))
                 {
-                    // Spectrum extends to Nyquist — but check bitrate ratio as secondary factor
-                    if (reported > 0 && actual > 0)
-                    {
-                        double brRatio = (double)actual / reported;
-                        if (brRatio < 0.25)
-                        {
-                            // Huge gap: e.g. reported 1200kbps but actual ~256kbps → fake
-                            info.Status = AudioStatus.Fake;
-                            return;
-                        }
-                        if (brRatio < 0.45)
-                        {
-                            info.Status = AudioStatus.Unknown;
-                            return;
-                        }
-                    }
                     info.Status = AudioStatus.Valid;
                     return;
                 }
                 // Spectral content stops well short of Nyquist → upconvert
-                // Bitrate thresholds slightly raised to give bitrate more influence
-                if (actual <= 180)
+                // Use the estimated original bitrate to judge severity
+                if (actual <= 160)
                     info.Status = AudioStatus.Fake;
-                else if (actual <= 288)
+                else if (actual <= 256)
                     info.Status = AudioStatus.Unknown;
                 else
                     info.Status = AudioStatus.Valid;
@@ -577,7 +656,7 @@ namespace AudioQualityChecker.Services
             }
 
             // What cutoff frequency would we EXPECT for the reported bitrate?
-            int expectedCutoff = ExpectedCutoffForBitrate(reported);
+            int expectedCutoff = ExpectedCutoffForBitrate(reported, info.Extension.TrimStart('.'));
 
             // Compare actual cutoff against expected cutoff for the claimed bitrate
             if (expectedCutoff > 0 && cutoff > 0)
@@ -589,7 +668,7 @@ namespace AudioQualityChecker.Services
                     // Cutoff is near or above what we'd expect — genuine
                     info.Status = AudioStatus.Valid;
                 }
-                else if (freqRatio >= 0.75)
+                else if (freqRatio >= 0.82)
                 {
                     // Slightly low but within tolerance (VBR, unusual encoder settings)
                     info.Status = AudioStatus.Unknown;
@@ -613,10 +692,53 @@ namespace AudioQualityChecker.Services
         /// <summary>
         /// Returns the typical lowpass cutoff frequency a legitimate encoder would use
         /// for the given bitrate. This is what we compare the detected cutoff against.
+        /// Codec-aware: different encoders have different lowpass behaviors.
         /// </summary>
-        private static int ExpectedCutoffForBitrate(int bitrateKbps)
+        private static int ExpectedCutoffForBitrate(int bitrateKbps, string codec = "mp3")
         {
-            // Based on LAME defaults (most common MP3 encoder) and typical AAC behavior
+            // AAC encoders preserve more high frequencies at lower bitrates
+            if (codec is "m4a" or "aac" or "mp4")
+            {
+                if (bitrateKbps >= 320) return 20500;
+                if (bitrateKbps >= 256) return 20000;
+                if (bitrateKbps >= 192) return 19500;
+                if (bitrateKbps >= 160) return 18500;
+                if (bitrateKbps >= 128) return 17000;
+                if (bitrateKbps >= 96)  return 15500;
+                if (bitrateKbps >= 64)  return 13000;
+                if (bitrateKbps >= 48)  return 10000;
+                if (bitrateKbps >= 32)  return 8000;
+                return 5500;
+            }
+
+            // Opus uses bandwidth extension and psychoacoustic models
+            if (codec is "opus")
+            {
+                if (bitrateKbps >= 192) return 20500;
+                if (bitrateKbps >= 128) return 20000;
+                if (bitrateKbps >= 96)  return 19000;
+                if (bitrateKbps >= 64)  return 16500;
+                if (bitrateKbps >= 48)  return 14000;
+                if (bitrateKbps >= 32)  return 10000;
+                return 6000;
+            }
+
+            // Vorbis
+            if (codec is "ogg")
+            {
+                if (bitrateKbps >= 320) return 20500;
+                if (bitrateKbps >= 256) return 20000;
+                if (bitrateKbps >= 192) return 19000;
+                if (bitrateKbps >= 160) return 18000;
+                if (bitrateKbps >= 128) return 16500;
+                if (bitrateKbps >= 96)  return 15000;
+                if (bitrateKbps >= 64)  return 12000;
+                if (bitrateKbps >= 48)  return 9000;
+                if (bitrateKbps >= 32)  return 7000;
+                return 5000;
+            }
+
+            // MP3 (LAME defaults) — most common encoder, also used as fallback
             if (bitrateKbps >= 320) return 20500;
             if (bitrateKbps >= 256) return 19500;
             if (bitrateKbps >= 224) return 19000;
