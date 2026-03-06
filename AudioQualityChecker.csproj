@@ -8,26 +8,35 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor</AssemblyName>
-    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- Exclude sub-projects from being compiled by this project -->
+  <ItemGroup>
+    <Compile Remove="AudioAuditorCLI\**" />
+    <None Remove="AudioAuditorCLI\**" />
+    <Compile Remove="AudioAuditor.Tests\**" />
+    <None Remove="AudioAuditor.Tests\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Concentus.OggFile" Version="1.0.6" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
+    <PackageReference Include="SharpCompress" Version="0.38.0" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
     <PackageReference Include="DiscordRichPresence" Version="1.2.1.24" />
     <PackageReference Include="ClosedXML" Version="0.104.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="icon.png" />
-    <Resource Include="Qobuz.png" />
-    <Resource Include="Amazon-music.png" />
-    <Resource Include="Spotify.png" />
-    <Resource Include="YTM.png" />
-    <Resource Include="Tidal.png" />
-    <Resource Include="Apple_music.png" />
+    <Resource Include="Resources\icon.png" />
+    <Resource Include="Resources\Qobuz.png" />
+    <Resource Include="Resources\Amazon-music.png" />
+    <Resource Include="Resources\Spotify.png" />
+    <Resource Include="Resources\YTM.png" />
+    <Resource Include="Resources\Tidal.png" />
+    <Resource Include="Resources\Apple_music.png" />
   </ItemGroup>
 
 </Project>
