@@ -17,8 +17,7 @@
 
 <p align="center">
   <a href="https://ko-fi.com/angelsoftware">
-    <img src="https://storage.ko-fi.com/cdn/cup-border.png" alt="Ko-fi" width="20"/>
-    Support on Ko-fi
+    <img src="https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
 </p>
 
@@ -40,13 +39,15 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 ### Core Analysis
 - **Fake Lossless Detection** — Identifies files that claim to be high-quality but are actually upsampled from lower bitrate sources by analyzing spectral content and effective frequency cutoff
 - **Spectral Frequency Analysis** — FFT-based spectral analysis (4096-point, Hanning-windowed) determines the true effective frequency ceiling of your audio
-- **Clipping Detection** — Digital clipping scan with percentage and sample-count reporting
+- **Clipping Detection** — Digital clipping scan with percentage and sample-count reporting; thorough mode detects clipping even when audio has been scaled down by up to 0.5 dB, reported as "SCALED (dB, %)"
 - **MQA Detection** — Identifies MQA and MQA Studio encoded files, reports original sample rate and encoder info
 - **AI-Generated Audio Detection** — Scans metadata tags, raw byte patterns, and content provenance markers (C2PA) to identify AI-generated music from 20+ services including Suno, Udio, AIVA, Boomy, and Stable Audio. Features confidence scoring, false-positive filtering against known DAWs/encoders, and AI watermark detection (AudioSeal, SynthID, WavMark)
 - **Optimizer Detection** — Detects files that have been processed through audio "optimizers"
 - **BPM Detection** — Algorithmic beat detection with tag-based BPM fallback
 - **Replay Gain** — Extracts and displays Replay Gain metadata from tags
 - **Comprehensive Metadata** — Artist, title, sample rate, bit depth, channels, duration, file size, and bitrate (reported vs. actual)
+- **Improved Bitrate Analysis** — Avoids simplistic "320 kbps" labeling for files with steep lowpass filters using a band-energy-drop method; lossless formats (FLAC/WAV/AIFF/APE/WV) report their actual file data rate instead of a lossy-equivalent estimate
+- **Custom FLAC Decoder** — Managed FLAC decoder handles files that NAudio cannot decode natively, ensuring full analysis and playback coverage
 
 ### Supported Formats
 
@@ -74,7 +75,11 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ### Spectrogram Viewer
 - Full-resolution spectrogram generation with logarithmic frequency scaling (20 Hz – Nyquist)
+- **Linear frequency scale** — Toggle between logarithmic and linear frequency axis
+- **L-R difference channel** — View Left minus Right channel spectrogram to reveal stereo differences; persists across sessions
+- **Jump to end** — Zoom into the last 10 seconds of a recording to inspect fade-outs and tail content
 - Hanning-windowed FFT with 4096-point resolution
+- Deep **−130 dB analysis floor** for visibility into low-level content
 - Beautiful color gradient: black → blue → purple → red → orange → yellow → white
 - Frequency axis labels (50 Hz → 20 kHz)
 - Export individual spectrograms as labeled PNG files
@@ -194,7 +199,7 @@ Or open `Audio Quality Checker.sln` in Visual Studio 2022+ and press **F5**.
 ## Usage
 
 1. **Add Files** — Click **Add Files** or **Add Folder**, or drag & drop audio files/folders directly onto the window
-2. **Analyze** — Files are automatically analyzed on import with throttled parallelism; status shows as Real, Fake, Optimized, Unknown, or Corrupt
+2. **Analyze** — Files are automatically analyzed on import with throttled parallelism; status shows as Real, Fake, Optimized, Unknown, or Corrupt; the status bar displays counts for each category
 3. **Filter** — Use the status filter dropdown to show only files with a specific status (Real, Fake, Unknown, Corrupt, Optimized) or search by name/artist/path
 4. **Inspect** — Click a file to view its spectrogram and full analysis details in the bottom panel
 5. **Play** — Double-click or right-click → Play to start playback with the built-in player
@@ -254,10 +259,14 @@ Stored settings include: theme names, boolean flags, service slot names, custom 
 ```
 AudioAuditor/
 ├── App.xaml / App.xaml.cs               # Application entry point & theme initialization
-├── MainWindow.xaml / .xaml.cs           # Main UI — toolbar, DataGrid, player, waveform, visualizer
-├── SettingsWindow.xaml / .xaml.cs       # Settings dialog — themes, options, integrations, performance
-├── QueueWindow.xaml / .xaml.cs          # Playback queue manager with drag-and-drop reordering
-├── ErrorDialog.xaml / .xaml.cs          # Themed error dialog
+├── AudioQualityChecker.csproj           # Main WPF project file
+├── Audio Quality Checker.sln            # Solution file
+├── Windows/
+│   ├── MainWindow.xaml / .xaml.cs       # Main UI — toolbar, DataGrid, player, waveform, visualizer
+│   ├── SettingsWindow.xaml / .xaml.cs   # Settings dialog — themes, options, integrations, performance
+│   ├── QueueWindow.xaml / .xaml.cs      # Playback queue manager with drag-and-drop reordering
+│   ├── ErrorDialog.xaml / .xaml.cs      # Themed error dialog
+│   └── MetadataEditorWindow.xaml / .cs  # Metadata tag editor for audio files
 ├── Models/
 │   └── AudioFileInfo.cs                 # Data model for analyzed files (20+ properties)
 ├── Converters/
@@ -265,23 +274,28 @@ AudioAuditor/
 ├── Services/
 │   ├── AiWatermarkDetector.cs           # AI audio detection — metadata, byte patterns, C2PA, confidence scoring
 │   ├── AudioAnalyzer.cs                 # FFT spectral analysis, quality detection, BPM, replay gain
+│   ├── AudioFormatReaders.cs            # Custom format readers for APE, WavPack, DSD, and ALAC
 │   ├── AudioPlayer.cs                   # NAudio playback engine with crossfade, normalization, EQ & spatial pipeline
 │   ├── DiscordRichPresenceService.cs    # Discord RPC integration
 │   ├── Equalizer.cs                     # 10-band parametric EQ (ISampleProvider) with BiQuad filters
 │   ├── ExportService.cs                 # CSV / TXT / PDF / XLSX / DOCX export
+│   ├── FlacReader.cs                    # Custom managed FLAC decoder for files NAudio can't handle
 │   ├── LastFmService.cs                 # Last.fm scrobbling, Now Playing, and OAuth auth
 │   ├── MqaDetector.cs                   # MQA & MQA Studio detection
 │   ├── SpatialAudioProcessor.cs         # Spatial audio — crossfeed, HRTF ITD, head shadow, reflections
 │   ├── SpectrogramGenerator.cs          # Bitmap spectrogram generation with log-frequency scaling
 │   └── ThemeManager.cs                  # Theme engine, settings persistence, playbar colors
-└── Resources/
-    ├── icon.png / app.ico               # App icon
-    ├── Spotify.png                      # Service logos
-    ├── YTM.png
-    ├── Tidal.png
-    ├── Qobuz.png
-    ├── Amazon-music.png
-    └── Apple_music.png
+├── Resources/
+│   ├── icon.png / app.ico               # App icon
+│   ├── Spotify.png                      # Service logos
+│   ├── YTM.png
+│   ├── Tidal.png
+│   ├── Qobuz.png
+│   ├── Amazon-music.png
+│   └── Apple_music.png
+└── AudioAuditorCLI/
+    ├── AudioAuditorCLI.csproj           # CLI project file (standalone console app)
+    └── Program.cs                       # CLI entry point — analyze, export, metadata, info commands
 ```
 
 ---
@@ -320,7 +334,9 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 | Library | License | Usage |
 |---------|---------|-------|
 | [**NAudio**](https://github.com/naudio/naudio) by Mark Heath | MIT | Audio playback, waveform reading, sample provider pipeline, FFT analysis, crossfade mixing, and all audio I/O |
-| [**TagLibSharp**](https://github.com/mono/taglib-sharp) by Mono Project | LGPL-2.1 | Reading audio metadata tags across all supported formats |
+| [**NAudio.Vorbis**](https://github.com/naudio/Vorbis) by Andrew Ward | MIT | OGG Vorbis audio file decoding and playback support |
+| [**Concentus & Concentus.OggFile**](https://github.com/lostromb/concentus) by Logan Stromberg | MIT/BSD | Pure managed Opus audio decoding for .opus file support |
+| [**TagLibSharp**](https://github.com/mono/taglib-sharp) by Mono Project | LGPL-2.1 | Reading and writing audio metadata tags across all supported formats (ID3v2, Xiph Comment, APEv2, MP4 atoms) |
 | [**ClosedXML**](https://github.com/ClosedXML/ClosedXML) by ClosedXML Contributors | MIT | Excel workbook generation with styled cells, headers, and auto-fit columns |
 | [**discord-rpc-csharp**](https://github.com/Lachee/discord-rpc-csharp) by Lachee | MIT | Discord Rich Presence client for showing playback status |
 
@@ -331,12 +347,17 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 | [**.NET 8**](https://github.com/dotnet/runtime) | Microsoft | Application runtime |
 | [**WPF**](https://github.com/dotnet/wpf) | Microsoft | UI framework — all windows, controls, data binding, styling, and rendering |
 
-### References
+### Algorithms & References
 
+- [**Cooley-Tukey FFT Algorithm**](https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm) — The radix-2 FFT implementation is based on the classic Cooley-Tukey algorithm for spectral analysis
+- [**Fisher-Yates Shuffle**](https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle) — Modern Fisher-Yates algorithm used for fair deck-based shuffle ensuring every track plays once per cycle
 - [**NAudio Documentation & Samples**](https://github.com/naudio/NAudio/tree/master/Docs) — Referenced for `AudioFileReader`, `WaveOutEvent`, `BufferedWaveProvider`, `MixingSampleProvider`, FFT windowing, and `MediaFoundationReader` usage patterns
 - [**TagLib# API Reference**](https://github.com/mono/taglib-sharp) — Referenced for multi-format metadata extraction patterns
-- [**Cooley-Tukey FFT Algorithm**](https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm) — The radix-2 FFT implementation is based on the classic Cooley-Tukey algorithm
+- [**LAME MP3 Encoder Lowpass Specifications**](https://wiki.hydrogenaud.io/index.php?title=LAME) — Lowpass filter frequency thresholds per bitrate used as reference for bitrate estimation from spectral cutoff detection
 - [**Microsoft DWM API Documentation**](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmsetwindowattribute) — Used for `DWMWA_USE_IMMERSIVE_DARK_MODE` and `DWMWA_CAPTION_COLOR` title bar customization
+- [**Head-Related Transfer Function (HRTF)**](https://en.wikipedia.org/wiki/Head-related_transfer_function) — Concepts referenced for spatial audio crossfeed, interaural time delay, and head shadow simulation
+- [**Last.fm API**](https://www.last.fm/api) — Scrobbling protocol and authentication flow
+- [**MusicBrainz**](https://musicbrainz.org/), [**Discogs**](https://www.discogs.com/), [**AllMusic**](https://www.allmusic.com/), [**Rate Your Music**](https://rateyourmusic.com/) — Metadata search integration targets
 
 ---
 

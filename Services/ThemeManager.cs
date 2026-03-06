@@ -18,7 +18,7 @@ namespace AudioQualityChecker.Services
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "AudioAuditor", "session.dat");
 
         public static readonly List<string> AvailableThemes = new() { "Dark", "Ocean", "Light", "Amethyst", "Dreamsicle", "Goldenrod", "Emerald", "Blurple", "Crimson", "Brown" };
-        public static readonly List<string> AvailablePlaybarThemes = new() { "Blue Fire", "Neon Pulse", "Sunset Glow", "Purple Haze", "Minimal", "Golden Wave", "Emerald Wave", "Blurple Wave", "Crimson Wave", "Brown Wave" };
+        public static readonly List<string> AvailablePlaybarThemes = new() { "Blue Fire", "Neon Pulse", "Sunset Glow", "Purple Haze", "Minimal", "Golden Wave", "Emerald Wave", "Blurple Wave", "Crimson Wave", "Brown Wave", "Rainbow Bars" };
         public static readonly List<string> AvailableMusicServices = new()
         {
             "Spotify", "YouTube Music", "Tidal", "Qobuz", "Amazon Music",
@@ -253,12 +253,20 @@ namespace AudioQualityChecker.Services
             SavePlayOptions();
         }
 
+        private static PlaybarColors? _cachedPlaybarColors;
+        private static string? _cachedPlaybarThemeName;
+
         /// <summary>
         /// Returns playbar color config: (bgColor, progressColors[], waveAnimSpeed)
+        /// Cached to avoid allocations on every visualizer frame.
         /// </summary>
         public static PlaybarColors GetPlaybarColors()
         {
-            return _currentPlaybarTheme switch
+            if (_cachedPlaybarColors != null && _cachedPlaybarThemeName == _currentPlaybarTheme)
+                return _cachedPlaybarColors;
+
+            _cachedPlaybarThemeName = _currentPlaybarTheme;
+            _cachedPlaybarColors = _currentPlaybarTheme switch
             {
                 "Neon Pulse" => new PlaybarColors(
                     Color.FromArgb(40, 0, 255, 128),
@@ -323,6 +331,13 @@ namespace AudioQualityChecker.Services
                         Color.FromArgb(220, 160, 110, 60),
                         Color.FromArgb(255, 210, 170, 110)
                     }, 1.4),
+                "Rainbow Bars" => new PlaybarColors(
+                    Color.FromArgb(40, 128, 128, 128),
+                    new[] {
+                        Color.FromArgb(200, 255, 50, 50),
+                        Color.FromArgb(200, 50, 255, 50),
+                        Color.FromArgb(200, 50, 50, 255)
+                    }, 2.0),
                 _ => new PlaybarColors( // Blue Fire (default)
                     Color.FromArgb(40, 77, 168, 218),
                     new[] {
@@ -331,6 +346,7 @@ namespace AudioQualityChecker.Services
                         Color.FromArgb(255, 120, 200, 240)
                     }, 1.5),
             };
+            return _cachedPlaybarColors;
         }
 
         public static string GetMusicServiceUrl(string serviceName, string query)
@@ -471,7 +487,11 @@ namespace AudioQualityChecker.Services
                                 CrossfadeDuration = dur;
                             break;
                         case "PlaybarTheme":
-                            if (AvailablePlaybarThemes.Contains(val)) _currentPlaybarTheme = val;
+                            if (AvailablePlaybarThemes.Contains(val))
+                            {
+                                _currentPlaybarTheme = val;
+                                RainbowVisualizerEnabled = val == "Rainbow Bars";
+                            }
                             break;
                         case "Service1": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[0] = val; break;
                         case "Service2": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[1] = val; break;
