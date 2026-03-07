@@ -144,6 +144,63 @@ namespace AudioQualityChecker
             Close();
         }
 
+        private void SaveCover_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // If user loaded a new cover that hasn't been saved yet, save that
+                byte[]? data = _newCoverData;
+                string? mime = _newCoverMime;
+
+                // Otherwise extract from the original file
+                if (data == null && !_coverRemoved)
+                {
+                    using var tagFile = TagLib.File.Create(_filePath);
+                    var pics = tagFile.Tag.Pictures;
+                    if (pics == null || pics.Length == 0)
+                    {
+                        StatusText.Text = "No album cover to save.";
+                        return;
+                    }
+                    data = pics[0].Data.Data;
+                    mime = pics[0].MimeType;
+                }
+
+                if (data == null)
+                {
+                    StatusText.Text = "No album cover to save.";
+                    return;
+                }
+
+                string ext = (mime ?? "image/jpeg") switch
+                {
+                    "image/png" => ".png",
+                    "image/bmp" => ".bmp",
+                    "image/gif" => ".gif",
+                    _ => ".jpg"
+                };
+
+                string defaultName = Path.GetFileNameWithoutExtension(_filePath) + "_cover" + ext;
+
+                var dialog = new SaveFileDialog
+                {
+                    Title = "Save Album Cover",
+                    FileName = defaultName,
+                    Filter = $"Image Files|*{ext}|All Files|*.*"
+                };
+
+                if (dialog.ShowDialog() == true)
+                {
+                    File.WriteAllBytes(dialog.FileName, data);
+                    StatusText.Text = "Cover saved successfully.";
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"Error saving cover: {ex.Message}";
+            }
+        }
+
         private void ReplaceCover_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new OpenFileDialog
