@@ -374,16 +374,33 @@ namespace AudioQualityChecker.Services
                 if (info.ReportedBitrate > 0)
                 {
                     double ratio = (double)estimated / info.ReportedBitrate;
-                    if (ratio >= 0.78 && ratio <= 1.20)
+                    if (ratio >= 0.70 && ratio <= 1.30)
                     {
-                        // Estimate matches reported — file is genuine, use reported (more precise)
+                        // Estimate is in the ballpark of reported — file is genuine, use reported
                         info.ActualBitrate = info.ReportedBitrate;
+                    }
+                    else if (estimated < info.ReportedBitrate)
+                    {
+                        // Spectral estimate is significantly lower than reported.
+                        // Only trust it if the cutoff is genuinely very low — otherwise
+                        // the spectral analysis likely hit a natural feature.
+                        // A cutoff below 14 kHz is strong evidence of a low-quality source.
+                        // Above 14 kHz, the spectral estimate is unreliable for distinguishing
+                        // moderate bitrates (128-256) and natural rolloff is common.
+                        if (info.EffectiveFrequency < 14000)
+                        {
+                            info.ActualBitrate = estimated;
+                        }
+                        else
+                        {
+                            // Cutoff is reasonably high — trust the reported bitrate
+                            info.ActualBitrate = info.ReportedBitrate;
+                        }
                     }
                     else
                     {
-                        // Significant mismatch — likely a transcode. Use the lower value
-                        // as that represents the real quality bottleneck.
-                        info.ActualBitrate = Math.Min(estimated, info.ReportedBitrate);
+                        // Estimate higher than reported — unusual but possible with VBR
+                        info.ActualBitrate = info.ReportedBitrate;
                     }
                 }
                 else
@@ -448,76 +465,117 @@ namespace AudioQualityChecker.Services
                 smooth[i] = runCount > 0 ? runSum / runCount : -120.0;
             }
 
-            // Step 3: Multi-scale band analysis for robust cutoff detection.
-            // Use two band sizes to catch both sharp cutoffs (low bitrate) and
-            // gradual rolloffs (high bitrate / natural content).
-            int[] bandSizes = { Math.Max(8, (int)(1500.0 / binHz)), Math.Max(8, (int)(2500.0 / binHz)) };
+            // Step 3: Find where the spectrum drops to the noise floor and STAYS there.
+            // A real codec cutoff means energy plummets to -60 dB or below and never recovers.
+            // Natural audio rolloff is gradual and still has energy at -30 to -50 dB.
+            //
+            // Strategy: scan from high frequency downward looking for the highest bin
+            // where the smoothed energy is still meaningfully above the noise floor.
+            // This is more robust than looking for "drops" which can trigger on
+            // natural spectral features.
 
-            // Start from ~4 kHz (below this, lossy codecs don't cut off)
-            int startBin = Math.Max(10, (int)(4000.0 / binHz));
-            int stopBin = specLen - bandSizes[1] - 1;
-
-            double bestDropDb = 0;
-            int bestDropBin = 0;
-
-            foreach (int bandBins in bandSizes)
+            // Determine the noise floor: average of the top 5% of the spectrum
+            // (above Nyquist * 0.95), which for most audio is pure noise.
+            int noiseStart = (int)(specLen * 0.93);
+            double noiseFloor = 0.0;
+            int noiseCnt = 0;
+            for (int i = noiseStart; i < specLen; i++)
             {
-                int halfBand = bandBins / 2;
+                noiseFloor += smooth[i];
+                noiseCnt++;
+            }
+            if (noiseCnt > 0) noiseFloor /= noiseCnt;
+            // Clamp: noise floor shouldn't be reported higher than -40 dB
+            if (noiseFloor > -40.0) noiseFloor = -40.0;
 
-                for (int i = startBin; i < stopBin; i += Math.Max(1, halfBand / 2))
+            // The "content threshold" is midway between the noise floor and -20 dB.
+            // Below this, we consider the spectrum to be noise, not real audio content.
+            // Typical values: noise floor ~ -80 dB → threshold ~ -50 dB
+            //                 noise floor ~ -60 dB → threshold ~ -40 dB
+            double contentThreshold = (noiseFloor + -20.0) / 2.0;
+            // But never higher than -30 dB (we don't want to be too aggressive)
+            if (contentThreshold > -30.0) contentThreshold = -30.0;
+            // And never lower than -55 dB
+            if (contentThreshold < -55.0) contentThreshold = -55.0;
+
+            // Scan from high frequencies downward to find where real content ends.
+            // Use a sliding window to avoid single-bin noise spikes fooling us.
+            int windowBins = Math.Max(4, (int)(800.0 / binHz)); // ~800 Hz window
+            int startBin = Math.Max(10, (int)(4000.0 / binHz));
+
+            int cutoffBin = specLen - 1; // default: full spectrum
+
+            for (int i = specLen - windowBins - 1; i >= startBin; i--)
+            {
+                // Average energy in a window starting at bin i
+                double windowEnergy = 0;
+                for (int j = i; j < i + windowBins; j++)
+                    windowEnergy += smooth[j];
+                windowEnergy /= windowBins;
+
+                if (windowEnergy > contentThreshold)
                 {
-                    // Average energy of band below and above this point
-                    double bandBelow = 0;
-                    int cntBelow = 0;
-                    for (int j = Math.Max(0, i - halfBand); j < i; j++)
-                    {
-                        bandBelow += smooth[j];
-                        cntBelow++;
-                    }
-                    if (cntBelow > 0) bandBelow /= cntBelow;
-
-                    double bandAbove = 0;
-                    int cntAbove = 0;
-                    for (int j = i; j < Math.Min(specLen, i + halfBand); j++)
-                    {
-                        bandAbove += smooth[j];
-                        cntAbove++;
-                    }
-                    if (cntAbove > 0) bandAbove /= cntAbove;
-
-                    double drop = bandBelow - bandAbove; // positive = energy dropped
-
-                    // Only count if the band below has meaningful content (not already in the noise)
-                    if (bandBelow > -55 && drop > bestDropDb)
-                    {
-                        bestDropDb = drop;
-                        bestDropBin = i;
-                    }
+                    // Found the highest frequency with real content
+                    cutoffBin = i + windowBins; // top of the window
+                    break;
                 }
             }
 
-            // If the biggest drop is < 6 dB, there's no clear cutoff —
-            // content extends across the full spectrum (truly high quality).
-            // Lowered from 8 dB to catch subtler encoder cutoffs (e.g., high-bitrate AAC).
-            if (bestDropDb < 6.0)
+            // If we never found content above the threshold starting from the top,
+            // check if the whole spectrum is below threshold (very quiet/corrupt file)
+            if (cutoffBin >= specLen - 1)
             {
-                // No sharp cutoff found → content goes to Nyquist
+                // Check if there's content in the lower bands
+                double lowEnergy = 0;
+                int lowCnt = 0;
+                int lowEnd = Math.Min(specLen, (int)(8000.0 / binHz));
+                for (int i = startBin; i < lowEnd; i++)
+                {
+                    lowEnergy += smooth[i];
+                    lowCnt++;
+                }
+                if (lowCnt > 0) lowEnergy /= lowCnt;
+
+                if (lowEnergy <= contentThreshold)
+                {
+                    // Even lower frequencies have no content — file is basically silent
+                    return 0;
+                }
+                // Otherwise, content extends to Nyquist
                 return sampleRate / 2;
             }
 
-            // Refine: walk backwards from the drop point to find exactly
-            // where the smooth curve starts descending significantly
-            // (the actual "knee" of the shelf)
-            int halfBandRef = bandSizes[0] / 2;
-            double refLevel = smooth[Math.Max(0, bestDropBin - halfBandRef)];
-            int cutoffBin = bestDropBin;
-            for (int i = bestDropBin; i >= startBin; i--)
+            // Additional validation: a codec cutoff should show a significant difference
+            // between the energy below and above the detected cutoff point.
+            // If the difference is small, it's just natural rolloff, not a hard cutoff.
+            double energyBelow = 0;
+            int cntBelow = 0;
+            int checkRange = Math.Max(8, (int)(2000.0 / binHz));
+            for (int i = Math.Max(startBin, cutoffBin - checkRange); i < cutoffBin; i++)
             {
-                if (smooth[i] >= refLevel - 3.0) // within 3 dB of reference
-                {
-                    cutoffBin = i;
-                    break;
-                }
+                energyBelow += smooth[i];
+                cntBelow++;
+            }
+            if (cntBelow > 0) energyBelow /= cntBelow;
+
+            double energyAbove = 0;
+            int cntAbove = 0;
+            for (int i = cutoffBin; i < Math.Min(specLen, cutoffBin + checkRange); i++)
+            {
+                energyAbove += smooth[i];
+                cntAbove++;
+            }
+            if (cntAbove > 0) energyAbove /= cntAbove;
+
+            double dropAcrossCutoff = energyBelow - energyAbove;
+
+            // A real codec cutoff has a drop of at least 15 dB across the boundary.
+            // Natural rolloff is typically 3-10 dB per octave which over a 2 kHz span
+            // is much less than 15 dB for most music.
+            if (dropAcrossCutoff < 15.0)
+            {
+                // Not a hard cutoff — this is natural high-frequency rolloff
+                return sampleRate / 2;
             }
 
             int freq = (int)(cutoffBin * binHz);
@@ -663,14 +721,14 @@ namespace AudioQualityChecker.Services
             {
                 double freqRatio = (double)cutoff / expectedCutoff;
 
-                if (freqRatio >= 0.90)
+                if (freqRatio >= 0.85)
                 {
                     // Cutoff is near or above what we'd expect — genuine
                     info.Status = AudioStatus.Valid;
                 }
-                else if (freqRatio >= 0.82)
+                else if (freqRatio >= 0.70)
                 {
-                    // Slightly low but within tolerance (VBR, unusual encoder settings)
+                    // Moderately low — could be VBR, different encoder, or mild transcode
                     info.Status = AudioStatus.Unknown;
                 }
                 else

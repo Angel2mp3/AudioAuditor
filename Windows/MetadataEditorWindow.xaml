@@ -319,6 +319,8 @@
                                     <TextBlock x:Name="CoverInfoText" FontSize="11" FontFamily="Segoe UI"
                                                Foreground="{DynamicResource TextMuted}" Margin="0,0,0,8"/>
                                     <StackPanel Orientation="Horizontal">
+                                        <Button Content="Save..." Style="{StaticResource SmallButton}"
+                                                Click="SaveCover_Click" Margin="0,0,6,0"/>
                                         <Button Content="Replace..." Style="{StaticResource SmallButton}"
                                                 Click="ReplaceCover_Click" Margin="0,0,6,0"/>
                                         <Button Content="Remove" Style="{StaticResource DangerButton}"

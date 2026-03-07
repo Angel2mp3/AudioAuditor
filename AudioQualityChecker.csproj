@@ -15,8 +15,14 @@
   <ItemGroup>
     <Compile Remove="AudioAuditorCLI\**" />
     <None Remove="AudioAuditorCLI\**" />
+    <Compile Remove="AudioAuditorMac\**" />
+    <None Remove="AudioAuditorMac\**" />
     <Compile Remove="AudioAuditor.Tests\**" />
     <None Remove="AudioAuditor.Tests\**" />
+    <Compile Remove="temp\**" />
+    <None Remove="temp\**" />
+    <EmbeddedResource Remove="temp\**" />
+    <Page Remove="temp\**" />
   </ItemGroup>
 
   <ItemGroup>

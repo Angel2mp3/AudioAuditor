@@ -1163,6 +1163,13 @@
                                         <TextBlock x:Name="JumpToEndText" Text="End"
                                                    FontSize="10" FontFamily="Segoe UI"/>
                                     </Button>
+                                    <Button x:Name="BtnResetZoom" Click="ResetZoom_Click"
+                                            Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
+                                            ToolTip="Reset spectrogram zoom (use mouse wheel to zoom in/out)" Margin="0,0,6,0"
+                                            Visibility="Collapsed">
+                                        <TextBlock x:Name="ZoomLevelText" Text="1x"
+                                                   FontSize="10" FontFamily="Segoe UI"/>
+                                    </Button>
                                     <Button x:Name="BtnToggleAlbumCover" Click="ToggleAlbumCover_Click"
                                             Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
                                             ToolTip="Toggle Album Cover" Margin="0,0,6,0">
@@ -1209,11 +1216,18 @@
                                                    Foreground="{DynamicResource TextMuted}" FontSize="10"
                                                    FontFamily="Segoe UI" VerticalAlignment="Bottom"/>
                                     </Grid>
-                                    <Image x:Name="SpectrogramImage"
-                                           Margin="43,0,0,2"
-                                           Stretch="Fill"
-                                           RenderOptions.BitmapScalingMode="HighQuality"
-                                           MouseLeftButtonDown="SpectrogramImage_MouseDoubleClick"/>
+                                    <ScrollViewer x:Name="SpectrogramScrollViewer"
+                                                   Margin="43,0,0,2"
+                                                   HorizontalScrollBarVisibility="Auto"
+                                                   VerticalScrollBarVisibility="Disabled"
+                                                   PreviewMouseWheel="SpectrogramScrollViewer_PreviewMouseWheel"
+                                                   SizeChanged="SpectrogramScrollViewer_SizeChanged"
+                                                   Background="Transparent">
+                                        <Image x:Name="SpectrogramImage"
+                                               Stretch="Fill"
+                                               RenderOptions.BitmapScalingMode="HighQuality"
+                                               MouseLeftButtonDown="SpectrogramImage_MouseDoubleClick"/>
+                                    </ScrollViewer>
                                     <Canvas x:Name="VisualizerCanvas" Visibility="Collapsed"
                                             Margin="0,0,0,2" ClipToBounds="True"
                                             Background="Transparent"/>
@@ -1226,7 +1240,13 @@
                                            MaxWidth="200" MaxHeight="200"
                                            Stretch="Uniform"
                                            RenderOptions.BitmapScalingMode="HighQuality"
-                                           ToolTip="Album Cover"/>
+                                           ToolTip="Album Cover">
+                                        <Image.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Save Cover..." Click="SaveAlbumCoverFromPanel_Click"/>
+                                            </ContextMenu>
+                                        </Image.ContextMenu>
+                                    </Image>
                                 </Border>
                             </Grid>
                         </DockPanel>

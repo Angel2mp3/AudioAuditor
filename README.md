@@ -78,6 +78,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Linear frequency scale** — Toggle between logarithmic and linear frequency axis
 - **L-R difference channel** — View Left minus Right channel spectrogram to reveal stereo differences; persists across sessions
 - **Jump to end** — Zoom into the last 10 seconds of a recording to inspect fade-outs and tail content
+- **Mouse wheel zoom** — Scroll to zoom in up to 20x on the spectrogram for detailed inspection; horizontal scrollbar for panning; click the zoom indicator to reset
 - Hanning-windowed FFT with 4096-point resolution
 - Deep **−130 dB analysis floor** for visibility into low-level content
 - Beautiful color gradient: black → blue → purple → red → orange → yellow → white
@@ -212,7 +213,8 @@ Or open `Audio Quality Checker.sln` in Visual Studio 2022+ and press **F5**.
 - **Drag & Drop** — Drop audio files or folders anywhere on the window
 - **Ctrl+F** — Focus the search bar
 - **Search Box** — Filter by filename, artist, title, path, extension, or status; use the status dropdown to filter by analysis result
-- **Context Menu** — Right-click for Play, Add to Queue, Save Spectrogram, Open File Location, Copy Path, Copy File Name, Remove
+- **Context Menu** — Right-click for Play, Add to Queue, Save Spectrogram, View Album Cover, Open File Location, Copy Path, Copy File Name, Remove
+- **Save Album Cover** — Save the original full-quality embedded cover art from the View Album Cover popup, the cover panel next to the spectrogram (right-click), or the metadata editor
 - **Double-click spectrogram** — Save as PNG
 - **Click volume icon** — Toggle mute
 

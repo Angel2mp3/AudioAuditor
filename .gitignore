@@ -8,6 +8,8 @@ obj/
 publish/
 out/
 build/
+temp/
+Temp/
 release/
 Release/
 Debug/
