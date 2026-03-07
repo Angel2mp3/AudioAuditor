@@ -38,6 +38,7 @@ namespace AudioQualityChecker
         private readonly ObservableCollection<AudioFileInfo> _files = new();
         private ICollectionView? _filteredView;
         private CancellationTokenSource? _spectrogramCts;
+        private CancellationTokenSource? _analysisCts;
         private bool _isAnalyzing;
 
         // Audio player
@@ -68,6 +69,11 @@ namespace AudioQualityChecker
         private readonly List<AudioFileInfo> _shuffleDeck = new(); // pre-shuffled playback order
         private int _shuffleDeckIndex; // current position in the deck
 
+        // Playback history for back-button navigation
+        private readonly List<AudioFileInfo> _playHistory = new();
+        private int _playHistoryIndex = -1;
+        private bool _navigatingHistory; // true when playing from history (prevents re-pushing)
+
         // Animated waveform
         private double[] _waveformData = Array.Empty<double>();
         private DateTime _waveformAnimStart;
@@ -87,6 +93,7 @@ namespace AudioQualityChecker
         private bool _spectrogramLinearScale;
         private SpectrogramChannel _spectrogramChannel = SpectrogramChannel.Mono;
         private bool _spectrogramEndZoom;
+        private double _spectrogramZoomLevel = 1.0;
 
         // Integrations
         private readonly DiscordRichPresenceService _discord = new();
@@ -419,12 +426,17 @@ namespace AudioQualityChecker
 
         private void ClearAll_Click(object sender, RoutedEventArgs e)
         {
+            // Cancel any in-progress analysis so pending files stop loading
+            _analysisCts?.Cancel();
+
             _player.Stop();
             _playerTimer.Stop();
             StopWaveformAnimation();
             StopVisualizer();
             _files.Clear();
             _queue.Clear();
+            _playHistory.Clear();
+            _playHistoryIndex = -1;
             SearchBox.Text = "";
             SpectrogramPanel.Visibility = Visibility.Collapsed;
             SpectrogramLoading.Visibility = Visibility.Collapsed;
@@ -511,6 +523,10 @@ namespace AudioQualityChecker
 
             if (newPaths.Length == 0) return;
 
+            _analysisCts?.Cancel();
+            _analysisCts = new CancellationTokenSource();
+            var ct = _analysisCts.Token;
+
             _isAnalyzing = true;
             int total = newPaths.Length;
             int completed = 0;
@@ -525,12 +541,17 @@ namespace AudioQualityChecker
 
             var tasks = newPaths.Select(async path =>
             {
-                await semaphore.WaitAsync();
+                bool acquired = false;
                 try
                 {
+                    await semaphore.WaitAsync(ct);
+                    acquired = true;
+                    ct.ThrowIfCancellationRequested();
                     // Wait if memory usage exceeds configured limit
                     await ThemeManager.WaitForMemoryAsync();
-                    var info = await Task.Run(() => AudioAnalyzer.AnalyzeFile(path));
+                    ct.ThrowIfCancellationRequested();
+                    var info = await Task.Run(() => AudioAnalyzer.AnalyzeFile(path), ct);
+                    ct.ThrowIfCancellationRequested();
                     await Dispatcher.InvokeAsync(() =>
                     {
                         _files.Add(info);
@@ -539,30 +560,34 @@ namespace AudioQualityChecker
                         AnalysisProgress.Value = count;
                     });
                 }
+                catch (OperationCanceledException) { }
                 catch
                 {
                     Interlocked.Increment(ref completed);
-                    await Dispatcher.InvokeAsync(() =>
+                    if (!ct.IsCancellationRequested)
                     {
-                        _files.Add(new AudioFileInfo
+                        await Dispatcher.InvokeAsync(() =>
                         {
-                            FilePath = path,
-                            FileName = IOPath.GetFileName(path),
-                            Extension = IOPath.GetExtension(path).ToLowerInvariant(),
-                            Status = AudioStatus.Corrupt,
-                            ErrorMessage = "Failed to open or analyze"
+                            _files.Add(new AudioFileInfo
+                            {
+                                FilePath = path,
+                                FileName = IOPath.GetFileName(path),
+                                Extension = IOPath.GetExtension(path).ToLowerInvariant(),
+                                Status = AudioStatus.Corrupt,
+                                ErrorMessage = "Failed to open or analyze"
+                            });
+                            AnalysisProgress.Value = completed;
+                            StatusText.Text = $"Analyzed {completed} / {total} files...";
                         });
-                        AnalysisProgress.Value = completed;
-                        StatusText.Text = $"Analyzed {completed} / {total} files...";
-                    });
+                    }
                 }
                 finally
                 {
-                    semaphore.Release();
+                    if (acquired) semaphore.Release();
                 }
             });
 
-            await Task.WhenAll(tasks);
+            try { await Task.WhenAll(tasks); } catch (OperationCanceledException) { }
             _isAnalyzing = false;
             AnalysisProgress.Visibility = Visibility.Collapsed;
 
@@ -671,6 +696,14 @@ namespace AudioQualityChecker
                 {
                     SpectrogramImage.Source = bitmap;
                     _currentSpectrogramFile = selectedFile;
+                    _spectrogramZoomLevel = 1.0;
+                    UpdateZoomButton();
+                    if (SpectrogramScrollViewer != null)
+                    {
+                        SpectrogramImage.Width = SpectrogramScrollViewer.ActualWidth;
+                        SpectrogramImage.Height = SpectrogramScrollViewer.ActualHeight;
+                        SpectrogramScrollViewer.ScrollToHorizontalOffset(0);
+                    }
 
                     // Spectrogram mode: always show the selected file's info in the title.
                     // The spectrogram image already shows the selected file, so the title should match.
@@ -962,21 +995,25 @@ namespace AudioQualityChecker
 
             _lastPrevClickTime = now;
 
-            var items = _filteredView?.Cast<AudioFileInfo>().ToList();
-            if (items == null || items.Count == 0) return;
-
-            if (_shuffleMode)
+            // Use playback history to go back to the previously played track
+            if (_playHistoryIndex > 0)
             {
-                var candidate = PickRandomTrack(items);
-                if (candidate != null)
+                _playHistoryIndex--;
+                var prevFile = _playHistory[_playHistoryIndex];
+                FileGrid.SelectedItem = prevFile;
+                FileGrid.ScrollIntoView(prevFile);
+                if (prevFile.Status != AudioStatus.Corrupt)
                 {
-                    FileGrid.SelectedItem = candidate;
-                    FileGrid.ScrollIntoView(candidate);
-                    if (candidate.Status != AudioStatus.Corrupt)
-                        PlayFile(candidate);
+                    _navigatingHistory = true;
+                    PlayFile(prevFile);
+                    _navigatingHistory = false;
                 }
                 return;
             }
+
+            // No history available — fall back to list-based navigation
+            var items = _filteredView?.Cast<AudioFileInfo>().ToList();
+            if (items == null || items.Count == 0) return;
 
             int currentIdx = -1;
             if (_player.CurrentFile != null)
@@ -987,11 +1024,11 @@ namespace AudioQualityChecker
             int prevIdx = currentIdx - 1;
             if (prevIdx < 0) prevIdx = items.Count - 1;
 
-            var prevFile = items[prevIdx];
-            FileGrid.SelectedItem = prevFile;
-            FileGrid.ScrollIntoView(prevFile);
-            if (prevFile.Status != AudioStatus.Corrupt)
-                PlayFile(prevFile);
+            var prevListFile = items[prevIdx];
+            FileGrid.SelectedItem = prevListFile;
+            FileGrid.ScrollIntoView(prevListFile);
+            if (prevListFile.Status != AudioStatus.Corrupt)
+                PlayFile(prevListFile);
         }
 
         private void NextTrack_Click(object sender, RoutedEventArgs e)
@@ -1119,6 +1156,17 @@ namespace AudioQualityChecker
         {
             try
             {
+                // Track playback history for back-button navigation
+                if (!_navigatingHistory)
+                {
+                    // If we navigated back and then play a new track, trim forward history
+                    if (_playHistoryIndex >= 0 && _playHistoryIndex < _playHistory.Count - 1)
+                        _playHistory.RemoveRange(_playHistoryIndex + 1, _playHistory.Count - _playHistoryIndex - 1);
+
+                    _playHistory.Add(file);
+                    _playHistoryIndex = _playHistory.Count - 1;
+                }
+
                 bool normalize = ThemeManager.AudioNormalization;
                 bool crossfade = ThemeManager.Crossfade;
 
@@ -1557,6 +1605,19 @@ namespace AudioQualityChecker
             }
         }
 
+        private void SaveAlbumCoverFromPanel_Click(object sender, RoutedEventArgs e)
+        {
+            // Determine which file's cover is shown (same logic as UpdateAlbumCover)
+            AudioFileInfo? file = null;
+            if (_player.CurrentFile != null)
+                file = _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+            if (file == null)
+                file = FileGrid.SelectedItem as AudioFileInfo;
+
+            if (file == null || string.IsNullOrEmpty(file.FilePath)) return;
+            SaveAlbumCoverToFile(file.FilePath);
+        }
+
         private static BitmapSource? ExtractAlbumCover(string filePath)
         {
             try
@@ -1579,6 +1640,66 @@ namespace AudioQualityChecker
             catch
             {
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Extracts the original album cover bytes and MIME type from an audio file.
+        /// Returns null if no cover is embedded.
+        /// </summary>
+        private static (byte[] data, string mime)? ExtractAlbumCoverBytes(string filePath)
+        {
+            try
+            {
+                using var tagFile = TagLib.File.Create(filePath);
+                var pictures = tagFile.Tag.Pictures;
+                if (pictures == null || pictures.Length == 0) return null;
+                var pic = pictures[0];
+                return (pic.Data.Data, pic.MimeType ?? "image/jpeg");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void SaveAlbumCoverToFile(string audioFilePath)
+        {
+            var coverData = ExtractAlbumCoverBytes(audioFilePath);
+            if (coverData == null)
+            {
+                ErrorDialog.Show("No Album Cover", "This file does not contain an album cover image.", this);
+                return;
+            }
+
+            var (data, mime) = coverData.Value;
+            string ext = mime switch
+            {
+                "image/png" => ".png",
+                "image/bmp" => ".bmp",
+                "image/gif" => ".gif",
+                _ => ".jpg"
+            };
+
+            string defaultName = IOPath.GetFileNameWithoutExtension(audioFilePath) + "_cover" + ext;
+
+            var dialog = new SaveFileDialog
+            {
+                Title = "Save Album Cover",
+                FileName = defaultName,
+                Filter = $"Image Files|*{ext}|All Files|*.*"
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                try
+                {
+                    File.WriteAllBytes(dialog.FileName, data);
+                }
+                catch (Exception ex)
+                {
+                    ErrorDialog.Show("Save Error", $"Could not save album cover:\n{ex.Message}", this);
+                }
             }
         }
 
@@ -1627,7 +1748,29 @@ namespace AudioQualityChecker
                     Stretch = System.Windows.Media.Stretch.Uniform,
                     Margin = new Thickness(10)
                 };
-                window.Content = image;
+
+                var saveBtn = new Button
+                {
+                    Content = "Save Cover...",
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Padding = new Thickness(12, 4, 12, 4),
+                    Margin = new Thickness(0, 6, 10, 0),
+                    Cursor = Cursors.Hand,
+                    Background = new SolidColorBrush(Color.FromRgb(55, 55, 55)),
+                    Foreground = Brushes.White,
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 80)),
+                    FontFamily = new FontFamily("Segoe UI"),
+                    FontSize = 12
+                };
+                string capturedPath = file.FilePath;
+                saveBtn.Click += (_, _) => SaveAlbumCoverToFile(capturedPath);
+
+                var stack = new DockPanel();
+                DockPanel.SetDock(saveBtn, Dock.Top);
+                stack.Children.Add(saveBtn);
+                stack.Children.Add(image);
+
+                window.Content = stack;
                 window.ShowDialog();
             }
             catch (Exception ex)
@@ -2611,8 +2754,82 @@ namespace AudioQualityChecker
         private void JumpToEnd_Click(object sender, RoutedEventArgs e)
         {
             _spectrogramEndZoom = !_spectrogramEndZoom;
+            _spectrogramZoomLevel = 1.0;
+            UpdateZoomButton();
             UpdateJumpToEndText();
             RefreshSpectrogram();
+        }
+
+        private void SpectrogramScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (SpectrogramImage.Source == null) return;
+
+            e.Handled = true;
+
+            double oldZoom = _spectrogramZoomLevel;
+
+            if (e.Delta > 0)
+                _spectrogramZoomLevel = Math.Min(_spectrogramZoomLevel * 1.25, 20.0);
+            else
+                _spectrogramZoomLevel = Math.Max(_spectrogramZoomLevel / 1.25, 1.0);
+
+            if (Math.Abs(oldZoom - _spectrogramZoomLevel) < 0.01) return;
+
+            double viewportWidth = SpectrogramScrollViewer.ViewportWidth;
+            if (viewportWidth <= 0) return;
+
+            double oldWidth = SpectrogramImage.ActualWidth > 0 ? SpectrogramImage.ActualWidth : viewportWidth;
+            double newWidth = viewportWidth * _spectrogramZoomLevel;
+
+            // Keep content under mouse cursor stable
+            var mousePos = e.GetPosition(SpectrogramScrollViewer);
+            double oldOffset = SpectrogramScrollViewer.HorizontalOffset;
+            double mouseRelative = (oldOffset + mousePos.X) / oldWidth;
+
+            SpectrogramImage.Width = newWidth;
+            SpectrogramImage.Height = SpectrogramScrollViewer.ViewportHeight;
+
+            SpectrogramScrollViewer.UpdateLayout();
+            double newOffset = mouseRelative * newWidth - mousePos.X;
+            SpectrogramScrollViewer.ScrollToHorizontalOffset(Math.Max(0, newOffset));
+            UpdateZoomButton();
+        }
+
+        private void SpectrogramScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (SpectrogramScrollViewer == null || SpectrogramImage.Source == null) return;
+            double viewportWidth = SpectrogramScrollViewer.ActualWidth;
+            double viewportHeight = SpectrogramScrollViewer.ActualHeight;
+            if (viewportWidth <= 0 || viewportHeight <= 0) return;
+
+            SpectrogramImage.Width = viewportWidth * _spectrogramZoomLevel;
+            SpectrogramImage.Height = viewportHeight;
+        }
+
+        private void ResetZoom_Click(object sender, RoutedEventArgs e)
+        {
+            _spectrogramZoomLevel = 1.0;
+            UpdateZoomButton();
+            if (SpectrogramScrollViewer != null && SpectrogramImage.Source != null)
+            {
+                SpectrogramImage.Width = SpectrogramScrollViewer.ActualWidth;
+                SpectrogramImage.Height = SpectrogramScrollViewer.ActualHeight;
+                SpectrogramScrollViewer.ScrollToHorizontalOffset(0);
+            }
+        }
+
+        private void UpdateZoomButton()
+        {
+            if (BtnResetZoom == null) return;
+            if (_spectrogramZoomLevel > 1.01)
+            {
+                BtnResetZoom.Visibility = Visibility.Visible;
+                ZoomLevelText.Text = $"{_spectrogramZoomLevel:F1}x";
+            }
+            else
+            {
+                BtnResetZoom.Visibility = Visibility.Collapsed;
+            }
         }
 
         private void UpdateSpectrogramScaleText()
@@ -2667,6 +2884,19 @@ namespace AudioQualityChecker
                 if (bitmap != null)
                 {
                     SpectrogramImage.Source = bitmap;
+
+                    // Apply current zoom to refreshed image
+                    if (SpectrogramScrollViewer != null)
+                    {
+                        double vw = SpectrogramScrollViewer.ActualWidth;
+                        double vh = SpectrogramScrollViewer.ActualHeight;
+                        if (vw > 0 && vh > 0)
+                        {
+                            SpectrogramImage.Width = vw * _spectrogramZoomLevel;
+                            SpectrogramImage.Height = vh;
+                            SpectrogramScrollViewer.ScrollToHorizontalOffset(0);
+                        }
+                    }
 
                     int nyquist = file.SampleRate / 2;
                     if (_spectrogramLinearScale)
