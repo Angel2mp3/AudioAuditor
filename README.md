@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icon.png" alt="AudioAuditor Logo" width="120"/>
+  <img src="Logo.png" alt="AudioAuditor Logo" width="120"/>
 </p>
 
 <h1 align="center">AudioAuditor</h1>
@@ -372,3 +372,4 @@ This project is licensed under the [MIT License](LICENSE).
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
+
