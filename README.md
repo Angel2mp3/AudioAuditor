@@ -31,8 +31,9 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
-<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/cbdf1187-94c8-4213-99ca-b480b62c0ad0" />
-<img width="1547" height="867" alt="image" src="https://github.com/user-attachments/assets/6f9927bc-53c0-46ed-9a2f-1f272ce67634" />
+<img width="1547" height="867" alt="image(25)" src="https://github.com/user-attachments/assets/d6d9cfc6-f071-4990-b79e-56841247921b" />
+<img width="1547" height="867" alt="image(26)" src="https://github.com/user-attachments/assets/9b4d645a-a56c-42ca-b0b0-13c4f01b2082" />
+
 
 ## Features
 
@@ -48,6 +49,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Comprehensive Metadata** — Artist, title, sample rate, bit depth, channels, duration, file size, and bitrate (reported vs. actual)
 - **Improved Bitrate Analysis** — Avoids simplistic "320 kbps" labeling for files with steep lowpass filters using a band-energy-drop method; lossless formats (FLAC/WAV/AIFF/APE/WV) report their actual file data rate instead of a lossy-equivalent estimate
 - **Custom FLAC Decoder** — Managed FLAC decoder handles files that NAudio cannot decode natively, ensuring full analysis and playback coverage
+- **Full Metadata Editor** - Full menu for editing, adding, or removing metadata in an audiofile including search buttons to auto search for the metadata for you
 
 ### Supported Formats
 
@@ -372,4 +374,5 @@ This project is licensed under the [MIT License](LICENSE).
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
+
 
