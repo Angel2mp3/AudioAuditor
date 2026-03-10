@@ -12,7 +12,7 @@
 - **ALAC File Status** - When alac files were used it wouldnt load or would be detected as just a normal "M4A" file, now correctly loads and notes that its an ALAC file next to the M4A extension.
 
 ### Improvements
-- **Fixed ALAC Files** - ALAC files were reported to be not loading/all being read as "Unkown" this should be fixed now. 
+- **Fixed ALAC Files** - ALAC files were reported to be not loading/all being read as "Unknown" this should be fixed now. 
 - **Fixed CLI Tool** the last version was outdated that didnt include the newer bittrate detection and status imrpovements, now the same as the GUI
 - **Discord Rich Presence Fixes** — Now fixed and more comprehensieve / easier to set up the rich presence in your discord dev settings.
 - Fixed shuffle button as it used to get stuck on the old theme when changed to the new one, now correctly updates to the new theme when changed.
