@@ -2,7 +2,7 @@
 
 ## v1.3.0
 
-## Annocements
+## Announcements
 
 - **Website:** Official site launched at [audioauditor.org](https://audioauditor.org)
 - **Looking for beta testers** - I can only test so much on my own, anyone who would like to be a tester let me know. In general though please report any bugs you may incounter and if you'd like new features, please open a Github issue :)
