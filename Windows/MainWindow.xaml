@@ -158,7 +158,7 @@
 
         <!-- Volume slider with circle thumb matching seek bar -->
         <Style x:Key="VolumeSlider" TargetType="Slider">
-            <Setter Property="Foreground" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Foreground" Value="{DynamicResource PlaybarAccentColor}"/>
             <Setter Property="Background" Value="{DynamicResource ScrollBg}"/>
             <Setter Property="IsMoveToPointEnabled" Value="True"/>
             <Setter Property="Template">
@@ -174,7 +174,7 @@
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
                                                 <Border Height="3" VerticalAlignment="Center"
-                                                        Background="{DynamicResource AccentColor}"
+                                                        Background="{DynamicResource PlaybarAccentColor}"
                                                         CornerRadius="1.5"/>
                                             </ControlTemplate>
                                         </RepeatButton.Template>
@@ -195,7 +195,7 @@
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Ellipse x:Name="volThumb" Width="12" Height="12"
-                                                         Fill="{DynamicResource AccentColor}"
+                                                         Fill="{DynamicResource PlaybarAccentColor}"
                                                          Stroke="{DynamicResource TextPrimary}"
                                                          StrokeThickness="1.2">
                                                     <Ellipse.Effect>
@@ -222,7 +222,7 @@
 
         <!-- Seek slider with circle thumb and click-to-position -->
         <Style x:Key="SeekSlider" TargetType="Slider">
-            <Setter Property="Foreground" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Foreground" Value="{DynamicResource PlaybarAccentColor}"/>
             <Setter Property="Background" Value="{DynamicResource ScrollBg}"/>
             <Setter Property="IsMoveToPointEnabled" Value="True"/>
             <Setter Property="Template">
@@ -238,7 +238,7 @@
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
                                                 <Border Height="4" VerticalAlignment="Center"
-                                                        Background="{DynamicResource AccentColor}"
+                                                        Background="{DynamicResource PlaybarAccentColor}"
                                                         CornerRadius="2"/>
                                             </ControlTemplate>
                                         </RepeatButton.Template>
@@ -259,7 +259,7 @@
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Ellipse x:Name="thumbCircle" Width="14" Height="14"
-                                                         Fill="{DynamicResource AccentColor}"
+                                                         Fill="{DynamicResource PlaybarAccentColor}"
                                                          Stroke="{DynamicResource TextPrimary}"
                                                          StrokeThickness="1.5">
                                                     <Ellipse.Effect>
@@ -561,38 +561,56 @@
                     <Button x:Name="ServiceBtn1" Click="ServiceSearch_Click" Tag="0"
                             Style="{StaticResource DarkButton}" Margin="3,0,3,0" Padding="3"
                             MinWidth="0" ToolTip="Search on Spotify">
-                        <Image x:Name="ServiceImage1" Width="28" Height="28" Stretch="Uniform"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <Grid Width="28" Height="28">
+                            <Grid.Clip><EllipseGeometry Center="14,14" RadiusX="14" RadiusY="14"/></Grid.Clip>
+                            <Image x:Name="ServiceImage1" Width="28" Height="28" Stretch="UniformToFill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Grid>
                     </Button>
                     <Button x:Name="ServiceBtn2" Click="ServiceSearch_Click" Tag="1"
                             Style="{StaticResource DarkButton}" Margin="0,0,3,0" Padding="3"
                             MinWidth="0" ToolTip="Search on YouTube Music">
-                        <Image x:Name="ServiceImage2" Width="28" Height="28" Stretch="Uniform"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <Grid Width="28" Height="28">
+                            <Grid.Clip><EllipseGeometry Center="14,14" RadiusX="14" RadiusY="14"/></Grid.Clip>
+                            <Image x:Name="ServiceImage2" Width="28" Height="28" Stretch="UniformToFill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Grid>
                     </Button>
                     <Button x:Name="ServiceBtn3" Click="ServiceSearch_Click" Tag="2"
                             Style="{StaticResource DarkButton}" Margin="0,0,3,0" Padding="3"
                             MinWidth="0" ToolTip="Search on Tidal">
-                        <Image x:Name="ServiceImage3" Width="28" Height="28" Stretch="Uniform"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <Grid Width="28" Height="28">
+                            <Grid.Clip><EllipseGeometry Center="14,14" RadiusX="14" RadiusY="14"/></Grid.Clip>
+                            <Image x:Name="ServiceImage3" Width="28" Height="28" Stretch="UniformToFill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Grid>
                     </Button>
                     <Button x:Name="ServiceBtn4" Click="ServiceSearch_Click" Tag="3"
                             Style="{StaticResource DarkButton}" Margin="0,0,3,0" Padding="3"
                             MinWidth="0" ToolTip="Search on Qobuz">
-                        <Image x:Name="ServiceImage4" Width="28" Height="28" Stretch="Uniform"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <Grid Width="28" Height="28">
+                            <Grid.Clip><EllipseGeometry Center="14,14" RadiusX="14" RadiusY="14"/></Grid.Clip>
+                            <Image x:Name="ServiceImage4" Width="28" Height="28" Stretch="UniformToFill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Grid>
                     </Button>
                     <Button x:Name="ServiceBtn5" Click="ServiceSearch_Click" Tag="4"
                             Style="{StaticResource DarkButton}" Margin="0,0,3,0" Padding="3"
                             MinWidth="0" ToolTip="Search on Amazon Music">
-                        <Image x:Name="ServiceImage5" Width="28" Height="28" Stretch="Uniform"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <Grid Width="28" Height="28">
+                            <Grid.Clip><EllipseGeometry Center="14,14" RadiusX="14" RadiusY="14"/></Grid.Clip>
+                            <Image x:Name="ServiceImage5" Width="28" Height="28" Stretch="UniformToFill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Grid>
                     </Button>
                     <Button x:Name="ServiceBtn6" Click="ServiceSearch_Click" Tag="5"
                             Style="{StaticResource DarkButton}" Margin="0,0,3,0" Padding="3"
                             MinWidth="0" ToolTip="Search on Apple Music">
-                        <Image x:Name="ServiceImage6" Width="28" Height="28" Stretch="Uniform"
-                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <Grid Width="28" Height="28">
+                            <Grid.Clip><EllipseGeometry Center="14,14" RadiusX="14" RadiusY="14"/></Grid.Clip>
+                            <Image x:Name="ServiceImage6" Width="28" Height="28" Stretch="UniformToFill"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                        </Grid>
                     </Button>
                 </StackPanel>
 
@@ -700,6 +718,8 @@
                       VirtualizingPanel.IsVirtualizing="True"
                       VirtualizingPanel.VirtualizationMode="Recycling"
                       VirtualizingPanel.ScrollUnit="Pixel"
+                      VirtualizingPanel.CacheLength="2,2"
+                      VirtualizingPanel.CacheLengthUnit="Page"
                       EnableRowVirtualization="True"
                       EnableColumnVirtualization="True">
 
@@ -836,7 +856,7 @@
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
 
-                    <DataGridTextColumn Header="Ext" Binding="{Binding Extension}" Width="60"/>
+                    <DataGridTextColumn Header="Format" Binding="{Binding FormatDisplay}" Width="90"/>
                     <DataGridTextColumn Header="Max Freq" Binding="{Binding EffectiveFrequencyDisplay}" Width="100"/>
 
                     <DataGridTemplateColumn Header="Clipping" Width="250" SortMemberPath="HasClipping">

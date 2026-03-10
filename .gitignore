@@ -12,11 +12,13 @@ temp/
 Temp/
 release/
 Release/
+releases/
 Debug/
 x64/
 x86/
 artifacts/
 *.exe
+*.pdb
 *_wpftmp.csproj
 !*.csproj
 
@@ -69,6 +71,7 @@ session.dat
 *.secret
 
 # Dev / temp / personal files
+docs/
 to-do.txt
 todo.txt
 TODO.txt
