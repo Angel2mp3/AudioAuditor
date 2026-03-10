@@ -86,7 +86,7 @@ namespace AudioQualityChecker.Services
                 "FileSize" => f.FileSize,
                 "ReportedBitrateDisplay" or "ReportedBitrate" => f.ReportedBitrateDisplay,
                 "ActualBitrateDisplay" or "ActualBitrate" => f.ActualBitrateDisplay,
-                "Extension" => f.Extension,
+                "Extension" => f.FormatDisplay,
                 "EffectiveFrequencyDisplay" or "EffectiveFrequency" => f.EffectiveFrequencyDisplay,
                 "HasClipping" or "ClippingDisplay" => f.ClippingDisplay,
                 "ClippingPercentage" => f.HasClipping ? $"{f.ClippingPercentage:F2}%" : "-",
@@ -128,7 +128,7 @@ namespace AudioQualityChecker.Services
                 f.FileSize,
                 f.ReportedBitrate > 0 ? $"{f.ReportedBitrate} kbps" : "-",
                 f.ActualBitrate > 0 ? $"{f.ActualBitrate} kbps" : "-",
-                f.Extension,
+                f.FormatDisplay,
                 f.EffectiveFrequency > 0 ? $"{f.EffectiveFrequency} Hz" : "-",
                 f.HasClipping ? "YES" : "No",
                 f.HasClipping ? $"{f.ClippingPercentage:F2}%" : "-",
@@ -203,7 +203,7 @@ namespace AudioQualityChecker.Services
                     sb.AppendLine($"  [{f.Status}]  {f.FileName}");
                     if (!string.IsNullOrEmpty(f.Artist) || !string.IsNullOrEmpty(f.Title))
                         sb.AppendLine($"    Artist: {f.Artist}  |  Title: {f.Title}");
-                    sb.AppendLine($"    Format: {f.Extension}  |  Duration: {f.Duration}  |  Size: {f.FileSize}");
+                    sb.AppendLine($"    Format: {f.FormatDisplay}  |  Duration: {f.Duration}  |  Size: {f.FileSize}");
                     sb.AppendLine($"    Sample Rate: {(f.SampleRate > 0 ? $"{f.SampleRate} Hz" : "-")}  |  Bit Depth: {(f.BitsPerSample > 0 ? $"{f.BitsPerSample}-bit" : "-")}  |  Channels: {f.ChannelsDisplay}");
                     sb.AppendLine($"    Bitrate: {(f.ReportedBitrate > 0 ? $"{f.ReportedBitrate}" : "-")} / {(f.ActualBitrate > 0 ? $"{f.ActualBitrate}" : "-")} kbps (reported/actual)");
                     sb.AppendLine($"    Max Freq: {(f.EffectiveFrequency > 0 ? $"{f.EffectiveFrequency} Hz" : "-")}  |  Clipping: {f.ClippingDisplay}");

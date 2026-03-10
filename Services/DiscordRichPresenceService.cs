@@ -6,9 +6,8 @@ namespace AudioQualityChecker.Services
 {
     public class DiscordRichPresenceService : IDisposable
     {
-        // Discord Application ID for AudioAuditor
-        private const string ApplicationId = "1339103939694018570";
         private DiscordRpcClient? _client;
+        private string? _currentClientId;
         private bool _enabled;
         private bool _disposed;
         private bool _isReady;
@@ -27,18 +26,29 @@ namespace AudioQualityChecker.Services
 
         public void Enable()
         {
-            if (_enabled) return;
+            string clientId = ThemeManager.DiscordRpcClientId;
+            if (string.IsNullOrWhiteSpace(clientId))
+                return; // No Application ID configured
+
+            // If already enabled with the same ID, do nothing
+            if (_enabled && _currentClientId == clientId)
+                return;
+
+            // If switching IDs, disable first
+            if (_enabled)
+                Disable();
+
             try
             {
                 _isReady = false;
-                _client = new DiscordRpcClient(ApplicationId)
+                _currentClientId = clientId;
+                _client = new DiscordRpcClient(clientId)
                 {
                     Logger = new ConsoleLogger { Level = LogLevel.None }
                 };
                 _client.OnReady += (_, _) =>
                 {
                     _isReady = true;
-                    // Set idle presence as soon as we connect
                     SetIdlePresence();
                 };
                 _client.OnConnectionFailed += (_, _) => _isReady = false;
@@ -66,6 +76,7 @@ namespace AudioQualityChecker.Services
         {
             _enabled = false;
             _isReady = false;
+            _currentClientId = null;
             _lastDetails = null;
             _lastState = null;
             try
@@ -81,7 +92,7 @@ namespace AudioQualityChecker.Services
         }
 
         /// <summary>
-        /// Show idle status — AudioAuditor icon with "Browsing library" text.
+        /// Show idle status — app icon with "Browsing library" text.
         /// </summary>
         public void SetIdlePresence()
         {
@@ -111,9 +122,34 @@ namespace AudioQualityChecker.Services
         {
             if (!_enabled || _client == null || !_isReady) return;
 
-            string details = !string.IsNullOrEmpty(title) ? title : fileName ?? "Unknown";
-            string state = isPaused ? "Paused" :
-                (!string.IsNullOrEmpty(artist) ? $"by {artist}" : "Unknown Artist");
+            string displayMode = ThemeManager.DiscordRpcDisplayMode;
+            bool showElapsed = ThemeManager.DiscordRpcShowElapsed;
+
+            string details;
+            string state;
+
+            switch (displayMode)
+            {
+                case "ListeningDefault":
+                    details = "Music on AudioAuditor";
+                    state = isPaused ? "Paused" :
+                        (!string.IsNullOrEmpty(title) ? title :
+                        (!string.IsNullOrEmpty(fileName) ? fileName : "Idle"));
+                    break;
+                case "ListeningToMusic":
+                    details = "Listening to Music";
+                    state = isPaused ? "Paused" : "AudioAuditor";
+                    break;
+                case "FileName":
+                    details = fileName ?? "Unknown";
+                    state = isPaused ? "Paused" : "Playing";
+                    break;
+                default: // TrackDetails
+                    details = !string.IsNullOrEmpty(title) ? title : fileName ?? "Unknown";
+                    state = isPaused ? "Paused" :
+                        (!string.IsNullOrEmpty(artist) ? $"by {artist}" : "Unknown Artist");
+                    break;
+            }
 
             // Throttle: skip if we updated too recently AND the data hasn't changed
             var now = DateTime.UtcNow;
@@ -140,7 +176,7 @@ namespace AudioQualityChecker.Services
                 };
 
                 // Add elapsed time when playing (shows as "XX:XX elapsed")
-                if (!isPaused && position.HasValue)
+                if (showElapsed && !isPaused && position.HasValue)
                 {
                     presence.Timestamps = new Timestamps
                     {
@@ -162,7 +198,6 @@ namespace AudioQualityChecker.Services
             try
             {
                 _client.Invoke();
-                // Return to idle instead of fully clearing (keeps the icon visible)
                 SetIdlePresence();
             }
             catch { }

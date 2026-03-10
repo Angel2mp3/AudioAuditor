@@ -632,13 +632,129 @@
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,10"/>
 
-                <CheckBox x:Name="ChkDiscordRpc" Content="Discord Rich Presence"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,4"
-                          Checked="DiscordRpc_Changed" Unchecked="DiscordRpc_Changed"/>
-                <TextBlock Text="Shows currently playing track in your Discord status."
+                <!-- Discord Rich Presence -->
+                <TextBlock Text="Discord Rich Presence" FontSize="13" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                           Margin="0,0,0,4"/>
+                <TextBlock Text="Shows your currently playing track in your Discord status."
                            Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="20,0,0,12" TextWrapping="Wrap"/>
+                           FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
+
+                <TextBlock Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap">
+                    <Run FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}">Setup:</Run>
+                    <Run>1. Go to</Run>
+                    <Run FontWeight="SemiBold">discord.com/developers/applications</Run>
+                    <Run>→ New Application</Run>
+                    <LineBreak/>
+                    <Run>2. Copy the</Run>
+                    <Run FontWeight="SemiBold">Application ID</Run>
+                    <Run>(on the General Information page) and paste below</Run>
+                    <LineBreak/>
+                    <Run>3. (Optional) Go to Rich Presence → Art Assets, upload an icon named</Run>
+                    <Run FontWeight="SemiBold">audioauditor</Run>
+                </TextBlock>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <Button Style="{StaticResource SmallButton}" Click="DiscordCreateApp_Click"
+                            HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Open Discord Developer Portal" FontSize="11" FontFamily="Segoe UI"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SmallButton}" Click="DiscordDownloadLogo_Click"
+                            HorizontalAlignment="Left" Margin="6,0,0,0" Padding="6,3"
+                            ToolTip="Save the AudioAuditor icon to your Downloads folder for use as a Rich Presence asset">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#x2B73; Logo" FontSize="11" FontFamily="Segoe UI"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="95"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Application ID:"
+                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <TextBox Grid.Column="1" x:Name="DiscordAppIdBox"
+                             FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                             Background="{DynamicResource InputBg}"
+                             Foreground="{DynamicResource TextPrimary}"
+                             CaretBrush="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource ButtonBorder}"
+                             TextChanged="DiscordAppId_Changed">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox">
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
+                    <!-- Eye toggle for Discord App ID -->
+                    <Button Grid.Column="2"
+                            x:Name="BtnToggleDiscordIdVisibility"
+                            Click="ToggleDiscordIdVisibility_Click"
+                            VerticalAlignment="Center" Margin="6,0,0,0"
+                            Cursor="Hand" ToolTip="Show/Hide Application ID"
+                            Background="Transparent" BorderBrush="Transparent"
+                            Padding="4,2">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Background"
+                                                Value="{DynamicResource ButtonHover}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <Canvas Width="20" Height="16">
+                            <Path x:Name="DiscordEyeIcon"
+                                  Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                            <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                     Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                            <Line x:Name="DiscordEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                        </Canvas>
+                    </Button>
+                </Grid>
+
+                <CheckBox x:Name="ChkDiscordRpc" Content="Enable Discord Rich Presence"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                          FontFamily="Segoe UI" Margin="0,4,0,8"
+                          Checked="DiscordRpc_Changed" Unchecked="DiscordRpc_Changed"/>
+
+                <Grid Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="95"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Display Mode:"
+                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <ComboBox Grid.Column="1" x:Name="DiscordDisplayModeCombo"
+                              FontSize="12" SelectionChanged="DiscordDisplayMode_Changed"/>
+                </Grid>
+
+                <CheckBox x:Name="ChkDiscordShowElapsed" Content="Show elapsed time"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                          FontFamily="Segoe UI" Margin="0,2,0,4"
+                          Checked="DiscordShowElapsed_Changed" Unchecked="DiscordShowElapsed_Changed"/>
+
+                <TextBlock x:Name="DiscordStatusText" Text=""
+                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="0,2,0,0"/>
             </StackPanel>
 
             <!-- Last.fm Section -->
@@ -794,6 +910,14 @@
                     <ComboBox Grid.Column="1" x:Name="ConcurrencyCombo" FontSize="13"
                               SelectionChanged="ConcurrencyCombo_Changed"/>
                 </Grid>
+                <StackPanel x:Name="CustomCpuPanel" Orientation="Horizontal" Margin="130,6,0,0" Visibility="Collapsed">
+                    <TextBox x:Name="CustomCpuBox" Width="80" FontSize="13" FontFamily="Segoe UI"
+                             Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
+                             TextChanged="CustomCpu_Changed"/>
+                    <TextBlock Text=" threads" FontSize="13" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"/>
+                </StackPanel>
                 <TextBlock x:Name="ConcurrencyInfoText" Text=""
                            Foreground="{DynamicResource TextDim}" FontSize="11"
                            FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
@@ -808,6 +932,14 @@
                     <ComboBox Grid.Column="1" x:Name="MemoryLimitCombo" FontSize="13"
                               SelectionChanged="MemoryLimitCombo_Changed"/>
                 </Grid>
+                <StackPanel x:Name="CustomMemPanel" Orientation="Horizontal" Margin="130,6,0,0" Visibility="Collapsed">
+                    <TextBox x:Name="CustomMemBox" Width="80" FontSize="13" FontFamily="Segoe UI"
+                             Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
+                             TextChanged="CustomMem_Changed"/>
+                    <TextBlock Text=" MB" FontSize="13" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"/>
+                </StackPanel>
                 <TextBlock x:Name="MemoryInfoText" Text=""
                            Foreground="{DynamicResource TextDim}" FontSize="11"
                            FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>

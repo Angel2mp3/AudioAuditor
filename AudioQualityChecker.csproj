@@ -43,6 +43,9 @@
     <Resource Include="Resources\YTM.png" />
     <Resource Include="Resources\Tidal.png" />
     <Resource Include="Resources\Apple_music.png" />
+    <Resource Include="Resources\Soundcloud.png" />
+    <Resource Include="Resources\Deezer.png" />
+    <Resource Include="Resources\last.fm.png" />
   </ItemGroup>
 
 </Project>

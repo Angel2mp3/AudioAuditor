@@ -60,6 +60,9 @@ namespace AudioQualityChecker.Services
 
         // Discord Rich Presence
         public static bool DiscordRpcEnabled { get; set; }
+        public static string DiscordRpcClientId { get; set; } = "";
+        public static string DiscordRpcDisplayMode { get; set; } = "ListeningDefault"; // ListeningDefault, TrackDetails, ListeningToMusic, FileName
+        public static bool DiscordRpcShowElapsed { get; set; } = true;
 
         // Last.fm Scrobbling
         public static bool LastFmEnabled { get; set; }
@@ -83,7 +86,7 @@ namespace AudioQualityChecker.Services
         public static int MaxConcurrency
         {
             get => _maxConcurrency > 0 ? _maxConcurrency : DefaultConcurrency;
-            set => _maxConcurrency = Math.Clamp(value, 0, 32);
+            set => _maxConcurrency = Math.Clamp(value, 0, Environment.ProcessorCount);
         }
         public static int DefaultConcurrency => Math.Max(1, Math.Min(Environment.ProcessorCount / 2, 16));
         /// <summary>Available presets shown in the Settings UI.</summary>
@@ -94,6 +97,7 @@ namespace AudioQualityChecker.Services
             ("Medium (4 threads)", 4),
             ("High (8 threads)", 8),
             ("Maximum (16 threads)", 16),
+            ("Custom", -1),
         };
 
         // Performance — memory limit in MB (0 = auto)
@@ -102,7 +106,7 @@ namespace AudioQualityChecker.Services
         public static int MaxMemoryMB
         {
             get => _maxMemoryMB > 0 ? _maxMemoryMB : DefaultMemoryMB;
-            set => _maxMemoryMB = Math.Clamp(value, 0, 16384);
+            set => _maxMemoryMB = Math.Clamp(value, 0, (int)Math.Min(TotalSystemMemoryMB, 65536));
         }
         public static long TotalSystemMemoryMB
         {
@@ -122,6 +126,7 @@ namespace AudioQualityChecker.Services
             ("High (2 GB)", 2048),
             ("Very High (4 GB)", 4096),
             ("Maximum (8 GB)", 8192),
+            ("Custom", -1),
         };
 
         /// <summary>
@@ -157,6 +162,9 @@ namespace AudioQualityChecker.Services
             string saved = LoadSavedTheme();
             ApplyTheme(saved);
             LoadPlayOptions();
+
+            // Re-sync playbar accent after playbar theme is loaded from options
+            UpdatePlaybarAccentResource();
 
             // One-time migration: strip any leftover sensitive data from options.txt
             CleanSensitiveDataFromOptions();
@@ -201,6 +209,7 @@ namespace AudioQualityChecker.Services
                         case "LastFmApiSecret": LastFmApiSecret = sp[1]; break;
                         case "LastFmSessionKey": LastFmSessionKey = sp[1]; break;
                         case "LastFmUsername": LastFmUsername = sp[1]; break;
+                        case "DiscordRpcClientId": DiscordRpcClientId = sp[1]; break;
                     }
                 }
             }
@@ -221,7 +230,8 @@ namespace AudioQualityChecker.Services
                     !l.StartsWith("LastFmApiKey=", StringComparison.Ordinal) &&
                     !l.StartsWith("LastFmApiSecret=", StringComparison.Ordinal) &&
                     !l.StartsWith("LastFmSessionKey=", StringComparison.Ordinal) &&
-                    !l.StartsWith("LastFmUsername=", StringComparison.Ordinal)).ToArray();
+                    !l.StartsWith("LastFmUsername=", StringComparison.Ordinal) &&
+                    !l.StartsWith("DiscordRpcClientId=", StringComparison.Ordinal)).ToArray();
                 if (cleanLines.Length < lines.Length)
                     File.WriteAllLines(OptionsFile, cleanLines);
             }
@@ -242,6 +252,9 @@ namespace AudioQualityChecker.Services
                 res[kvp.Key] = kvp.Value;
             }
 
+            // Keep playbar accent in sync
+            UpdatePlaybarAccentResource();
+
             SaveTheme(themeName);
         }
 
@@ -250,7 +263,26 @@ namespace AudioQualityChecker.Services
             if (!AvailablePlaybarThemes.Contains(playbarTheme))
                 playbarTheme = "Blue Fire";
             _currentPlaybarTheme = playbarTheme;
+            // Invalidate cached colors so GetPlaybarColors() recalculates
+            _cachedPlaybarColors = null;
+            _cachedPlaybarThemeName = null;
+            UpdatePlaybarAccentResource();
             SavePlayOptions();
+        }
+
+        /// <summary>
+        /// Updates the PlaybarAccentColor resource to match the current playbar theme's primary color.
+        /// This keeps the seek slider, volume slider, and shuffle icon in sync with the playbar theme.
+        /// </summary>
+        public static void UpdatePlaybarAccentResource()
+        {
+            var colors = GetPlaybarColors();
+            // Use the middle gradient color (primary accent of the playbar theme) at full opacity
+            var primary = colors.ProgressGradient[1];
+            primary.A = 255;
+            var brush = new SolidColorBrush(primary);
+            brush.Freeze();
+            Application.Current.Resources["PlaybarAccentColor"] = brush;
         }
 
         private static PlaybarColors? _cachedPlaybarColors;
@@ -428,6 +460,8 @@ namespace AudioQualityChecker.Services
                     $"EqualizerEnabled={EqualizerEnabled}",
                     $"EqualizerGains={string.Join(";", EqualizerGains.Select(g => g.ToString("F1")))}",
                     $"DiscordRpc={DiscordRpcEnabled}",
+                    $"DiscordRpcDisplayMode={DiscordRpcDisplayMode}",
+                    $"DiscordRpcShowElapsed={DiscordRpcShowElapsed}",
                     $"LastFmEnabled={LastFmEnabled}",
                     $"ExportFormat={ExportFormat}",
                     $"SpatialAudio={SpatialAudioEnabled}",
@@ -451,7 +485,8 @@ namespace AudioQualityChecker.Services
                     $"LastFmApiKey={LastFmApiKey}",
                     $"LastFmApiSecret={LastFmApiSecret}",
                     $"LastFmSessionKey={LastFmSessionKey}",
-                    $"LastFmUsername={LastFmUsername}"
+                    $"LastFmUsername={LastFmUsername}",
+                    $"DiscordRpcClientId={DiscordRpcClientId}"
                 };
                 File.WriteAllLines(SensitiveFile, sensitiveLines);
             }
@@ -527,6 +562,11 @@ namespace AudioQualityChecker.Services
                                 if (float.TryParse(parts2[i], out var g)) EqualizerGains[i] = g;
                             break;
                         case "DiscordRpc": DiscordRpcEnabled = bool.TryParse(val, out var bdr) && bdr; break;
+                        case "DiscordRpcDisplayMode":
+                            if (new[] { "TrackDetails", "ListeningToMusic", "FileName" }.Contains(val))
+                                DiscordRpcDisplayMode = val;
+                            break;
+                        case "DiscordRpcShowElapsed": DiscordRpcShowElapsed = !(bool.TryParse(val, out var bde) && !bde); break;
                         case "LastFmEnabled": LastFmEnabled = bool.TryParse(val, out var blf) && blf; break;
                         case "ExportFormat":
                             if (new[] { "csv", "txt", "pdf", "xlsx", "docx" }.Contains(val))
