@@ -19,6 +19,10 @@
   <a href="https://ko-fi.com/angelsoftware">
     <img src="https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
+  &nbsp;
+  <a href="https://audioauditor.org">
+    <img src="https://img.shields.io/badge/Website-audioauditor.org-7c5cff?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"/>
+  </a>
 </p>
 
 ---
@@ -31,8 +35,10 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
-<img width="1547" height="867" alt="image(25)" src="https://github.com/user-attachments/assets/d6d9cfc6-f071-4990-b79e-56841247921b" />
-<img width="1547" height="867" alt="image(26)" src="https://github.com/user-attachments/assets/9b4d645a-a56c-42ca-b0b0-13c4f01b2082" />
+<img width="1547" height="867" alt="amethyst-theme" src="https://github.com/user-attachments/assets/1b5b02aa-c9b6-4467-acfa-f61232bd3ddd" />
+
+<img width="1547" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/7f3a0792-70a2-46b5-af11-386c2fc32a5b" />
+
 
 
 ## Features
