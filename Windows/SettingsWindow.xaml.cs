@@ -15,6 +15,8 @@ namespace AudioQualityChecker
         private bool _apiKeysVisible = false; // hidden by default
         private string _realApiKey = "";
         private string _realApiSecret = "";
+        private bool _discordIdVisible = false;
+        private string _realDiscordAppId = "";
 
         public SettingsWindow()
         {
@@ -62,6 +64,26 @@ namespace AudioQualityChecker
 
             // Discord RPC
             ChkDiscordRpc.IsChecked = ThemeManager.DiscordRpcEnabled;
+            _realDiscordAppId = ThemeManager.DiscordRpcClientId;
+            DiscordAppIdBox.Text = ThemeManager.DiscordRpcClientId;
+            ChkDiscordShowElapsed.IsChecked = ThemeManager.DiscordRpcShowElapsed;
+
+            // Discord display mode combo
+            DiscordDisplayModeCombo.Items.Add("Listening to: Music on AudioAuditor");
+            DiscordDisplayModeCombo.Items.Add("Track Details (Title + Artist)");
+            DiscordDisplayModeCombo.Items.Add("Listening to Music");
+            DiscordDisplayModeCombo.Items.Add("File Name Only");
+            DiscordDisplayModeCombo.SelectedIndex = ThemeManager.DiscordRpcDisplayMode switch
+            {
+                "TrackDetails" => 1,
+                "ListeningToMusic" => 2,
+                "FileName" => 3,
+                _ => 0 // ListeningDefault
+            };
+
+            // Hide Discord App ID by default
+            ApplyDiscordIdVisibility();
+            UpdateDiscordStatus();
 
             // Last.fm
             _realApiKey = ThemeManager.LastFmApiKey;
@@ -90,14 +112,26 @@ namespace AudioQualityChecker
 
             // Performance / concurrency
             int selectedConcurrencyIdx = 0;
+            bool cpuMatchedPreset = false;
             for (int ci = 0; ci < ThemeManager.ConcurrencyPresets.Length; ci++)
             {
                 var (label, value) = ThemeManager.ConcurrencyPresets[ci];
-                string display = value == 0 ? $"{label} — {ThemeManager.DefaultConcurrency} threads" : label;
+                string display = value == 0 ? $"{label} — {ThemeManager.DefaultConcurrency} threads"
+                    : value == -1 ? label : label;
                 ConcurrencyCombo.Items.Add(display);
-                if (value == ThemeManager.MaxConcurrency ||
-                    (value == 0 && ThemeManager.MaxConcurrency == ThemeManager.DefaultConcurrency))
+                if (value >= 0 && (value == ThemeManager.MaxConcurrency ||
+                    (value == 0 && ThemeManager.MaxConcurrency == ThemeManager.DefaultConcurrency)))
+                {
                     selectedConcurrencyIdx = ci;
+                    cpuMatchedPreset = true;
+                }
+            }
+            // If current value doesn't match any fixed preset, select Custom
+            if (!cpuMatchedPreset && ThemeManager.MaxConcurrency != ThemeManager.DefaultConcurrency)
+            {
+                selectedConcurrencyIdx = ThemeManager.ConcurrencyPresets.Length - 1; // Custom
+                CustomCpuPanel.Visibility = Visibility.Visible;
+                CustomCpuBox.Text = ThemeManager.MaxConcurrency.ToString();
             }
             ConcurrencyCombo.SelectedIndex = selectedConcurrencyIdx;
             ConcurrencyInfoText.Text = $"Your system has {Environment.ProcessorCount} logical processors. " +
@@ -105,14 +139,26 @@ namespace AudioQualityChecker
 
             // Memory limit
             int selectedMemoryIdx = 0;
+            bool memMatchedPreset = false;
             for (int mi = 0; mi < ThemeManager.MemoryPresets.Length; mi++)
             {
                 var (label, valueMB) = ThemeManager.MemoryPresets[mi];
-                string display = valueMB == 0 ? $"{label} — {ThemeManager.DefaultMemoryMB} MB" : label;
+                string display = valueMB == 0 ? $"{label} — {ThemeManager.DefaultMemoryMB} MB"
+                    : valueMB == -1 ? label : label;
                 MemoryLimitCombo.Items.Add(display);
-                if (valueMB == ThemeManager.MaxMemoryMB ||
-                    (valueMB == 0 && ThemeManager.MaxMemoryMB == ThemeManager.DefaultMemoryMB))
+                if (valueMB >= 0 && (valueMB == ThemeManager.MaxMemoryMB ||
+                    (valueMB == 0 && ThemeManager.MaxMemoryMB == ThemeManager.DefaultMemoryMB)))
+                {
                     selectedMemoryIdx = mi;
+                    memMatchedPreset = true;
+                }
+            }
+            // If current value doesn't match any fixed preset, select Custom
+            if (!memMatchedPreset && ThemeManager.MaxMemoryMB != ThemeManager.DefaultMemoryMB)
+            {
+                selectedMemoryIdx = ThemeManager.MemoryPresets.Length - 1; // Custom
+                CustomMemPanel.Visibility = Visibility.Visible;
+                CustomMemBox.Text = ThemeManager.MaxMemoryMB.ToString();
             }
             MemoryLimitCombo.SelectedIndex = selectedMemoryIdx;
             MemoryInfoText.Text = $"Your system has {ThemeManager.TotalSystemMemoryMB:N0} MB total RAM. " +
@@ -229,7 +275,9 @@ namespace AudioQualityChecker
         {
             // Auto-hide API keys when closing
             _apiKeysVisible = false;
+            _discordIdVisible = false;
             ApplyApiKeyVisibility();
+            ApplyDiscordIdVisibility();
             Close();
         }
 
@@ -237,11 +285,130 @@ namespace AudioQualityChecker
         //  Discord Rich Presence
         // ═══════════════════════════════════════════
 
+        private void DiscordCreateApp_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("https://discord.com/developers/applications") { UseShellExecute = true });
+            }
+            catch { }
+        }
+
+        private void DiscordDownloadLogo_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // icon.png is embedded as a WPF Resource, extract it from the assembly
+                string downloadsFolder = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                string destPath = System.IO.Path.Combine(downloadsFolder, "audioauditor.png");
+
+                var resourceUri = new Uri("pack://application:,,,/Resources/icon.png", UriKind.Absolute);
+                var streamInfo = System.Windows.Application.GetResourceStream(resourceUri);
+                if (streamInfo == null)
+                {
+                    MessageBox.Show("Could not find the AudioAuditor logo in Resources.", "Logo Not Found",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                using (var source = streamInfo.Stream)
+                using (var dest = new System.IO.FileStream(destPath, System.IO.FileMode.Create))
+                {
+                    source.CopyTo(dest);
+                }
+
+                MessageBox.Show($"Logo saved to:\n{destPath}\n\nUpload this as a Rich Presence asset named \"audioauditor\" on the Discord Developer Portal.",
+                    "Logo Downloaded", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to save logo: {ex.Message}", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void DiscordAppId_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (_discordIdVisible)
+            {
+                _realDiscordAppId = DiscordAppIdBox.Text.Trim();
+                ThemeManager.DiscordRpcClientId = _realDiscordAppId;
+                ThemeManager.SavePlayOptions();
+                UpdateDiscordStatus();
+            }
+        }
+
         private void DiscordRpc_Changed(object sender, RoutedEventArgs e)
         {
             if (_initializing) return;
             ThemeManager.DiscordRpcEnabled = ChkDiscordRpc.IsChecked == true;
             ThemeManager.SavePlayOptions();
+            UpdateDiscordStatus();
+        }
+
+        private void DiscordDisplayMode_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.DiscordRpcDisplayMode = DiscordDisplayModeCombo.SelectedIndex switch
+            {
+                1 => "TrackDetails",
+                2 => "ListeningToMusic",
+                3 => "FileName",
+                _ => "ListeningDefault"
+            };
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void DiscordShowElapsed_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.DiscordRpcShowElapsed = ChkDiscordShowElapsed.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void ToggleDiscordIdVisibility_Click(object sender, RoutedEventArgs e)
+        {
+            if (_discordIdVisible)
+            {
+                _realDiscordAppId = DiscordAppIdBox.Text.Trim();
+                ThemeManager.DiscordRpcClientId = _realDiscordAppId;
+                ThemeManager.SavePlayOptions();
+            }
+            _discordIdVisible = !_discordIdVisible;
+            ApplyDiscordIdVisibility();
+        }
+
+        private void ApplyDiscordIdVisibility()
+        {
+            if (_discordIdVisible)
+            {
+                _initializing = true;
+                DiscordAppIdBox.Text = _realDiscordAppId;
+                DiscordAppIdBox.IsReadOnly = false;
+                DiscordEyeSlash.Visibility = Visibility.Collapsed;
+                _initializing = false;
+            }
+            else
+            {
+                _initializing = true;
+                string dots = _realDiscordAppId.Length > 0 ? new string('●', Math.Max(_realDiscordAppId.Length, 20)) : "";
+                DiscordAppIdBox.Text = dots;
+                DiscordAppIdBox.IsReadOnly = true;
+                DiscordEyeSlash.Visibility = Visibility.Visible;
+                _initializing = false;
+            }
+        }
+
+        private void UpdateDiscordStatus()
+        {
+            if (string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
+                DiscordStatusText.Text = "Enter your Discord Application ID to enable Rich Presence.";
+            else if (ThemeManager.DiscordRpcEnabled)
+                DiscordStatusText.Text = "✓ Configured";
+            else
+                DiscordStatusText.Text = "Ready — enable the checkbox above to connect.";
         }
 
         // ═══════════════════════════════════════════
@@ -443,7 +610,29 @@ namespace AudioQualityChecker
             int idx = ConcurrencyCombo.SelectedIndex;
             if (idx >= 0 && idx < ThemeManager.ConcurrencyPresets.Length)
             {
-                ThemeManager.MaxConcurrency = ThemeManager.ConcurrencyPresets[idx].Value;
+                var (_, value) = ThemeManager.ConcurrencyPresets[idx];
+                if (value == -1)
+                {
+                    // Custom: show input, default to current value
+                    CustomCpuPanel.Visibility = Visibility.Visible;
+                    if (string.IsNullOrEmpty(CustomCpuBox.Text))
+                        CustomCpuBox.Text = ThemeManager.MaxConcurrency.ToString();
+                }
+                else
+                {
+                    CustomCpuPanel.Visibility = Visibility.Collapsed;
+                    ThemeManager.MaxConcurrency = value;
+                    ThemeManager.SavePlayOptions();
+                }
+            }
+        }
+
+        private void CustomCpu_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (int.TryParse(CustomCpuBox.Text, out int val) && val >= 1 && val <= Environment.ProcessorCount)
+            {
+                ThemeManager.MaxConcurrency = val;
                 ThemeManager.SavePlayOptions();
             }
         }
@@ -454,7 +643,29 @@ namespace AudioQualityChecker
             int idx = MemoryLimitCombo.SelectedIndex;
             if (idx >= 0 && idx < ThemeManager.MemoryPresets.Length)
             {
-                ThemeManager.MaxMemoryMB = ThemeManager.MemoryPresets[idx].ValueMB;
+                var (_, valueMB) = ThemeManager.MemoryPresets[idx];
+                if (valueMB == -1)
+                {
+                    // Custom: show input, default to current value
+                    CustomMemPanel.Visibility = Visibility.Visible;
+                    if (string.IsNullOrEmpty(CustomMemBox.Text))
+                        CustomMemBox.Text = ThemeManager.MaxMemoryMB.ToString();
+                }
+                else
+                {
+                    CustomMemPanel.Visibility = Visibility.Collapsed;
+                    ThemeManager.MaxMemoryMB = valueMB;
+                    ThemeManager.SavePlayOptions();
+                }
+            }
+        }
+
+        private void CustomMem_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (int.TryParse(CustomMemBox.Text, out int val) && val >= 128 && val <= (int)ThemeManager.TotalSystemMemoryMB)
+            {
+                ThemeManager.MaxMemoryMB = val;
                 ThemeManager.SavePlayOptions();
             }
         }

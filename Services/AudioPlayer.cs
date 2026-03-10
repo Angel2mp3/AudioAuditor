@@ -174,6 +174,18 @@ namespace AudioQualityChecker.Services
             if (_sampleChannel != null) _sampleChannel.Volume = effective;
         }
 
+        /// <summary>
+        /// Enables or disables normalization on the currently playing track without restarting playback.
+        /// </summary>
+        public void SetNormalization(bool enabled)
+        {
+            if (enabled && _currentFile != null)
+                CalculateNormalizationGain();
+            else
+                _normalizationGain = 1f;
+            ApplyVolume();
+        }
+
         public void Play(string filePath, bool normalize = false)
         {
             if (_currentFile == filePath && _waveOut?.PlaybackState == PlaybackState.Paused)

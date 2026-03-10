@@ -57,6 +57,21 @@ namespace AudioQualityChecker.Services
                     {
                         try { info.Bpm = DetectBpm(filePath); } catch { }
                     }
+
+                    // Detect ALAC codec inside M4A/MP4 containers
+                    if (info.Extension is ".m4a" or ".mp4")
+                    {
+                        try
+                        {
+                            if (DetectAlacCodec(filePath, tagFile))
+                                info.IsAlac = true;
+                        }
+                        catch { /* ALAC detection is best-effort */ }
+                    }
+                    else if (info.Extension == ".alac")
+                    {
+                        info.IsAlac = true;
+                    }
                 }
                 catch
                 {
@@ -337,8 +352,8 @@ namespace AudioQualityChecker.Services
             info.EffectiveFrequency = FindCutoffFrequency(avgSpectrum, sampleRate);
 
             // ── Map cutoff → estimated bitrate ──
-            bool isLossless = IsLosslessExtension(info.Extension);
-            string codec = info.Extension.TrimStart('.');
+            bool isLossless = IsLosslessFile(info);
+            string codec = info.IsAlac ? "alac" : info.Extension.TrimStart('.');
             int estimated = EstimateBitrateFromCutoff(info.EffectiveFrequency, sampleRate, isLossless, codec);
 
             if (isLossless)
@@ -613,7 +628,23 @@ namespace AudioQualityChecker.Services
 
             // AAC encoders (FDK-AAC, Apple AAC) generally preserve higher frequencies
             // at lower bitrates compared to MP3/LAME.
-            if (codec is "m4a" or "aac" or "mp4" or "alac")
+            // ALAC is lossless — use lossless estimation, not AAC lowpass mapping
+            if (codec is "alac")
+            {
+                if (cutoffHz >= (int)(nyquist * 0.90)) return 1411;
+                // Below 90% Nyquist = upconvert from lossy source
+                if (cutoffHz >= 20000) return 320;
+                if (cutoffHz >= 19500) return 256;
+                if (cutoffHz >= 18500) return 192;
+                if (cutoffHz >= 17500) return 160;
+                if (cutoffHz >= 16000) return 128;
+                if (cutoffHz >= 15000) return 96;
+                if (cutoffHz >= 11000) return 64;
+                if (cutoffHz >= 8000)  return 48;
+                return 32;
+            }
+
+            if (codec is "m4a" or "aac" or "mp4")
             {
                 if (cutoffHz >= 20000) return isLossless ? 1411 : 320;
                 if (cutoffHz >= 19500) return isLossless ? 1411 : 256;
@@ -685,7 +716,7 @@ namespace AudioQualityChecker.Services
             int actual = info.ActualBitrate;
             int cutoff = info.EffectiveFrequency;
             int nyquist = info.SampleRate / 2;
-            bool isLossless = IsLosslessExtension(info.Extension);
+            bool isLossless = IsLosslessFile(info);
 
             // ── Lossless ──
             if (isLossless)
@@ -819,7 +850,7 @@ namespace AudioQualityChecker.Services
         private static bool DetectOptimizer(AudioFileInfo info)
         {
             if (info.EffectiveFrequency == 0) return false;
-            if (IsLosslessExtension(info.Extension)) return false;
+            if (IsLosslessFile(info)) return false;
 
             try
             {
@@ -997,6 +1028,79 @@ namespace AudioQualityChecker.Services
         private static bool IsLosslessExtension(string ext)
             => ext is ".flac" or ".wav" or ".aiff" or ".aif"
                    or ".ape" or ".wv" or ".alac" or ".dsf" or ".dff";
+
+        /// <summary>
+        /// Checks if a file is lossless, accounting for ALAC codec inside M4A containers.
+        /// </summary>
+        private static bool IsLosslessFile(AudioFileInfo info)
+            => IsLosslessExtension(info.Extension) || info.IsAlac;
+
+        /// <summary>
+        /// Detects whether an M4A/MP4 file contains the ALAC (Apple Lossless) codec
+        /// by checking TagLib codec info, MP4 box types, and raw binary scanning.
+        /// </summary>
+        private static bool DetectAlacCodec(string filePath, TagLib.File tagFile)
+        {
+            // Method 1: Check TagLib codec description (covers many TagLib versions)
+            try
+            {
+                foreach (var codec in tagFile.Properties.Codecs)
+                {
+                    if (codec?.Description != null)
+                    {
+                        string desc = codec.Description.ToUpperInvariant();
+                        if (desc.Contains("ALAC") || desc.Contains("APPLE LOSSLESS"))
+                            return true;
+                    }
+                }
+            }
+            catch { /* fall through */ }
+
+            // Method 2: If TagLib opened it as an MPEG-4 file, check the audio codec box type
+            try
+            {
+                if (tagFile is TagLib.Mpeg4.File mp4File)
+                {
+                    // TagLib exposes codec info through Properties.Codecs — check for AppleTag AudioSampleEntry
+                    foreach (var codec in mp4File.Properties.Codecs)
+                    {
+                        // TagLib.Mpeg4.IsoAudioSampleEntry or similar — check type name as fallback
+                        string typeName = codec?.GetType().Name ?? "";
+                        if (typeName.Contains("Apple", StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                }
+            }
+            catch { /* fall through */ }
+
+            // Method 3: Check BitsPerSample — AAC reports 0 or 16 typically, ALAC reports 16/24/32
+            // ALAC files have very high bitrates (usually 700-1400+ kbps) compared to AAC
+            if (tagFile.Properties.BitsPerSample >= 16 && tagFile.Properties.AudioBitrate > 500)
+                return true;
+
+            // Method 4: Scan MP4 atoms for 'alac' codec identifier
+            // The 'alac' four-character code appears in the stsd (sample description) box
+            // as the codec type, typically within the first 64-128KB of the file
+            try
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                int scanLen = (int)Math.Min(131072, fs.Length); // scan first 128KB
+                byte[] buf = new byte[scanLen];
+                int bytesRead = fs.Read(buf, 0, scanLen);
+
+                byte a = (byte)'a', l = (byte)'l', c = (byte)'c';
+
+                for (int i = 0; i < bytesRead - 3; i++)
+                {
+                    // Match 'alac' (0x61 0x6C 0x61 0x63)
+                    if (buf[i] == a && buf[i + 1] == l && buf[i + 2] == a && buf[i + 3] == c)
+                        return true;
+                }
+            }
+            catch { /* binary scan failed */ }
+
+            return false;
+        }
 
         /// <summary>
         /// Detects BPM using onset detection + autocorrelation.

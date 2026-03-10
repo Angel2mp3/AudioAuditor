@@ -57,6 +57,9 @@ namespace AudioQualityChecker
         // Seek cooldown to prevent snap-back
         private DateTime _lastSeekTime = DateTime.MinValue;
 
+        // Horizontal scroll tracking — suppress vertical drift during touchpad horizontal swipes
+        private DateTime _lastHorizontalScrollTime = DateTime.MinValue;
+
         // Track the currently displayed spectrogram file
         private AudioFileInfo? _currentSpectrogramFile;
 
@@ -158,7 +161,7 @@ namespace AudioQualityChecker
             EqPanel.Visibility = Visibility.Collapsed;
 
             // Initialize Discord Rich Presence
-            if (ThemeManager.DiscordRpcEnabled)
+            if (ThemeManager.DiscordRpcEnabled && !string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
             {
                 _discord.Enable();
                 // Idle presence set automatically on Ready event
@@ -195,6 +198,7 @@ namespace AudioQualityChecker
                 if (scrollViewer != null)
                 {
                     scrollViewer.ScrollToHorizontalOffset(scrollViewer.HorizontalOffset + delta);
+                    _lastHorizontalScrollTime = DateTime.UtcNow;
                     handled = true;
                 }
             }
@@ -319,7 +323,7 @@ namespace AudioQualityChecker
                 || f.Artist.Contains(q, StringComparison.OrdinalIgnoreCase)
                 || f.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
                 || f.FilePath.Contains(q, StringComparison.OrdinalIgnoreCase)
-                || f.Extension.Contains(q, StringComparison.OrdinalIgnoreCase)
+                || f.FormatDisplay.Contains(q, StringComparison.OrdinalIgnoreCase)
                 || f.Status.ToString().Contains(q, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -550,7 +554,13 @@ namespace AudioQualityChecker
                     // Wait if memory usage exceeds configured limit
                     await ThemeManager.WaitForMemoryAsync();
                     ct.ThrowIfCancellationRequested();
-                    var info = await Task.Run(() => AudioAnalyzer.AnalyzeFile(path), ct);
+                    var info = await Task.Run(() =>
+                    {
+                        // Lower thread priority to reduce CPU spikes during analysis
+                        Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
+                        try { return AudioAnalyzer.AnalyzeFile(path); }
+                        finally { Thread.CurrentThread.Priority = ThreadPriority.Normal; }
+                    }, ct);
                     ct.ThrowIfCancellationRequested();
                     await Dispatcher.InvokeAsync(() =>
                     {
@@ -907,9 +917,25 @@ namespace AudioQualityChecker
         {
             if (ShuffleIcon != null)
             {
-                ShuffleIcon.Stroke = _shuffleMode
-                    ? (System.Windows.Media.Brush)FindResource("AccentColor")
-                    : (System.Windows.Media.Brush)FindResource("TextMuted");
+                var accent = (System.Windows.Media.Brush)FindResource("PlaybarAccentColor");
+                var muted = (System.Windows.Media.Brush)FindResource("TextMuted");
+                ShuffleIcon.Stroke = _shuffleMode ? accent : muted;
+                ShuffleIcon.StrokeThickness = _shuffleMode ? 2.6 : 2.2;
+
+                // Update the button background to clearly show active state
+                if (BtnShuffle != null)
+                {
+                    if (_shuffleMode && accent is System.Windows.Media.SolidColorBrush scb)
+                    {
+                        var glowColor = scb.Color;
+                        glowColor.A = 40; // ~15% opacity
+                        BtnShuffle.Background = new System.Windows.Media.SolidColorBrush(glowColor);
+                    }
+                    else
+                    {
+                        BtnShuffle.Background = System.Windows.Media.Brushes.Transparent;
+                    }
+                }
             }
         }
 
@@ -1116,13 +1142,8 @@ namespace AudioQualityChecker
 
         private void SeekSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
-            // When user clicks or drags, immediately seek
-            if (_isSeeking && _player.TotalDuration.TotalSeconds > 0)
-            {
-                double pos = SeekSlider.Value / SeekSlider.Maximum * _player.TotalDuration.TotalSeconds;
-                _player.Seek(pos);
-                _lastSeekTime = DateTime.UtcNow;
-            }
+            // During drag, only update visual position — actual seek happens on release
+            // This prevents audio stuttering from rapid seek calls
         }
 
         private void SeekSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e)
@@ -1241,6 +1262,15 @@ namespace AudioQualityChecker
             if (Keyboard.Modifiers == ModifierKeys.Shift)
             {
                 scrollViewer.ScrollToHorizontalOffset(scrollViewer.HorizontalOffset - e.Delta);
+                e.Handled = true;
+                return;
+            }
+
+            // Suppress small vertical scroll events that arrive during a touchpad horizontal swipe
+            // (touchpads often send both horizontal + tiny vertical deltas simultaneously)
+            if ((DateTime.UtcNow - _lastHorizontalScrollTime).TotalMilliseconds < 150 &&
+                Math.Abs(e.Delta) < 60)
+            {
                 e.Handled = true;
             }
         }
@@ -1791,20 +1821,31 @@ namespace AudioQualityChecker
             UpdateServiceButtonLabels();
             // Refresh title bar color after theme change
             ApplyThemeTitleBar();
+            // Refresh shuffle icon color for new theme
+            UpdateShuffleUI();
             // Re-theme equalizer sliders
             _eqSliderTemplateCache = null;
             InitializeEqualizerSliders();
             ChkEqEnabled.IsChecked = ThemeManager.EqualizerEnabled;
 
             // Sync Discord RPC state
-            if (ThemeManager.DiscordRpcEnabled && !_discord.IsEnabled)
-                _discord.Enable();
-            else if (!ThemeManager.DiscordRpcEnabled && _discord.IsEnabled)
+            if (ThemeManager.DiscordRpcEnabled && !string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
+            {
+                if (!_discord.IsEnabled)
+                    _discord.Enable();
+                else
+                    _discord.Enable(); // Re-enable to pick up any client ID change
+            }
+            else if (_discord.IsEnabled)
                 _discord.Disable();
 
             // Sync spatial audio state
             var spatial = _player.CurrentSpatialAudio;
             if (spatial != null) spatial.Enabled = ThemeManager.SpatialAudioEnabled;
+
+            // Sync normalization on currently playing track
+            if (_player.IsPlaying || _player.IsPaused)
+                _player.SetNormalization(ThemeManager.AudioNormalization);
 
             // Sync Last.fm state
             if (!string.IsNullOrEmpty(ThemeManager.LastFmSessionKey))
@@ -1881,7 +1922,7 @@ namespace AudioQualityChecker
             var buttons = new[] { ServiceBtn1, ServiceBtn2, ServiceBtn3, ServiceBtn4, ServiceBtn5, ServiceBtn6 };
 
             // Services whose PNGs render too small — force vector icon instead
-            var forceVector = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Spotify", "Tidal" };
+            var forceVector = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             for (int i = 0; i < 6; i++)
             {
@@ -1894,7 +1935,7 @@ namespace AudioQualityChecker
         private static ImageSource CreateServiceLogo(string service, int slotIndex = -1, bool forceVector = false)
         {
             // Use embedded PNGs for services that have them (unless forceVector is set)
-            if (!forceVector && (service == "Qobuz" || service == "Spotify" || service == "Amazon Music" || service == "Tidal" || service == "YouTube Music" || service == "Apple Music"))
+            if (!forceVector && (service == "Qobuz" || service == "Spotify" || service == "Amazon Music" || service == "Tidal" || service == "YouTube Music" || service == "Apple Music" || service == "SoundCloud" || service == "Deezer" || service == "Last.fm"))
             {
                 try
                 {
@@ -1906,6 +1947,9 @@ namespace AudioQualityChecker
                         "Qobuz" => "Resources/Qobuz.png",
                         "Amazon Music" => "Resources/Amazon-music.png",
                         "Apple Music" => "Resources/Apple_music.png",
+                        "SoundCloud" => "Resources/Soundcloud.png",
+                        "Deezer" => "Resources/Deezer.png",
+                        "Last.fm" => "Resources/last.fm.png",
                         _ => ""
                     };
                     if (!string.IsNullOrEmpty(pngName))
@@ -1914,7 +1958,7 @@ namespace AudioQualityChecker
                         bmp.BeginInit();
                         bmp.UriSource = new Uri($"pack://application:,,,/{pngName}");
                         bmp.CacheOption = BitmapCacheOption.OnLoad;
-                        bmp.DecodePixelWidth = 56;
+                        bmp.DecodePixelWidth = 64;
                         bmp.EndInit();
                         bmp.Freeze();
                         return bmp;
@@ -2391,9 +2435,16 @@ namespace AudioQualityChecker
 
                     // Generate spectrogram on background thread (CPU-heavy)
                     var rawBitmap = await Task.Run(() =>
-                        SpectrogramGenerator.Generate(fileRef.FilePath, 1800, 600,
-                            _spectrogramLinearScale, _spectrogramChannel,
-                            _spectrogramEndZoom ? 10 : 0));
+                    {
+                        Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
+                        try
+                        {
+                            return SpectrogramGenerator.Generate(fileRef.FilePath, 1800, 600,
+                                _spectrogramLinearScale, _spectrogramChannel,
+                                _spectrogramEndZoom ? 10 : 0);
+                        }
+                        finally { Thread.CurrentThread.Priority = ThreadPriority.Normal; }
+                    });
 
                     if (rawBitmap != null)
                     {

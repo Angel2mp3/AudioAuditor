@@ -5,6 +5,7 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditorCLI</AssemblyName>
   </PropertyGroup>
@@ -27,6 +28,7 @@
     <Compile Include="..\Services\FlacReader.cs" Link="Services\FlacReader.cs" />
     <Compile Include="..\Services\ExportService.cs" Link="Services\ExportService.cs" />
     <Compile Include="..\Services\AudioFormatReaders.cs" Link="Services\AudioFormatReaders.cs" />
+    <Compile Include="..\Services\SpectrogramGenerator.cs" Link="Services\SpectrogramGenerator.cs" />
   </ItemGroup>
 
 </Project>

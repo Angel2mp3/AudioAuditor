@@ -7,6 +7,7 @@ using SharpCompress.Common;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Media.Imaging;
 using AudioQualityChecker.Models;
 using AudioQualityChecker.Services;
 
@@ -24,6 +25,8 @@ namespace AudioQualityChecker.CLI
         {
             ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz"
         };
+
+        private static readonly List<string> _tempDirs = new();
 
         static int Main(string[] args)
         {
@@ -44,6 +47,7 @@ namespace AudioQualityChecker.CLI
                 "export" => RunExport(args.Skip(1).ToArray()),
                 "metadata" => RunMetadata(args.Skip(1).ToArray()),
                 "info" => RunInfo(args.Skip(1).ToArray()),
+                "spectrogram" or "spectro" => RunSpectrogram(args.Skip(1).ToArray()),
                 _ => Error($"Unknown command: {args[0]}. Use --help for usage.")
             };
         }
@@ -82,7 +86,8 @@ namespace AudioQualityChecker.CLI
                         or "--title" or "--artist" or "--album" or "--album-artist" or "--year"
                         or "--track" or "--track-count" or "--disc" or "--disc-count" or "--genre"
                         or "--bpm" or "--composer" or "--conductor" or "--grouping" or "--copyright"
-                        or "--comment" or "--lyrics" or "--cover";
+                        or "--comment" or "--lyrics" or "--cover"
+                        or "--cpu" or "--memory" or "--width" or "--height";
                 }
                 else if (expectingFlagValue)
                 {
@@ -130,16 +135,24 @@ NOTE: In PowerShell, prefix with .\ and quote paths containing
       spaces or special characters like ( ) '
 
 COMMANDS:
-  analyze    Analyze audio files or folders for quality
-  export     Analyze and export results to a file
-  metadata   View or edit audio file metadata
-  info       Show detailed info for a single file
+  analyze      Analyze audio files or folders for quality
+  export       Analyze and export results to a file
+  metadata     View or edit audio file metadata
+  info         Show detailed info for a single file
+  spectrogram  Generate and save spectrograms as PNG images
+
+GLOBAL OPTIONS:
+  --cpu <mode>     CPU usage mode: auto, low (2), medium (4), high (8), max (16)
+  --memory <mb>    Memory limit in MB (512-8192), or: auto, low, medium, high, max
 
 EXAMPLES:
   .\AudioAuditorCLI analyze ""C:\Music\album""
   .\AudioAuditorCLI analyze file.flac --verbose
   .\AudioAuditorCLI analyze ""C:\Music"" --status fake
+  .\AudioAuditorCLI analyze ""C:\Music"" --cpu low --memory 1024
   .\AudioAuditorCLI export ""C:\Music"" -o results.csv
+  .\AudioAuditorCLI spectrogram ""C:\Music\song.flac"" -o spectrograms/
+  .\AudioAuditorCLI spectrogram ""C:\Music"" --all -o spectrograms/
   .\AudioAuditorCLI metadata show ""C:\Music\song.flac""
   .\AudioAuditorCLI metadata set ""song.flac"" --title ""New Title"" --artist ""Artist""
   .\AudioAuditorCLI metadata remove-cover ""song.flac""
@@ -166,6 +179,8 @@ OPTIONS:
   --verbose, -v     Show detailed per-file analysis
   --status <s>      Filter output by status: real, fake, unknown, corrupt, optimized
   --threads <n>     Max parallel threads (default: auto)
+  --cpu <mode>      CPU preset: auto, low (2), medium (4), high (8), max (16)
+  --memory <mb>     Memory limit in MB (512-8192), or preset: auto, low, medium, high, max
   --recursive, -r   Recurse into subdirectories (default for folders)
   --no-recursive    Do not recurse into subdirectories
   --json            Output results as JSON
@@ -177,6 +192,7 @@ OPTIONS:
             bool verbose = false;
             string? statusFilter = null;
             int threads = Math.Max(1, Environment.ProcessorCount / 2);
+            int memoryLimitMb = 0;
             bool recursive = true;
             bool json = false;
 
@@ -187,6 +203,8 @@ OPTIONS:
                     case "--verbose" or "-v": verbose = true; break;
                     case "--status" when i + 1 < args.Length: statusFilter = args[++i].ToLowerInvariant(); break;
                     case "--threads" when i + 1 < args.Length: threads = Math.Clamp(int.Parse(args[++i]), 1, 32); break;
+                    case "--cpu" when i + 1 < args.Length: threads = ParseCpuPreset(args[++i]); break;
+                    case "--memory" when i + 1 < args.Length: memoryLimitMb = ParseMemoryPreset(args[++i]); break;
                     case "--no-recursive": recursive = false; break;
                     case "--recursive" or "-r": recursive = true; break;
                     case "--json": json = true; break;
@@ -205,9 +223,14 @@ OPTIONS:
                 return Error("No supported audio files found.");
 
             if (!json)
-                Console.WriteLine($"Analyzing {files.Count} file(s) with {threads} thread(s)...\n");
+            {
+                Console.WriteLine($"Analyzing {files.Count} file(s) with {threads} thread(s)...");
+                if (memoryLimitMb > 0)
+                    Console.WriteLine($"Memory limit: {memoryLimitMb} MB");
+                Console.WriteLine();
+            }
 
-            var results = AnalyzeFiles(files, threads, !json);
+            var results = AnalyzeFiles(files, threads, !json, memoryLimitMb);
 
             // Apply status filter
             if (statusFilter != null)
@@ -226,6 +249,7 @@ OPTIONS:
                 PrintAnalysisResults(results, verbose);
             }
 
+            CleanupTempDirs();
             return 0;
         }
 
@@ -246,6 +270,8 @@ OPTIONS:
   -o, --output <file>   Output file path (required)
   --format <fmt>        Export format: csv, txt, pdf, xlsx, docx (auto-detected from extension)
   --threads <n>         Max parallel threads (default: auto)
+  --cpu <mode>          CPU preset: auto, low (2), medium (4), high (8), max (16)
+  --memory <mb>         Memory limit in MB (512-8192), or preset: auto, low, medium, high, max
   --recursive, -r       Recurse into subdirectories (default)
   --no-recursive        Do not recurse
 ");
@@ -256,6 +282,7 @@ OPTIONS:
             string? output = null;
             string? format = null;
             int threads = Math.Max(1, Environment.ProcessorCount / 2);
+            int memoryLimitMb = 0;
             bool recursive = true;
 
             for (int i = 0; i < args.Length; i++)
@@ -265,6 +292,8 @@ OPTIONS:
                     case "-o" or "--output" when i + 1 < args.Length: output = args[++i]; break;
                     case "--format" when i + 1 < args.Length: format = args[++i].ToLowerInvariant(); break;
                     case "--threads" when i + 1 < args.Length: threads = Math.Clamp(int.Parse(args[++i]), 1, 32); break;
+                    case "--cpu" when i + 1 < args.Length: threads = ParseCpuPreset(args[++i]); break;
+                    case "--memory" when i + 1 < args.Length: memoryLimitMb = ParseMemoryPreset(args[++i]); break;
                     case "--no-recursive": recursive = false; break;
                     case "--recursive" or "-r": recursive = true; break;
                     default:
@@ -291,7 +320,7 @@ OPTIONS:
                 return Error("No supported audio files found.");
 
             Console.WriteLine($"Analyzing {files.Count} file(s)...");
-            var results = AnalyzeFiles(files, threads, showProgress: true);
+            var results = AnalyzeFiles(files, threads, showProgress: true, memoryLimitMb);
 
             Console.WriteLine($"Exporting to {output} ({format})...");
 
@@ -306,6 +335,7 @@ OPTIONS:
                 return Error($"Export failed: {ex.Message}");
             }
 
+            CleanupTempDirs();
             return 0;
         }
 
@@ -577,9 +607,10 @@ SET OPTIONS:
         static List<string> ExtractAudioFromArchive(string archivePath)
         {
             var result = new List<string>();
+            string? tempDir = null;
             try
             {
-                string tempDir = Path.Combine(Path.GetTempPath(), "AudioAuditor_" + Guid.NewGuid().ToString("N")[..8]);
+                tempDir = Path.Combine(Path.GetTempPath(), "AudioAuditor_" + Guid.NewGuid().ToString("N")[..8]);
                 Directory.CreateDirectory(tempDir);
 
                 string ext = Path.GetExtension(archivePath);
@@ -606,15 +637,24 @@ SET OPTIONS:
                         .Where(f => SupportedExtensions.Contains(Path.GetExtension(f))));
                 if (result.Count > 0)
                     Console.WriteLine($"  Extracted {result.Count} audio file(s) from {Path.GetFileName(archivePath)}");
+                
+                // Track temp directory for cleanup after analysis
+                lock (_tempDirs)
+                    _tempDirs.Add(tempDir);
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Warning: Could not extract archive {Path.GetFileName(archivePath)}: {ex.Message}");
+                // Clean up on failure
+                if (tempDir != null)
+                {
+                    try { Directory.Delete(tempDir, true); } catch { }
+                }
             }
             return result;
         }
 
-        static List<AudioFileInfo> AnalyzeFiles(List<string> files, int threads, bool showProgress)
+        static List<AudioFileInfo> AnalyzeFiles(List<string> files, int threads, bool showProgress, int memoryLimitMb = 0)
         {
             var results = new List<AudioFileInfo>();
             int completed = 0;
@@ -624,6 +664,23 @@ SET OPTIONS:
                 new ParallelOptions { MaxDegreeOfParallelism = threads },
                 filePath =>
                 {
+                    // Memory limiting: wait if exceeding configured limit
+                    if (memoryLimitMb > 0)
+                    {
+                        long limitBytes = (long)memoryLimitMb * 1024 * 1024;
+                        int waited = 0;
+                        while (System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 > limitBytes && waited < 10_000)
+                        {
+                            if (waited == 0)
+                            {
+                                GC.Collect(2, GCCollectionMode.Forced, false);
+                                GC.WaitForPendingFinalizers();
+                            }
+                            Thread.Sleep(200);
+                            waited += 200;
+                        }
+                    }
+
                     var result = AudioAnalyzer.AnalyzeFile(filePath);
                     lock (lockObj)
                     {
@@ -918,6 +975,185 @@ SET OPTIONS:
             Console.Error.WriteLine($"Error: {message}");
             Console.ResetColor();
             return 1;
+        }
+
+        // ═══════════════════════════════════════════
+        //  Spectrogram
+        // ═══════════════════════════════════════════
+
+        static int RunSpectrogram(string[] args)
+        {
+            if (args.Length == 0 || args.Contains("--help"))
+            {
+                Console.WriteLine(@"
+USAGE: audioauditorcli spectrogram <path> [options]
+
+Generate and save spectrograms as PNG images.
+
+OPTIONS:
+  -o, --output <dir>    Output directory for PNG files (default: current directory)
+  --width <px>          Image width in pixels (default: 1200)
+  --height <px>         Image height in pixels (default: 400)
+  --linear              Use linear frequency scale (default: logarithmic)
+  --difference          Show L-R channel difference instead of mono
+  --recursive, -r       Recurse into subdirectories (default for folders)
+  --no-recursive        Do not recurse
+  --all                 Generate for all files (same as specifying a folder)
+
+EXAMPLES:
+  .\AudioAuditorCLI spectrogram ""song.flac""
+  .\AudioAuditorCLI spectrogram ""C:\Music"" -o ""C:\Spectrograms""
+  .\AudioAuditorCLI spectrogram ""C:\Music"" --width 1600 --height 600 --linear
+");
+                return 0;
+            }
+
+            var paths = new List<string>();
+            string outputDir = ".";
+            int width = 1200;
+            int height = 400;
+            bool linearScale = false;
+            SpectrogramChannel channel = SpectrogramChannel.Mono;
+            bool recursive = true;
+
+            for (int i = 0; i < args.Length; i++)
+            {
+                switch (args[i].ToLowerInvariant())
+                {
+                    case "-o" or "--output" when i + 1 < args.Length: outputDir = args[++i]; break;
+                    case "--width" when i + 1 < args.Length: width = Math.Clamp(int.Parse(args[++i]), 200, 8000); break;
+                    case "--height" when i + 1 < args.Length: height = Math.Clamp(int.Parse(args[++i]), 100, 4000); break;
+                    case "--linear": linearScale = true; break;
+                    case "--difference": channel = SpectrogramChannel.Difference; break;
+                    case "--no-recursive": recursive = false; break;
+                    case "--recursive" or "-r" or "--all": recursive = true; break;
+                    default:
+                        if (!args[i].StartsWith("-"))
+                            paths.Add(args[i]);
+                        break;
+                }
+            }
+
+            if (paths.Count == 0)
+                return Error("No input path specified.");
+
+            outputDir = Path.GetFullPath(outputDir);
+            Directory.CreateDirectory(outputDir);
+
+            var files = CollectFiles(paths, recursive);
+            if (files.Count == 0)
+                return Error("No supported audio files found.");
+
+            Console.WriteLine($"Generating spectrograms for {files.Count} file(s)...");
+            Console.WriteLine($"Output: {outputDir}");
+            Console.WriteLine($"Size: {width} x {height}  Scale: {(linearScale ? "Linear" : "Logarithmic")}  Channel: {channel}");
+            Console.WriteLine();
+
+            int success = 0;
+            int failed = 0;
+
+            for (int i = 0; i < files.Count; i++)
+            {
+                string filePath = files[i];
+                string fileName = Path.GetFileNameWithoutExtension(filePath);
+                // Sanitize filename for output
+                string safeName = string.Join("_", fileName.Split(Path.GetInvalidFileNameChars()));
+                string outPath = Path.Combine(outputDir, safeName + ".png");
+
+                // Avoid overwriting: add suffix if file exists
+                int suffix = 1;
+                while (File.Exists(outPath))
+                {
+                    outPath = Path.Combine(outputDir, $"{safeName}_{suffix}.png");
+                    suffix++;
+                }
+
+                Console.Write($"\r  [{i + 1}/{files.Count}] {Path.GetFileName(filePath)}...");
+
+                try
+                {
+                    var bitmap = SpectrogramGenerator.Generate(filePath, width, height, linearScale, channel);
+                    if (bitmap != null)
+                    {
+                        SaveBitmapAsPng(bitmap, outPath);
+                        success++;
+                    }
+                    else
+                    {
+                        Console.WriteLine($" (skipped: too short or silent)");
+                        failed++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($" (error: {ex.Message})");
+                    failed++;
+                }
+            }
+
+            Console.WriteLine();
+            Console.WriteLine($"Done: {success} saved, {failed} failed/skipped.");
+            Console.WriteLine($"Output: {outputDir}");
+
+            CleanupTempDirs();
+            return 0;
+        }
+
+        static void SaveBitmapAsPng(BitmapSource bitmap, string outputPath)
+        {
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
+            encoder.Save(fs);
+        }
+
+        // ═══════════════════════════════════════════
+        //  CPU / Memory Preset Parsing
+        // ═══════════════════════════════════════════
+
+        static int ParseCpuPreset(string value)
+        {
+            return value.ToLowerInvariant() switch
+            {
+                "auto" or "balanced" => Math.Max(1, Environment.ProcessorCount / 2),
+                "low" => 2,
+                "medium" or "med" => 4,
+                "high" => 8,
+                "max" or "maximum" => 16,
+                _ when int.TryParse(value, out int n) => Math.Clamp(n, 1, 32),
+                _ => Math.Max(1, Environment.ProcessorCount / 2)
+            };
+        }
+
+        static int ParseMemoryPreset(string value)
+        {
+            return value.ToLowerInvariant() switch
+            {
+                "auto" or "balanced" => 0, // no limit
+                "low" => 512,
+                "medium" or "med" => 1024,
+                "high" => 2048,
+                "very-high" or "veryhigh" => 4096,
+                "max" or "maximum" => 8192,
+                _ when int.TryParse(value, out int n) => Math.Clamp(n, 256, 16384),
+                _ => 0
+            };
+        }
+
+        // ═══════════════════════════════════════════
+        //  Temp Directory Cleanup
+        // ═══════════════════════════════════════════
+
+        static void CleanupTempDirs()
+        {
+            lock (_tempDirs)
+            {
+                foreach (var dir in _tempDirs)
+                {
+                    try { Directory.Delete(dir, true); } catch { }
+                }
+                _tempDirs.Clear();
+            }
         }
     }
 }

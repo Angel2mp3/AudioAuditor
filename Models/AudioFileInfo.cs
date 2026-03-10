@@ -72,7 +72,11 @@ namespace AudioQualityChecker.Models
         // Album cover
         public bool HasAlbumCover { get; set; }
 
+        // ALAC codec detected inside M4A container
+        public bool IsAlac { get; set; }
+
         // Display properties
+        public string FormatDisplay => IsAlac ? $"{Extension} (ALAC)" : Extension;
         public string SampleRateDisplay => SampleRate > 0 ? $"{SampleRate:N0} Hz" : "-";
         public string BitsPerSampleDisplay => BitsPerSample > 0 ? $"{BitsPerSample}-bit" : "-";
         public string ReportedBitrateDisplay => ReportedBitrate > 0 ? $"{ReportedBitrate} kbps" : "-";
