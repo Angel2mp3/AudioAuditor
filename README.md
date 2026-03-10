@@ -258,7 +258,7 @@ AudioAuditor is designed with privacy in mind:
 Stored settings include: theme names, boolean flags, service slot names, custom URLs/icons, EQ gains, concurrency/memory limits. No sensitive data in this file. Last.fm session keys are stored separately in your Documents folder.
 
 - **No telemetry or analytics** — zero network calls except when you click a music service search button, use Discord Rich Presence, or scrobble to Last.fm
-- **No temp files or cache** — nothing written to disk beyond the small settings files
+- **Minimal Disk Usage files and cache** — Only small settings files and temporary archive extractions are written to disk. Analysis data lives in memory and temp files are cleaned up automatically.
 - **No logging** — no log files are created
 - **Zero AI Training** - nothing analyzed/played is *ever* used to train generative AI
 
@@ -380,5 +380,6 @@ This project is licensed under the [MIT License](LICENSE).
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
+
 
 
