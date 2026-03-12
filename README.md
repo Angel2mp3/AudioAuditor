@@ -100,7 +100,6 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - Smooth attack/decay animation
 - Log-frequency bar distribution matching human hearing
 - Theme-aware accent colors
-- **Rainbow mode** — Optional setting where each bar gets its own shifting spectrum color that cycles over time and reacts to amplitude
 - Toggle between spectrogram and visualizer modes
 
 ### Music Service Integration
@@ -327,8 +326,12 @@ AudioAuditor/
 
 ## Contributing
 
-Contributions are welcome! Feel free to open issues or submit pull requests.
+AudioAuditor is currently developed by a single maintainer in their free time.
+Contributions, suggestions, and feedback are always welcome!
 
+If you'd like to contribute, feel free to open an issue or submit a pull request.
+
+**Getting Started:**
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Commit your changes (`git commit -am 'Add my feature'`)
@@ -380,6 +383,7 @@ This project is licensed under the [MIT License](LICENSE).
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
+
 
 
 
