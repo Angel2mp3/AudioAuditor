@@ -35,8 +35,10 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
-<img width="1547" height="867" alt="image(25)" src="https://github.com/user-attachments/assets/d6d9cfc6-f071-4990-b79e-56841247921b" />
-<img width="1547" height="867" alt="image(26)" src="https://github.com/user-attachments/assets/9b4d645a-a56c-42ca-b0b0-13c4f01b2082" />
+<img width="1547" height="867" alt="amethyst-theme" src="https://github.com/user-attachments/assets/1b5b02aa-c9b6-4467-acfa-f61232bd3ddd" />
+
+<img width="1547" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/7f3a0792-70a2-46b5-af11-386c2fc32a5b" />
+
 
 
 ## Features
@@ -98,7 +100,6 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - Smooth attack/decay animation
 - Log-frequency bar distribution matching human hearing
 - Theme-aware accent colors
-- **Rainbow mode** — Optional setting where each bar gets its own shifting spectrum color that cycles over time and reacts to amplitude
 - Toggle between spectrogram and visualizer modes
 
 ### Music Service Integration
@@ -256,7 +257,7 @@ AudioAuditor is designed with privacy in mind:
 Stored settings include: theme names, boolean flags, service slot names, custom URLs/icons, EQ gains, concurrency/memory limits. No sensitive data in this file. Last.fm session keys are stored separately in your Documents folder.
 
 - **No telemetry or analytics** — zero network calls except when you click a music service search button, use Discord Rich Presence, or scrobble to Last.fm
-- **No temp files or cache** — nothing written to disk beyond the small settings files
+- **Minimal Disk Usage files and cache** — Only small settings files and temporary archive extractions are written to disk. Analysis data lives in memory and temp files are cleaned up automatically.
 - **No logging** — no log files are created
 - **Zero AI Training** - nothing analyzed/played is *ever* used to train generative AI
 
@@ -325,8 +326,12 @@ AudioAuditor/
 
 ## Contributing
 
-Contributions are welcome! Feel free to open issues or submit pull requests.
+AudioAuditor is currently developed by a single maintainer in their free time.
+Contributions, suggestions, and feedback are always welcome!
 
+If you'd like to contribute, feel free to open an issue or submit a pull request.
+
+**Getting Started:**
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/my-feature`)
 3. Commit your changes (`git commit -am 'Add my feature'`)
@@ -378,5 +383,7 @@ This project is licensed under the [MIT License](LICENSE).
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
+
+
 
 
