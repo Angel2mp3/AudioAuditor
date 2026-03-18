@@ -7,7 +7,7 @@ using SharpCompress.Common;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Media.Imaging;
+using SkiaSharp;
 using AudioQualityChecker.Models;
 using AudioQualityChecker.Services;
 
@@ -28,14 +28,35 @@ namespace AudioQualityChecker.CLI
 
         private static readonly List<string> _tempDirs = new();
 
+        private static bool _noColor = false;
+
         static int Main(string[] args)
         {
             // Rejoin args to handle unquoted paths with spaces, then re-split properly
             args = RejoinArgs(args);
 
+            // Check for global flags before command parsing
+            if (args.Contains("--no-color") || args.Contains("--no-colour"))
+            {
+                _noColor = true;
+                args = args.Where(a => a != "--no-color" && a != "--no-colour").ToArray();
+            }
+
+            // Detect NO_COLOR environment variable (https://no-color.org/)
+            if (Environment.GetEnvironmentVariable("NO_COLOR") != null)
+                _noColor = true;
+
             if (args.Length == 0 || args[0] == "--help" || args[0] == "-h")
             {
                 PrintHelp();
+                return 0;
+            }
+
+            if (args[0] == "--version" || args[0] == "-V")
+            {
+                Console.WriteLine($"AudioAuditor CLI v{GetVersion()}");
+                Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+                Console.WriteLine($"OS: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
                 return 0;
             }
 
@@ -50,6 +71,13 @@ namespace AudioQualityChecker.CLI
                 "spectrogram" or "spectro" => RunSpectrogram(args.Skip(1).ToArray()),
                 _ => Error($"Unknown command: {args[0]}. Use --help for usage.")
             };
+        }
+
+        static string GetVersion()
+        {
+            var asm = System.Reflection.Assembly.GetExecutingAssembly();
+            var ver = asm.GetName().Version;
+            return ver != null ? $"{ver.Major}.{ver.Minor}.{ver.Build}" : "1.4.0";
         }
 
         /// <summary>
@@ -125,14 +153,17 @@ namespace AudioQualityChecker.CLI
 
         static void PrintHelp()
         {
-            Console.WriteLine(@"
+            bool isWindows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows);
+            string exe = isWindows ? ".\\AudioAuditorCLI" : "./AudioAuditorCLI";
+            string musicPath = isWindows ? "C:\\Music\\album" : "~/Music/album";
+            string songPath = isWindows ? "C:\\Music\\song.flac" : "~/Music/song.flac";
+
+            Console.WriteLine($@"
 AudioAuditor CLI — Audio quality analysis from the command line
 
 USAGE:
-  .\AudioAuditorCLI <command> [options]
-
-NOTE: In PowerShell, prefix with .\ and quote paths containing
-      spaces or special characters like ( ) '
+  {exe} <command> [options]
 
 COMMANDS:
   analyze      Analyze audio files or folders for quality
@@ -144,19 +175,17 @@ COMMANDS:
 GLOBAL OPTIONS:
   --cpu <mode>     CPU usage mode: auto, low (2), medium (4), high (8), max (16)
   --memory <mb>    Memory limit in MB (512-8192), or: auto, low, medium, high, max
+  --no-color       Disable colored output
+  --version, -V    Show version information
 
 EXAMPLES:
-  .\AudioAuditorCLI analyze ""C:\Music\album""
-  .\AudioAuditorCLI analyze file.flac --verbose
-  .\AudioAuditorCLI analyze ""C:\Music"" --status fake
-  .\AudioAuditorCLI analyze ""C:\Music"" --cpu low --memory 1024
-  .\AudioAuditorCLI export ""C:\Music"" -o results.csv
-  .\AudioAuditorCLI spectrogram ""C:\Music\song.flac"" -o spectrograms/
-  .\AudioAuditorCLI spectrogram ""C:\Music"" --all -o spectrograms/
-  .\AudioAuditorCLI metadata show ""C:\Music\song.flac""
-  .\AudioAuditorCLI metadata set ""song.flac"" --title ""New Title"" --artist ""Artist""
-  .\AudioAuditorCLI metadata remove-cover ""song.flac""
-  .\AudioAuditorCLI info ""C:\Music\My Song (Remix).flac""
+  {exe} analyze ""{musicPath}""
+  {exe} analyze file.flac --verbose
+  {exe} analyze ""{musicPath}"" --status fake
+  {exe} export ""{musicPath}"" -o results.csv
+  {exe} spectrogram ""{songPath}"" -o spectrograms/
+  {exe} metadata show ""{songPath}""
+  {exe} info ""{songPath}""
 
 Use <command> --help for detailed command help.
 ");
@@ -184,6 +213,7 @@ OPTIONS:
   --recursive, -r   Recurse into subdirectories (default for folders)
   --no-recursive    Do not recurse into subdirectories
   --json            Output results as JSON
+  --experimental-ai Enable experimental spectral AI detection (more false positives)
 ");
                 return 0;
             }
@@ -195,6 +225,7 @@ OPTIONS:
             int memoryLimitMb = 0;
             bool recursive = true;
             bool json = false;
+            bool experimentalAi = false;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -208,6 +239,7 @@ OPTIONS:
                     case "--no-recursive": recursive = false; break;
                     case "--recursive" or "-r": recursive = true; break;
                     case "--json": json = true; break;
+                    case "--experimental-ai": experimentalAi = true; break;
                     default:
                         if (!args[i].StartsWith("-"))
                             paths.Add(args[i]);
@@ -229,6 +261,10 @@ OPTIONS:
                     Console.WriteLine($"Memory limit: {memoryLimitMb} MB");
                 Console.WriteLine();
             }
+
+            // Enable experimental AI if flag passed
+            if (experimentalAi)
+                AudioAnalyzer.EnableExperimentalAi = true;
 
             var results = AnalyzeFiles(files, threads, !json, memoryLimitMb);
 
@@ -549,13 +585,17 @@ SET OPTIONS:
         {
             if (args.Length == 0 || args.Contains("--help"))
             {
-                Console.WriteLine("USAGE: audioauditorcli info <file>\n\nShow detailed analysis for a single audio file.");
+                Console.WriteLine("USAGE: audioauditorcli info <file> [--experimental-ai]\n\nShow detailed analysis for a single audio file.");
                 return 0;
             }
 
-            string filePath = Path.GetFullPath(args[0]);
+            bool experimentalAi = args.Contains("--experimental-ai");
+            string filePath = Path.GetFullPath(args.Where(a => a != "--experimental-ai").First());
             if (!File.Exists(filePath))
                 return Error($"File not found: {filePath}");
+
+            if (experimentalAi)
+                AudioAnalyzer.EnableExperimentalAi = true;
 
             Console.WriteLine($"Analyzing: {Path.GetFileName(filePath)}...\n");
 
@@ -729,15 +769,15 @@ SET OPTIONS:
                     };
 
                     Console.WriteLine("───────────────────────────────────────");
-                    Console.ForegroundColor = statusColor;
+                    SetColor(statusColor);
                     Console.Write($"  [{statusText}]");
-                    Console.ResetColor();
+                    ResetColor();
                     Console.WriteLine($" {r.FileName}");
 
                     if (!string.IsNullOrEmpty(r.Title) || !string.IsNullOrEmpty(r.Artist))
                         Console.WriteLine($"  {r.Artist} — {r.Title}");
 
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    SetColor(ConsoleColor.DarkGray);
 
                     // Audio properties — two columns that fit in ~70 chars
                     string sr = r.SampleRate > 0 ? $"{r.SampleRate:N0} Hz" : "-";
@@ -763,6 +803,7 @@ SET OPTIONS:
                     else if (r.HasScaledClipping) flags.Add($"Scaled Clip {r.ScaledClippingPercentage:F1}%");
                     if (r.IsMqa) flags.Add(r.IsMqaStudio ? "MQA Studio" : "MQA");
                     if (r.IsAiGenerated) flags.Add($"AI: {r.AiSource}");
+                    if (r.ExperimentalAiSuspicious) flags.Add($"Spectral AI: {r.ExperimentalAiConfidence:P0}");
                     if (r.HasReplayGain) flags.Add($"RG: {r.ReplayGain:+0.0;-0.0;0.0} dB");
                     if (r.HasAlbumCover) flags.Add("Cover: Yes");
                     if (flags.Count > 0)
@@ -777,14 +818,14 @@ SET OPTIONS:
                         if (!string.IsNullOrEmpty(r.ErrorMessage)) Console.WriteLine($"  Error:     {r.ErrorMessage}");
                     }
 
-                    Console.ResetColor();
+                    ResetColor();
                 }
                 Console.WriteLine("───────────────────────────────────────");
             }
             else
             {
                 // For large result sets, just show fakes/corrupt/flagged files
-                var flagged = results.Where(r => r.Status == AudioStatus.Fake || r.Status == AudioStatus.Corrupt || r.IsAiGenerated || r.HasClipping || r.HasScaledClipping).ToList();
+                var flagged = results.Where(r => r.Status == AudioStatus.Fake || r.Status == AudioStatus.Corrupt || r.IsAiGenerated || r.ExperimentalAiSuspicious || r.HasClipping || r.HasScaledClipping).ToList();
                 if (flagged.Count > 0)
                 {
                     Console.WriteLine($"\nFlagged files ({flagged.Count}):");
@@ -796,13 +837,14 @@ SET OPTIONS:
                             AudioStatus.Corrupt => ConsoleColor.DarkRed,
                             _ => ConsoleColor.Yellow
                         };
-                        Console.ForegroundColor = c;
+                        SetColor(c);
                         string reason = r.Status == AudioStatus.Fake ? "FAKE" : r.Status == AudioStatus.Corrupt ? "CORRUPT" : "";
                         if (r.IsAiGenerated) reason += (reason.Length > 0 ? " + " : "") + "AI";
+                        if (r.ExperimentalAiSuspicious) reason += (reason.Length > 0 ? " + " : "") + "SPECTRAL AI";
                         if (r.HasClipping) reason += (reason.Length > 0 ? " + " : "") + "CLIPPING";
                         if (r.HasScaledClipping) reason += (reason.Length > 0 ? " + " : "") + "SCALED CLIP";
                         Console.Write($"  [{reason}]");
-                        Console.ResetColor();
+                        ResetColor();
                         Console.WriteLine($" {r.FileName}");
                     }
                 }
@@ -834,6 +876,8 @@ SET OPTIONS:
             int withCover = results.Count(r => r.HasAlbumCover);
             if (mqa > 0) Console.WriteLine($"  MQA:       {mqa}");
             if (ai > 0) Console.WriteLine($"  AI:        {ai}");
+            int spectralAi = results.Count(r => r.ExperimentalAiSuspicious);
+            if (spectralAi > 0) Console.WriteLine($"  Spectral:  {spectralAi} (experimental)");
             if (clipping > 0) Console.WriteLine($"  Clipping:  {clipping}");
             Console.WriteLine($"  Has Cover: {withCover}");
             if (withReplayGain > 0) Console.WriteLine($"  ReplayGain:{withReplayGain}");
@@ -853,7 +897,7 @@ SET OPTIONS:
             };
 
             Console.Write("Status:          ");
-            Console.ForegroundColor = statusColor;
+            SetColor(statusColor);
             Console.WriteLine(r.Status switch
             {
                 AudioStatus.Valid => "REAL (Genuine Lossless)",
@@ -863,7 +907,7 @@ SET OPTIONS:
                 AudioStatus.Optimized => "OPTIMIZED",
                 _ => r.Status.ToString()
             });
-            Console.ResetColor();
+            ResetColor();
 
             Console.WriteLine($"File:            {r.FileName}");
             Console.WriteLine($"Path:            {r.FilePath}");
@@ -899,6 +943,11 @@ SET OPTIONS:
                 Console.WriteLine($"MQA Encoder:     {r.MqaEncoder}");
             }
             Console.WriteLine($"AI Generated:    {(r.IsAiGenerated ? $"Yes — {r.AiSource}" : "No")}");
+            if (r.ExperimentalAiSuspicious)
+            {
+                Console.WriteLine($"Spectral AI:     Suspicious ({r.ExperimentalAiConfidence:P0})");
+                Console.WriteLine($"  Flags:         {string.Join(", ", r.ExperimentalAiFlags)}");
+            }
 
             if (!string.IsNullOrEmpty(r.ErrorMessage))
                 Console.WriteLine($"\nError:           {r.ErrorMessage}");
@@ -944,6 +993,8 @@ SET OPTIONS:
                 Console.WriteLine($"    \"mqaEncoder\": {JsonEscape(r.MqaEncoder)},");
                 Console.WriteLine($"    \"isAiGenerated\": {(r.IsAiGenerated ? "true" : "false")},");
                 Console.WriteLine($"    \"aiSource\": {JsonEscape(r.AiSource)},");
+                Console.WriteLine($"    \"experimentalAiSuspicious\": {(r.ExperimentalAiSuspicious ? "true" : "false")},");
+                Console.WriteLine($"    \"experimentalAiConfidence\": {r.ExperimentalAiConfidence:F2},");
                 Console.WriteLine($"    \"hasAlbumCover\": {(r.HasAlbumCover ? "true" : "false")}");
                 Console.WriteLine($"  }}{comma}");
             }
@@ -971,10 +1022,22 @@ SET OPTIONS:
 
         static int Error(string message)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
+            SetColor(ConsoleColor.Red);
             Console.Error.WriteLine($"Error: {message}");
-            Console.ResetColor();
+            ResetColor();
             return 1;
+        }
+
+        static void SetColor(ConsoleColor color)
+        {
+            if (!_noColor)
+                Console.ForegroundColor = color;
+        }
+
+        static void ResetColor()
+        {
+            if (!_noColor)
+                Console.ResetColor();
         }
 
         // ═══════════════════════════════════════════
@@ -1072,10 +1135,10 @@ EXAMPLES:
 
                 try
                 {
-                    var bitmap = SpectrogramGenerator.Generate(filePath, width, height, linearScale, channel);
-                    if (bitmap != null)
+                    var result = SpectrogramGenerator.GenerateRawPixels(filePath, width, height, linearScale, channel);
+                    if (result != null)
                     {
-                        SaveBitmapAsPng(bitmap, outPath);
+                        SaveRgb24AsPng(result.Value.pixels, result.Value.width, result.Value.height, outPath);
                         success++;
                     }
                     else
@@ -1099,12 +1162,25 @@ EXAMPLES:
             return 0;
         }
 
-        static void SaveBitmapAsPng(BitmapSource bitmap, string outputPath)
+        static void SaveRgb24AsPng(byte[] rgb24, int width, int height, string outputPath)
         {
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque);
+            var pixels = bitmap.GetPixels();
+            unsafe
+            {
+                byte* dst = (byte*)pixels.ToPointer();
+                for (int i = 0; i < width * height; i++)
+                {
+                    dst[i * 4 + 0] = rgb24[i * 3 + 0]; // R
+                    dst[i * 4 + 1] = rgb24[i * 3 + 1]; // G
+                    dst[i * 4 + 2] = rgb24[i * 3 + 2]; // B
+                    dst[i * 4 + 3] = 255;               // A
+                }
+            }
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
             using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-            encoder.Save(fs);
+            data.SaveTo(fs);
         }
 
         // ═══════════════════════════════════════════

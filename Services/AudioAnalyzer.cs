@@ -14,6 +14,9 @@ namespace AudioQualityChecker.Services
         private const int AnalysisSegments = 200;
         private const float ClippingThreshold = 0.9999f;
 
+        /// <summary>Set to true to enable experimental spectral AI detection.</summary>
+        public static bool EnableExperimentalAi { get; set; }
+
         public static AudioFileInfo AnalyzeFile(string filePath)
         {
             var info = new AudioFileInfo
@@ -137,6 +140,22 @@ namespace AudioQualityChecker.Services
                 }
                 catch { /* AI detection is optional */ }
 
+                // ── Experimental AI detection (spectral analysis) ──
+                try
+                {
+                    if (EnableExperimentalAi)
+                    {
+                        var expResult = ExperimentalAiDetector.Analyze(filePath);
+                        if (expResult != null && expResult.Suspicious)
+                        {
+                            info.ExperimentalAiSuspicious = true;
+                            info.ExperimentalAiConfidence = expResult.Confidence;
+                            info.ExperimentalAiFlags = expResult.Flags;
+                        }
+                    }
+                }
+                catch { /* Experimental AI detection is optional */ }
+
                 // ── Album cover detection ──
                 try
                 {
@@ -214,6 +233,14 @@ namespace AudioQualityChecker.Services
             int validSegments = 0;
             float maxAbsSample = 0f;
 
+            // Peak histogram for scaled clipping: 1000 bins covering 0.5–1.0
+            // (each bin = 0.0005 range). This lets us detect scaled clipping
+            // in a single pass without re-opening the file.
+            const int PeakHistBins = 1000;
+            const float PeakHistMin = 0.5f;
+            const float PeakHistScale = PeakHistBins / (1.0f - PeakHistMin); // 2000
+            int[] peakHistogram = new int[PeakHistBins];
+
             long currentFrame = 0;
 
             // Skip to safeStart by reading and discarding
@@ -266,6 +293,13 @@ namespace AudioQualityChecker.Services
                         sum += s;
                         if (absSample >= ClippingThreshold) clippingSamples++;
                         if (absSample > maxAbsSample) maxAbsSample = absSample;
+                        // Track peak histogram for scaled clipping detection
+                        if (absSample >= PeakHistMin && absSample < 1.0f)
+                        {
+                            int bin = (int)((absSample - PeakHistMin) * PeakHistScale);
+                            if (bin >= PeakHistBins) bin = PeakHistBins - 1;
+                            peakHistogram[bin]++;
+                        }
                         totalSamplesRead++;
                     }
                     real[i] = (sum / channels) * window[i];
@@ -306,37 +340,19 @@ namespace AudioQualityChecker.Services
                 // If level is below 0 dBFS but samples are clustered at the peak
                 // (e.g., clipping happened then the whole file was scaled down),
                 // detect a "plateau" at the max level.
+                // Uses the histogram collected during the first pass — no second file open needed.
                 if (!info.HasClipping && maxAbsSample > 0.5f && maxAbsSample < ClippingThreshold)
                 {
-                    long scaledClipSamples = 0;
-                    // Threshold: within 0.01% of the peak (tight plateau)
                     float scaledThreshold = maxAbsSample * 0.9999f;
-                    // Re-scan the counted samples via a second pass isn't practical,
-                    // but we already tracked per-segment. Use a ratio heuristic:
-                    // recount how many of the total are near the peak by re-reading.
-                    // For efficiency, use a quick scan of a portion of the file.
-                    try
+                    int scaledBin = Math.Max(0, (int)((scaledThreshold - PeakHistMin) * PeakHistScale));
+                    if (scaledBin < PeakHistBins)
                     {
-                        var (disp2, samp2, wf2) = OpenAudioFile(filePath);
-                        using var _d2 = disp2;
-                        int ch2 = wf2.Channels;
-                        float[] scanBuf = new float[4096 * ch2];
-                        long scannedTotal = 0;
-                        // Scan up to 2M samples (quick)
-                        while (scannedTotal < 2_000_000)
+                        long scaledClipSamples = 0;
+                        for (int b = scaledBin; b < PeakHistBins; b++)
+                            scaledClipSamples += peakHistogram[b];
+                        if (totalSamplesRead > 0)
                         {
-                            int got = samp2.Read(scanBuf, 0, scanBuf.Length);
-                            if (got <= 0) break;
-                            for (int si = 0; si < got; si++)
-                            {
-                                if (Math.Abs(scanBuf[si]) >= scaledThreshold)
-                                    scaledClipSamples++;
-                            }
-                            scannedTotal += got;
-                        }
-                        if (scannedTotal > 0)
-                        {
-                            double pct = (double)scaledClipSamples / scannedTotal * 100.0;
+                            double pct = (double)scaledClipSamples / totalSamplesRead * 100.0;
                             if (pct > 0.01)
                             {
                                 info.HasScaledClipping = true;
@@ -344,7 +360,6 @@ namespace AudioQualityChecker.Services
                             }
                         }
                     }
-                    catch { /* scaled clipping check is best-effort */ }
                 }
             }
 
@@ -363,7 +378,11 @@ namespace AudioQualityChecker.Services
                 int cutoff = info.EffectiveFrequency;
                 int nyquist = sampleRate / 2;
 
-                if (cutoff >= (int)(nyquist * 0.90))
+                // Use both percentage and absolute floor. The absolute floor (20 kHz)
+                // prevents hi-res files (96/192 kHz) from being penalised for lacking
+                // ultrasonic content. 20 kHz is above the ~19.5 kHz lowpass used by
+                // LAME at 256 kbps, so 256 kbps transcodes are still caught.
+                if (cutoff >= (int)(nyquist * 0.90) || cutoff >= 20000)
                 {
                     // True lossless — report actual compressed file bitrate
                     if (info.DurationSeconds > 0 && info.FileSizeBytes > 0)
@@ -374,6 +393,24 @@ namespace AudioQualityChecker.Services
                         int ch = info.Channels > 0 ? info.Channels : 2;
                         info.ActualBitrate = sampleRate * bitsPerSample * ch / 1000;
                     }
+                }
+                else if (cutoff <= 0 || estimated <= 32)
+                {
+                    // Cutoff detection returned 0 or an absurdly low estimate for a
+                    // lossless file.  Nobody transcodes ≤32 kbps audio to FLAC/WAV —
+                    // this is almost certainly a spectral analysis failure.
+                    // Fall back to file-size bitrate and mark Unknown so we don't
+                    // confidently claim a wrong bitrate.
+                    if (info.DurationSeconds > 0 && info.FileSizeBytes > 0)
+                        info.ActualBitrate = (int)(info.FileSizeBytes * 8.0 / info.DurationSeconds / 1000.0);
+                    else
+                    {
+                        int bitsPerSample = info.BitsPerSample > 0 ? info.BitsPerSample : 16;
+                        int ch = info.Channels > 0 ? info.Channels : 2;
+                        info.ActualBitrate = sampleRate * bitsPerSample * ch / 1000;
+                    }
+                    // Don't use estimated — let DetermineQuality handle status;
+                    // it will see cutoff < 90% but ActualBitrate > 256 → Unknown
                 }
                 else
                 {
@@ -399,10 +436,18 @@ namespace AudioQualityChecker.Services
                         // Spectral estimate is significantly lower than reported.
                         // Only trust it if the cutoff is genuinely very low — otherwise
                         // the spectral analysis likely hit a natural feature.
-                        // A cutoff below 14 kHz is strong evidence of a low-quality source.
-                        // Above 14 kHz, the spectral estimate is unreliable for distinguishing
-                        // moderate bitrates (128-256) and natural rolloff is common.
-                        if (info.EffectiveFrequency < 14000)
+                        // The more extreme the estimate, the lower the cutoff must be
+                        // to be credible. A 48 kbps estimate needs ironclad evidence;
+                        // a 96 kbps estimate needs moderate evidence.
+                        int trustCutoffLimit;
+                        if (estimated <= 64)
+                            trustCutoffLimit = 11000;  // Very low estimates need strong evidence
+                        else if (estimated <= 96)
+                            trustCutoffLimit = 12500;
+                        else
+                            trustCutoffLimit = 14000;
+
+                        if (info.EffectiveFrequency < trustCutoffLimit)
                         {
                             info.ActualBitrate = estimated;
                         }
@@ -491,7 +536,7 @@ namespace AudioQualityChecker.Services
 
             // Determine the noise floor: average of the top 5% of the spectrum
             // (above Nyquist * 0.95), which for most audio is pure noise.
-            int noiseStart = (int)(specLen * 0.93);
+            int noiseStart = (int)(specLen * 0.95);
             double noiseFloor = 0.0;
             int noiseCnt = 0;
             for (int i = noiseStart; i < specLen; i++)
@@ -503,15 +548,30 @@ namespace AudioQualityChecker.Services
             // Clamp: noise floor shouldn't be reported higher than -40 dB
             if (noiseFloor > -40.0) noiseFloor = -40.0;
 
-            // The "content threshold" is midway between the noise floor and -20 dB.
-            // Below this, we consider the spectrum to be noise, not real audio content.
-            // Typical values: noise floor ~ -80 dB → threshold ~ -50 dB
-            //                 noise floor ~ -60 dB → threshold ~ -40 dB
-            double contentThreshold = (noiseFloor + -20.0) / 2.0;
-            // But never higher than -30 dB (we don't want to be too aggressive)
-            if (contentThreshold > -30.0) contentThreshold = -30.0;
-            // And never lower than -55 dB
-            if (contentThreshold < -55.0) contentThreshold = -55.0;
+            // ── Adaptive content threshold ──
+            // A fixed threshold fails because spectral energy varies wildly by
+            // genre: bright pop might have -25 dB at 14 kHz while dark ambient
+            // has -45 dB there. Instead, derive the threshold from the file's own
+            // core content band (2-8 kHz) where virtually all music has energy.
+            int refStart = Math.Max(5, (int)(2000.0 / binHz));
+            int refEnd   = Math.Min(specLen, (int)(8000.0 / binHz));
+            // Collect smoothed values and take the median for robustness
+            var refValues = new System.Collections.Generic.List<double>(refEnd - refStart);
+            for (int i = refStart; i < refEnd; i++)
+                refValues.Add(smooth[i]);
+            refValues.Sort();
+            double refMedian = refValues.Count > 0 ? refValues[refValues.Count / 2] : -40.0;
+
+            // Content threshold = reference median minus 25 dB.
+            // This means we look for energy within 25 dB of the core content,
+            // adapting to each file's spectral shape automatically.
+            double adaptiveThreshold = refMedian - 25.0;
+            // But never above the noise floor + 10 dB (must stay above noise)
+            double noiseThresholdLimit = noiseFloor + 10.0;
+            double contentThreshold = Math.Max(adaptiveThreshold, noiseThresholdLimit);
+            // Safety bounds
+            if (contentThreshold > -25.0) contentThreshold = -25.0;
+            if (contentThreshold < -70.0) contentThreshold = -70.0;
 
             // Scan from high frequencies downward to find where real content ends.
             // Use a sliding window to avoid single-bin noise spikes fooling us.
@@ -584,16 +644,54 @@ namespace AudioQualityChecker.Services
 
             double dropAcrossCutoff = energyBelow - energyAbove;
 
-            // A real codec cutoff has a drop of at least 15 dB across the boundary.
-            // Natural rolloff is typically 3-10 dB per octave which over a 2 kHz span
-            // is much less than 15 dB for most music.
-            if (dropAcrossCutoff < 15.0)
+            // Additional sharpness check: a real codec lowpass is a brick-wall filter
+            // that drops steeply within a narrow band (~500 Hz). Natural rolloff is
+            // gradual across octaves and won't show a sharp transition.
+            int sharpRange = Math.Max(4, (int)(500.0 / binHz)); // ~500 Hz
+            double sharpBelow = 0, sharpAbove = 0;
+            int scBelow = 0, scAbove = 0;
+            for (int i = Math.Max(startBin, cutoffBin - sharpRange); i < cutoffBin; i++)
             {
-                // Not a hard cutoff — this is natural high-frequency rolloff
-                return sampleRate / 2;
+                sharpBelow += smooth[i]; scBelow++;
             }
+            for (int i = cutoffBin; i < Math.Min(specLen, cutoffBin + sharpRange); i++)
+            {
+                sharpAbove += smooth[i]; scAbove++;
+            }
+            if (scBelow > 0) sharpBelow /= scBelow;
+            if (scAbove > 0) sharpAbove /= scAbove;
+            double sharpDrop = sharpBelow - sharpAbove;
 
             int freq = (int)(cutoffBin * binHz);
+
+            // Validate that this is a real codec lowpass, not natural rolloff.
+            // Codec lowpass has two hallmarks:
+            //   1. Broad drop: >= 20 dB energy difference across 2 kHz boundary
+            //   2. Sharp drop: >= 10 dB within just 500 Hz (brick-wall filter)
+            //
+            // For cutoffs in the normal lossy range (10+ kHz), EITHER hallmark is
+            // sufficient — some encoders produce a steep but narrow transition,
+            // others a softer but clearly visible shelf. We use relaxed thresholds
+            // (15 dB broad, 8 dB sharp) and require at least one to pass.
+            //
+            // For very low detected cutoffs (< 10 kHz), we require BOTH strict
+            // thresholds to prevent false detections that would report absurdly
+            // low bitrates (the old "24 kbps" problem).
+            if (freq < 10000)
+            {
+                // Very low cutoff — require strong evidence on BOTH checks
+                if (dropAcrossCutoff < 20.0 || sharpDrop < 10.0)
+                    return sampleRate / 2;
+            }
+            else
+            {
+                // Normal range — either check showing clear evidence is sufficient
+                bool broadDropOk = dropAcrossCutoff >= 15.0;
+                bool sharpDropOk = sharpDrop >= 8.0;
+                if (!broadDropOk && !sharpDropOk)
+                    return sampleRate / 2;
+            }
+
             return Math.Min(freq, sampleRate / 2);
         }
 
@@ -617,8 +715,10 @@ namespace AudioQualityChecker.Services
 
             if (isLossless)
             {
-                // If content extends to near Nyquist, it's real lossless
-                if (cutoffHz >= (int)(nyquist * 0.90))
+                // Content at 20 kHz+ can't be from a sub-320 kbps transcode.
+                // Using both percentage and absolute floor prevents hi-res files
+                // (96/192 kHz) from false-flagging due to no ultrasonic content.
+                if (cutoffHz >= (int)(nyquist * 0.90) || cutoffHz >= 20000)
                     return 1411;
                 // Otherwise fall through — it's an upconvert from lossy
             }
@@ -631,8 +731,8 @@ namespace AudioQualityChecker.Services
             // ALAC is lossless — use lossless estimation, not AAC lowpass mapping
             if (codec is "alac")
             {
-                if (cutoffHz >= (int)(nyquist * 0.90)) return 1411;
-                // Below 90% Nyquist = upconvert from lossy source
+                if (cutoffHz >= (int)(nyquist * 0.90) || cutoffHz >= 20000) return 1411;
+                // Below threshold = upconvert from lossy source
                 if (cutoffHz >= 20000) return 320;
                 if (cutoffHz >= 19500) return 256;
                 if (cutoffHz >= 18500) return 192;
@@ -646,8 +746,8 @@ namespace AudioQualityChecker.Services
 
             if (codec is "m4a" or "aac" or "mp4")
             {
-                if (cutoffHz >= 20000) return isLossless ? 1411 : 320;
-                if (cutoffHz >= 19500) return isLossless ? 1411 : 256;
+                if (cutoffHz >= 20000) return 320;
+                if (cutoffHz >= 19500) return 256;
                 if (cutoffHz >= 18500) return 192;
                 if (cutoffHz >= 17500) return 160;
                 if (cutoffHz >= 16500) return 128;
@@ -677,7 +777,7 @@ namespace AudioQualityChecker.Services
             // Vorbis has smooth rolloff rather than a hard lowpass.
             if (codec is "ogg")
             {
-                if (cutoffHz >= 20000) return isLossless ? 1411 : 320;
+                if (cutoffHz >= 20000) return 320;
                 if (cutoffHz >= 19000) return 256;
                 if (cutoffHz >= 18000) return 192;
                 if (cutoffHz >= 17000) return 160;
@@ -692,8 +792,8 @@ namespace AudioQualityChecker.Services
             // MP3 (LAME defaults) — the most common case.
             // WMA uses similar lowpass behavior to MP3.
             // This is also the fallback for unknown codecs.
-            if (cutoffHz >= 20000) return isLossless ? 1411 : 320;
-            if (cutoffHz >= 19000) return isLossless ? 1411 : 256;
+            if (cutoffHz >= 20000) return 320;
+            if (cutoffHz >= 19000) return 256;
             if (cutoffHz >= 17500) return 192;
             if (cutoffHz >= 16500) return 160;
             if (cutoffHz >= 15500) return 128;
@@ -721,14 +821,19 @@ namespace AudioQualityChecker.Services
             // ── Lossless ──
             if (isLossless)
             {
-                if (cutoff >= (int)(nyquist * 0.90))
+                // Absolute floor: content at 20 kHz+ can't be from a sub-320 kbps
+                // transcode. Prevents hi-res (96/192 kHz) and 48 kHz false positives.
+                if (cutoff >= (int)(nyquist * 0.90) || cutoff >= 20000)
                 {
                     info.Status = AudioStatus.Valid;
                     return;
                 }
-                // Spectral content stops well short of Nyquist → upconvert
-                // Use the estimated original bitrate to judge severity
-                if (actual <= 160)
+                // Spectral content stops well short of expected range → upconvert
+                // Use the estimated original bitrate to judge severity.
+                // Flag as Fake for clearly low-quality sources (≤192 kbps);
+                // only moderate-high bitrates get Unknown since natural rolloff
+                // varies by genre and could mimic a 224-256 kbps lowpass.
+                if (actual <= 192)
                     info.Status = AudioStatus.Fake;
                 else if (actual <= 256)
                     info.Status = AudioStatus.Unknown;
@@ -1103,8 +1208,9 @@ namespace AudioQualityChecker.Services
         }
 
         /// <summary>
-        /// Detects BPM using onset detection + autocorrelation.
-        /// Analyzes up to 30 seconds of audio.
+        /// Detects BPM using multi-band onset detection + autocorrelation with
+        /// harmonic/subharmonic disambiguation. Analyzes up to 60 seconds of audio,
+        /// skipping the first 10 seconds to avoid sparse intros.
         /// </summary>
         private static int DetectBpm(string filePath)
         {
@@ -1134,15 +1240,26 @@ namespace AudioQualityChecker.Services
                     channels = sc.WaveFormat.Channels;
                 }
 
-                // Read up to 30 seconds of interleaved samples
-                int monoSamples = sampleRate * 30;
+                // Skip first 10 seconds (intros are often sparse), then read up to 60 seconds
+                int skipSamples = sampleRate * 10 * channels;
+                float[] skipBuf = new float[Math.Min(skipSamples, 4096 * channels)];
+                int toSkip = skipSamples;
+                while (toSkip > 0)
+                {
+                    int chunk = Math.Min(toSkip, skipBuf.Length);
+                    int got = sampleReader.Read(skipBuf, 0, chunk);
+                    if (got <= 0) break;
+                    toSkip -= got;
+                }
+
+                int monoSamples = sampleRate * 60;
                 int rawToRead = monoSamples * channels;
                 float[] rawBuf = new float[rawToRead];
                 int rawRead = sampleReader.Read(rawBuf, 0, rawToRead);
                 readerDisposable.Dispose();
                 readerDisposable = null;
 
-                if (rawRead < sampleRate * channels * 2) return 0; // need >= 2s
+                if (rawRead < sampleRate * channels * 4) return 0; // need >= 4s
 
                 // Convert to mono
                 int monoCount = rawRead / channels;
@@ -1155,31 +1272,68 @@ namespace AudioQualityChecker.Services
                     mono[i] = sum / channels;
                 }
 
-                // Compute energy in ~23ms frames (~43 Hz frame rate)
-                int frameSize = sampleRate * 23 / 1000;
-                int hopSize = frameSize / 2;
-                int numFrames = (monoCount - frameSize) / hopSize;
+                // ── Multi-band spectral flux onset detection ──
+                // Use short FFT frames for time resolution
+                int fftLen = 1024;
+                int hopSize = fftLen / 2; // 50% overlap
+                int numFrames = (monoCount - fftLen) / hopSize;
                 if (numFrames < 100) return 0;
 
-                double[] energy = new double[numFrames];
-                for (int i = 0; i < numFrames; i++)
+                int specLen = fftLen / 2;
+                double hopDuration = (double)hopSize / sampleRate;
+
+                // Define frequency bands (bin indices): sub-bass/kick, bass, low-mid, mid
+                int BinForFreq(double freq) => (int)Math.Round(freq * fftLen / sampleRate);
+                int bandKickLo = BinForFreq(30), bandKickHi = BinForFreq(200);
+                int bandBassLo = BinForFreq(200), bandBassHi = BinForFreq(500);
+                int bandMidLo = BinForFreq(500), bandMidHi = BinForFreq(4000);
+                int bandHiLo = BinForFreq(4000), bandHiHi = Math.Min(BinForFreq(12000), specLen - 1);
+
+                // Hanning window
+                double[] window = new double[fftLen];
+                for (int i = 0; i < fftLen; i++)
+                    window[i] = 0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (fftLen - 1)));
+
+                // Compute spectral magnitude for each frame
+                double[][] specMag = new double[numFrames][];
+                for (int f = 0; f < numFrames; f++)
                 {
-                    int start = i * hopSize;
-                    double e = 0;
-                    for (int j = 0; j < frameSize && start + j < monoCount; j++)
-                    {
-                        float s = mono[start + j];
-                        e += s * s;
-                    }
-                    energy[i] = e / frameSize;
+                    int start = f * hopSize;
+                    double[] real = new double[fftLen];
+                    double[] imag = new double[fftLen];
+                    for (int i = 0; i < fftLen; i++)
+                        real[i] = mono[start + i] * window[i];
+                    FFT(real, imag);
+                    double[] mag = new double[specLen];
+                    for (int i = 0; i < specLen; i++)
+                        mag[i] = Math.Sqrt(real[i] * real[i] + imag[i] * imag[i]);
+                    specMag[f] = mag;
                 }
 
-                // Onset strength: positive first difference
+                // Compute spectral flux (onset strength) per band, then combine
                 double[] onset = new double[numFrames - 1];
-                for (int i = 0; i < onset.Length; i++)
-                    onset[i] = Math.Max(0, energy[i + 1] - energy[i]);
+                double[] prevMag = specMag[0];
+                for (int f = 1; f < numFrames; f++)
+                {
+                    double[] curMag = specMag[f];
 
-                // Normalize onset
+                    // Spectral flux: sum of positive differences per band (weighted)
+                    double fluxKick = 0, fluxBass = 0, fluxMid = 0, fluxHi = 0;
+                    for (int b = bandKickLo; b <= bandKickHi && b < specLen; b++)
+                        fluxKick += Math.Max(0, curMag[b] - prevMag[b]);
+                    for (int b = bandBassLo; b <= bandBassHi && b < specLen; b++)
+                        fluxBass += Math.Max(0, curMag[b] - prevMag[b]);
+                    for (int b = bandMidLo; b <= bandMidHi && b < specLen; b++)
+                        fluxMid += Math.Max(0, curMag[b] - prevMag[b]);
+                    for (int b = bandHiLo; b <= bandHiHi && b < specLen; b++)
+                        fluxHi += Math.Max(0, curMag[b] - prevMag[b]);
+
+                    // Weight kick/bass bands higher — they carry the beat in most music
+                    onset[f - 1] = fluxKick * 3.0 + fluxBass * 2.0 + fluxMid * 1.0 + fluxHi * 0.5;
+                    prevMag = curMag;
+                }
+
+                // Normalize onset signal
                 double maxOnset = 0;
                 for (int i = 0; i < onset.Length; i++)
                     if (onset[i] > maxOnset) maxOnset = onset[i];
@@ -1187,16 +1341,36 @@ namespace AudioQualityChecker.Services
                     for (int i = 0; i < onset.Length; i++)
                         onset[i] /= maxOnset;
 
-                // Autocorrelation for BPM range 60-200
-                double hopDuration = (double)hopSize / sampleRate;
-                int minLag = Math.Max(1, (int)(60.0 / 200 / hopDuration));
-                int maxLag = (int)(60.0 / 60 / hopDuration);
+                // Adaptive threshold: suppress onset values below local median * 1.5
+                int medianWindow = (int)(2.0 / hopDuration); // ~2 second window
+                for (int i = 0; i < onset.Length; i++)
+                {
+                    int lo = Math.Max(0, i - medianWindow / 2);
+                    int hi = Math.Min(onset.Length - 1, i + medianWindow / 2);
+                    double localMean = 0;
+                    int cnt = 0;
+                    for (int j = lo; j <= hi; j++) { localMean += onset[j]; cnt++; }
+                    localMean /= cnt;
+                    onset[i] = Math.Max(0, onset[i] - localMean * 0.5);
+                }
+
+                // Re-normalize after thresholding
+                maxOnset = 0;
+                for (int i = 0; i < onset.Length; i++)
+                    if (onset[i] > maxOnset) maxOnset = onset[i];
+                if (maxOnset > 0)
+                    for (int i = 0; i < onset.Length; i++)
+                        onset[i] /= maxOnset;
+
+                // ── Autocorrelation for BPM range 50–220 ──
+                int minLag = Math.Max(1, (int)(60.0 / 220 / hopDuration));
+                int maxLag = (int)(60.0 / 50 / hopDuration);
                 maxLag = Math.Min(maxLag, onset.Length / 2);
 
                 if (minLag >= maxLag) return 0;
 
+                double[] corr = new double[maxLag + 1];
                 double maxCorr = 0;
-                int bestLag = minLag;
 
                 for (int lag = minLag; lag <= maxLag; lag++)
                 {
@@ -1204,38 +1378,85 @@ namespace AudioQualityChecker.Services
                     int count = onset.Length - lag;
                     for (int i = 0; i < count; i++)
                         sum += onset[i] * onset[i + lag];
-                    double corr = count > 0 ? sum / count : 0;
-
-                    if (corr > maxCorr)
-                    {
-                        maxCorr = corr;
-                        bestLag = lag;
-                    }
+                    corr[lag] = count > 0 ? sum / count : 0;
+                    if (corr[lag] > maxCorr) maxCorr = corr[lag];
                 }
 
                 if (maxCorr < 1e-10) return 0;
 
-                double bpm = 60.0 / (bestLag * hopDuration);
-                int bpmInt = (int)Math.Round(bpm);
-
-                // If detected BPM seems like half-time, double it
-                if (bpmInt >= 60 && bpmInt <= 85)
+                // ── Find top peaks in autocorrelation ──
+                var peaks = new List<(int lag, double value)>();
+                for (int lag = minLag + 1; lag < maxLag; lag++)
                 {
-                    // Check if double is also a peak
-                    int doubleLag = bestLag / 2;
-                    if (doubleLag >= minLag)
+                    if (corr[lag] > corr[lag - 1] && corr[lag] > corr[lag + 1] && corr[lag] > maxCorr * 0.3)
+                        peaks.Add((lag, corr[lag]));
+                }
+
+                if (peaks.Count == 0)
+                {
+                    // Fallback: use the global max
+                    int bestLag = minLag;
+                    for (int lag = minLag; lag <= maxLag; lag++)
+                        if (corr[lag] > corr[bestLag]) bestLag = lag;
+                    double bpmFallback = 60.0 / (bestLag * hopDuration);
+                    int bpmFallbackInt = (int)Math.Round(bpmFallback);
+                    return (bpmFallbackInt >= 50 && bpmFallbackInt <= 220) ? bpmFallbackInt : 0;
+                }
+
+                // Sort peaks by correlation strength
+                peaks.Sort((a, b) => b.value.CompareTo(a.value));
+
+                // ── Harmonic/subharmonic disambiguation ──
+                // For each candidate, check if a peak at half the lag (double BPM) exists
+                // and is reasonably strong. Prefer the musically common range 80-160 BPM.
+                int bestBpm = 0;
+                double bestScore = 0;
+
+                foreach (var (lag, val) in peaks)
+                {
+                    double candidateBpm = 60.0 / (lag * hopDuration);
+                    if (candidateBpm < 50 || candidateBpm > 220) continue;
+
+                    double score = val;
+
+                    // Perceptual tempo preference: gently prefer 80-160 BPM range
+                    if (candidateBpm >= 80 && candidateBpm <= 160)
+                        score *= 1.15;
+
+                    // Check for harmonic relationship with other peaks
+                    int halfLag = lag / 2;
+                    int doubleLag = lag * 2;
+
+                    // If there's a strong peak at double BPM (half lag), this might be the subharmonic
+                    if (halfLag >= minLag)
                     {
-                        double doubleSum = 0;
-                        int cnt = onset.Length - doubleLag;
-                        for (int i = 0; i < cnt; i++)
-                            doubleSum += onset[i] * onset[i + doubleLag];
-                        double doubleCorr = cnt > 0 ? doubleSum / cnt : 0;
-                        if (doubleCorr > maxCorr * 0.8)
-                            bpmInt = (int)Math.Round(60.0 / (doubleLag * hopDuration));
+                        double halfCorr = corr[halfLag];
+                        double doubleBpm = 60.0 / (halfLag * hopDuration);
+                        // If the double-BPM peak is at least 50% as strong AND in a more common range
+                        if (halfCorr > val * 0.5 && doubleBpm >= 80 && doubleBpm <= 180)
+                            score *= 0.7; // penalize this candidate — the double-BPM is likely the real tempo
+                    }
+
+                    // If there's a strong peak at half BPM (double lag), this candidate is fine
+                    if (doubleLag <= maxLag && corr[doubleLag] > val * 0.4)
+                        score *= 1.1; // slight bonus: the half-BPM subharmonic confirms this tempo
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestBpm = (int)Math.Round(candidateBpm);
                     }
                 }
 
-                return (bpmInt >= 60 && bpmInt <= 200) ? bpmInt : 0;
+                // Final half-time correction: if BPM is suspiciously low, check double
+                if (bestBpm > 0 && bestBpm < 80)
+                {
+                    int doubled = bestBpm * 2;
+                    if (doubled >= 80 && doubled <= 200)
+                        bestBpm = doubled;
+                }
+
+                return (bestBpm >= 50 && bestBpm <= 220) ? bestBpm : 0;
             }
             catch
             {

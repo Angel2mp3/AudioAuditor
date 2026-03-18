@@ -2,12 +2,14 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditorCLI</AssemblyName>
+    <Version>1.4.1</Version>
+    <DefineConstants>CROSS_PLATFORM</DefineConstants>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +19,9 @@
     <PackageReference Include="SharpCompress" Version="0.38.0" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
     <PackageReference Include="ClosedXML" Version="0.104.2" />
+    <PackageReference Include="SkiaSharp" Version="2.88.9" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
+    <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="2.88.9" />
   </ItemGroup>
 
   <!-- Share model and service source files from the main project -->
@@ -25,6 +30,7 @@
     <Compile Include="..\Services\AudioAnalyzer.cs" Link="Services\AudioAnalyzer.cs" />
     <Compile Include="..\Services\MqaDetector.cs" Link="Services\MqaDetector.cs" />
     <Compile Include="..\Services\AiWatermarkDetector.cs" Link="Services\AiWatermarkDetector.cs" />
+    <Compile Include="..\Services\ExperimentalAiDetector.cs" Link="Services\ExperimentalAiDetector.cs" />
     <Compile Include="..\Services\FlacReader.cs" Link="Services\FlacReader.cs" />
     <Compile Include="..\Services\ExportService.cs" Link="Services\ExportService.cs" />
     <Compile Include="..\Services\AudioFormatReaders.cs" Link="Services\AudioFormatReaders.cs" />

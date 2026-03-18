@@ -25,10 +25,10 @@ namespace AudioQualityChecker.Services
             "Apple Music", "Deezer", "SoundCloud", "Bandcamp", "Last.fm", "Custom..."
         };
 
-        private static string _currentTheme = "Dark";
+        private static string _currentTheme = "Blurple";
         public static string CurrentTheme => _currentTheme;
 
-        private static string _currentPlaybarTheme = "Blue Fire";
+        private static string _currentPlaybarTheme = "Blurple Wave";
         public static string CurrentPlaybarTheme => _currentPlaybarTheme;
 
         // All 6 configurable music service slots
@@ -76,6 +76,40 @@ namespace AudioQualityChecker.Services
 
         // Spatial Audio
         public static bool SpatialAudioEnabled { get; set; }
+
+        // Experimental AI Detection (spectral analysis — opt-in, higher false positives)
+        public static bool ExperimentalAiDetection { get; set; }
+
+        // Donation popup dismissed — never show again once dismissed
+        public static bool DonationDismissed { get; set; }
+
+        // Footer support link dismissed — never show again
+        public static bool FooterSupportDismissed { get; set; }
+
+        // Registry key path for cross-install persistence
+        private const string RegistryKeyPath = @"Software\AudioAuditor";
+
+        /// <summary>Write a flag to the Windows registry so it survives reinstalls.</summary>
+        public static void SetRegistryFlag(string name, bool value)
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RegistryKeyPath);
+                key?.SetValue(name, value ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+            }
+            catch { }
+        }
+
+        /// <summary>Read a flag from the Windows registry.</summary>
+        public static bool GetRegistryFlag(string name)
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RegistryKeyPath);
+                return key?.GetValue(name) is int i && i != 0;
+            }
+            catch { return false; }
+        }
 
         // DataGrid column layout — serialized as Header:DisplayIndex:Width;...
         public static string ColumnLayout { get; set; } = "";
@@ -162,6 +196,10 @@ namespace AudioQualityChecker.Services
             string saved = LoadSavedTheme();
             ApplyTheme(saved);
             LoadPlayOptions();
+
+            // Cross-install persistence: registry flags override options.txt
+            if (GetRegistryFlag("DonationDismissed")) DonationDismissed = true;
+            if (GetRegistryFlag("FooterSupportDismissed")) FooterSupportDismissed = true;
 
             // Re-sync playbar accent after playbar theme is loaded from options
             UpdatePlaybarAccentResource();
@@ -465,9 +503,12 @@ namespace AudioQualityChecker.Services
                     $"LastFmEnabled={LastFmEnabled}",
                     $"ExportFormat={ExportFormat}",
                     $"SpatialAudio={SpatialAudioEnabled}",
+                    $"ExperimentalAiDetection={ExperimentalAiDetection}",
                     $"ColumnLayout={ColumnLayout}",
                     $"MaxConcurrency={_maxConcurrency}",
-                    $"MaxMemoryMB={_maxMemoryMB}"
+                    $"MaxMemoryMB={_maxMemoryMB}",
+                    $"DonationDismissed={DonationDismissed}",
+                    $"FooterSupportDismissed={FooterSupportDismissed}"
                 };
                 File.WriteAllLines(OptionsFile, lines);
             }
@@ -573,6 +614,7 @@ namespace AudioQualityChecker.Services
                                 ExportFormat = val;
                             break;
                         case "SpatialAudio": SpatialAudioEnabled = bool.TryParse(val, out var bsa) && bsa; break;
+                        case "ExperimentalAiDetection": ExperimentalAiDetection = bool.TryParse(val, out var bea) && bea; AudioAnalyzer.EnableExperimentalAi = ExperimentalAiDetection; break;
                         case "ColumnLayout": ColumnLayout = val; break;
                         case "MaxConcurrency":
                             if (int.TryParse(val, out var mc) && mc >= 0 && mc <= 32)
@@ -582,6 +624,8 @@ namespace AudioQualityChecker.Services
                             if (int.TryParse(val, out var mm) && mm >= 0 && mm <= 16384)
                                 _maxMemoryMB = mm;
                             break;
+                        case "DonationDismissed": DonationDismissed = bool.TryParse(val, out var bdd) && bdd; break;
+                        case "FooterSupportDismissed": FooterSupportDismissed = bool.TryParse(val, out var bfs) && bfs; break;
                     }
                 }
             }
@@ -903,7 +947,7 @@ namespace AudioQualityChecker.Services
                     return File.ReadAllText(ThemeFile).Trim();
             }
             catch { }
-            return "Dark";
+            return "Blurple";
         }
 
         private static void SaveTheme(string theme)

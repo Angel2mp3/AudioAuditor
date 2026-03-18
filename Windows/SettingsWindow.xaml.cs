@@ -164,6 +164,9 @@ namespace AudioQualityChecker
             MemoryInfoText.Text = $"Your system has {ThemeManager.TotalSystemMemoryMB:N0} MB total RAM. " +
                 $"Limits how much memory AudioAuditor uses during analysis and spectrogram export.";
 
+            // Experimental AI detection
+            ChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
+
             _initializing = false;
         }
 
@@ -279,6 +282,14 @@ namespace AudioQualityChecker
             ApplyApiKeyVisibility();
             ApplyDiscordIdVisibility();
             Close();
+        }
+
+        private void ExperimentalAi_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.ExperimentalAiDetection = ChkExperimentalAi.IsChecked == true;
+            AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
+            ThemeManager.SavePlayOptions();
         }
 
         // ═══════════════════════════════════════════
@@ -668,6 +679,15 @@ namespace AudioQualityChecker
                 ThemeManager.MaxMemoryMB = val;
                 ThemeManager.SavePlayOptions();
             }
+        }
+
+        private void SupportDonate_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("https://ko-fi.com/angelsoftware") { UseShellExecute = true });
+            }
+            catch { }
         }
 
         private void Hyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
