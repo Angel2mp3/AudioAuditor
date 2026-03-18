@@ -1,23 +1,17 @@
 # Changelog
 
-## v1.3.0
-
-## Annocements
-
-- **Website:** Official site launched at [audioauditor.org](https://audioauditor.org)
-- **Looking for beta testers** - I can only test so much on my own, anyone who would like to be a tester let me know. In general though please report any bugs you may incounter and if you'd like new features, please open a Github issue :)
+## v1.4.1
 
 ### New Features
-- **Custom CPU & Memory Limits** — In addition to preset modes (Auto/Low/Medium/High/Maximum), set your own thread count and memory cap
-- **ALAC File Status** - When alac files were used it wouldnt load or would be detected as just a normal "M4A" file, now correctly loads and notes that its an ALAC file next to the M4A extension.
+- **Experimental Spectral AI Detection** — New opt-in setting that uses audio signal analysis to detect AI-generated music. Performs three spectral checks: ultrasonic energy excess (abnormal energy above 16 kHz), high-frequency stereo correlation (unnaturally identical L/R channels above 4 kHz), and spectral regularity (too-smooth spectral patterns across frames). Requires 2+ flags to mark a file as suspicious. Enable in Settings → Experimental or via `--experimental-ai` CLI flag. Note: this is experimental and may produce false positives
 
 ### Improvements
-- **Fixed ALAC Files** - ALAC files were reported to be not loading/all being read as "Unkown" this should be fixed now. 
-- **Fixed CLI Tool** the last version was outdated that didnt include the newer bittrate detection and status imrpovements, now the same as the GUI
-- **Discord Rich Presence Fixes** — Now fixed and more comprehensieve / easier to set up the rich presence in your discord dev settings.
-- Fixed shuffle button as it used to get stuck on the old theme when changed to the new one, now correctly updates to the new theme when changed.
-- Replaced old/wrong music service icons with their offical ones
-- CPU and memory performance limits are now enforced during analysis and spectrogram batch export
-- Single-instance enforcement — launching the app again brings the existing window to front
-- Fixed smaller general bugs
-- Slight preformance boost
+- **BPM Detection Overhaul** — Completely rewritten BPM detection using multi-band spectral flux onset detection with harmonic/subharmonic disambiguation. Now analyzes 60 seconds (skipping intros) instead of 30, uses frequency-band weighted analysis (kick/bass bands prioritized), adaptive thresholding, autocorrelation peak picking, and perceptual tempo preference for the 80–160 BPM range. Fixes issues where songs were incorrectly detected at half tempo
+- **AI Detection Refined** — Added more verifiable metadata markers and embedded byte patterns (service domains, watermark systems, known tag fields). Removed aggressive heuristics that caused false positives on legitimately tagged files
+- **CLI `--experimental-ai` flag** — Enables spectral AI detection for `analyze` and `info` commands from the command line
+
+### Fixes
+- **Fixed hi-res lossless false positives** — Files at 48/96/192 kHz sample rates were incorrectly flagged as "Fake" because the algorithm required spectral content up to 90% of Nyquist (e.g. 43 kHz for 96 kHz files), which is far beyond what any music contains. Now uses an absolute frequency floor: if content reaches 19.5 kHz+, the file is considered genuine regardless of sample rate. This also fixes the "24 kbps actual bitrate" reports that appeared on legitimate 24-bit lossless files
+- **Reduced lossless Fake threshold** — Lowered the "Fake" bitrate cutoff from ≤160 kbps to ≤128 kbps. Files with estimated source quality between 128–160 kbps now report as "Unknown" instead of "Fake", reducing false positives on recordings with natural high-frequency rolloff
+- **Support Links Added** — A **one time** non invasive pop up that shows only the first time audio files were scanned using the program, **after you dismiss it, it will never show again :)** also small non-invasive "Support AudioAuditor ❤" link in footer bar which opens the Ko-fi donate page. **Right-click to dismiss permanently**
+- **Other general fixes & improvements I forgot about lol**

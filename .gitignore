@@ -10,6 +10,7 @@ out/
 build/
 temp/
 Temp/
+final-releases/
 release/
 Release/
 releases/
@@ -19,8 +20,8 @@ x86/
 artifacts/
 *.exe
 *.pdb
-*_wpftmp.csproj
 !*.csproj
+*_wpftmp.csproj
 
 # NuGet
 packages/
@@ -30,6 +31,8 @@ project.lock.json
 *.nuget.props
 *.nuget.targets
 *.nuget.g.*
+*.dgspec.json
+project.assets.json
 
 # User-specific files
 *.user

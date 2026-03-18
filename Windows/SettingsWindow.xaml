@@ -300,6 +300,8 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="16"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="16"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Header with drag + close -->
@@ -945,40 +947,83 @@
                            FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
-            <!-- Close button -->
-            <Button Grid.Row="18" Content="Close" Width="90" HorizontalAlignment="Right"
-                    Click="Close_Click" Padding="12,6"
-                    Background="{DynamicResource ButtonBg}"
-                    Foreground="{DynamicResource TextPrimary}"
-                    BorderBrush="{DynamicResource ButtonBorder}"
-                    FontFamily="Segoe UI" FontSize="13" Cursor="Hand">
-                <Button.Template>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="bd"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="1" CornerRadius="3"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="Background"
-                                        Value="{DynamicResource ButtonHover}"/>
-                                <Setter TargetName="bd" Property="BorderBrush"
-                                        Value="{DynamicResource AccentColor}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Button.Template>
-            </Button>
+            <!-- Experimental Section -->
+            <StackPanel Grid.Row="18">
+                <TextBlock Text="Experimental" FontSize="14" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                           Margin="0,0,0,8"/>
+                <CheckBox x:Name="ChkExperimentalAi" Content="Aggressive AI Detection (Spectral Analysis)"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                          FontFamily="Segoe UI" Margin="0,0,0,4"
+                          Checked="ExperimentalAi_Changed" Unchecked="ExperimentalAi_Changed"/>
+                <TextBlock Text="⚠ Uses spectral analysis (ultrasonic energy, stereo correlation, spectral regularity) to detect AI-generated audio. This will produce more false positives than standard detection but can catch AI audio that has been stripped of metadata markers."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
 
             <!-- Attribution -->
-            <StackPanel Grid.Row="20" HorizontalAlignment="Center" Margin="0,8,0,4">
-                <TextBlock HorizontalAlignment="Center" FontSize="12" FontFamily="Segoe UI">
+            <Grid Grid.Row="20" Margin="0,8,0,4">
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI">
                     <Run Text="Made with " Foreground="{DynamicResource TextMuted}"/><Run Text="&#x2764;" Foreground="#E25555" FontSize="13"/><Run Text=" by " Foreground="{DynamicResource TextMuted}"/><Hyperlink x:Name="AuthorLink" NavigateUri="https://github.com/Angel2mp3" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{DynamicResource AccentColor}" TextDecorations="None">Angel</Hyperlink>
                 </TextBlock>
-            </StackPanel>
+            </Grid>
+
+            <!-- Support button + Close -->
+            <Grid Grid.Row="22" Margin="0,8,0,4">
+                <Button Click="SupportDonate_Click" Cursor="Hand"
+                        HorizontalAlignment="Center">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="supportBd" Background="{DynamicResource ButtonBg}"
+                                    BorderBrush="{DynamicResource ButtonBorder}"
+                                    BorderThickness="1" CornerRadius="5" Padding="18,8">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <TextBlock Text="Support AudioAuditor" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text=" ❤" FontSize="14" Foreground="#E25555"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="supportBd" Property="Background"
+                                            Value="{DynamicResource ButtonHover}"/>
+                                    <Setter TargetName="supportBd" Property="BorderBrush"
+                                            Value="{DynamicResource AccentColor}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Button HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Content="Close" Width="90"
+                        Click="Close_Click" Padding="12,6"
+                        Background="{DynamicResource ButtonBg}"
+                        Foreground="{DynamicResource TextPrimary}"
+                        BorderBrush="{DynamicResource ButtonBorder}"
+                        FontFamily="Segoe UI" FontSize="13" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="1" CornerRadius="3"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background"
+                                            Value="{DynamicResource ButtonHover}"/>
+                                    <Setter TargetName="bd" Property="BorderBrush"
+                                            Value="{DynamicResource AccentColor}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
         </Grid>
         </ScrollViewer>
     </Border>

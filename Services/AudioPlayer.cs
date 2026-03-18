@@ -480,12 +480,15 @@ namespace AudioQualityChecker.Services
                     sampleSource = _sampleChannel!;
 
                 // Build processing chain and try to init WaveOut.
+                // Use larger buffers for fallback readers (MediaFoundation, etc.)
+                // to prevent stuttering from slower decode paths.
+                bool useLargeBuffers = _mfReader != null || _waveStreamReader != null;
                 // Try native rate first, fall back to resample on failure.
-                if (!TryInitPlaybackPipeline(sampleSource, false))
+                if (!TryInitPlaybackPipeline(sampleSource, false, 48000, useLargeBuffers))
                 {
-                    if (!TryInitPlaybackPipeline(sampleSource, true, 48000))
+                    if (!TryInitPlaybackPipeline(sampleSource, true, 48000, useLargeBuffers))
                     {
-                        if (!TryInitPlaybackPipeline(sampleSource, true, 44100))
+                        if (!TryInitPlaybackPipeline(sampleSource, true, 44100, useLargeBuffers))
                         {
                             throw new InvalidOperationException(
                                 "Unable to play this file. Your audio device may not support the required format.");
@@ -507,7 +510,7 @@ namespace AudioQualityChecker.Services
         /// Returns true on success. If resample is requested, inserts a resampler before the EQ.
         /// On failure, disposes the WaveOutEvent so the caller can retry.
         /// </summary>
-        private bool TryInitPlaybackPipeline(ISampleProvider source, bool resample, int targetRate = 48000)
+        private bool TryInitPlaybackPipeline(ISampleProvider source, bool resample, int targetRate = 48000, bool useLargeBuffers = false)
         {
             try
             {
@@ -529,10 +532,12 @@ namespace AudioQualityChecker.Services
                 IWaveProvider finalSource = new SampleToWaveProvider(_spatialAudio);
 
                 int sampleRate = _spatialAudio.WaveFormat.SampleRate;
+                int baseLatency = sampleRate > 48000 ? 400 : 250;
+                int baseBuffers = sampleRate > 48000 ? 5 : 3;
                 _waveOut = new WaveOutEvent
                 {
-                    DesiredLatency = sampleRate > 48000 ? 400 : 250,
-                    NumberOfBuffers = sampleRate > 48000 ? 5 : 3
+                    DesiredLatency = useLargeBuffers ? Math.Max(baseLatency, 400) : baseLatency,
+                    NumberOfBuffers = useLargeBuffers ? Math.Max(baseBuffers, 5) : baseBuffers
                 };
                 _waveOut.PlaybackStopped += OnPlaybackStopped;
                 _waveOut.Init(new CaptureWaveProvider(finalSource, this));

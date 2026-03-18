@@ -69,6 +69,11 @@ namespace AudioQualityChecker.Models
         public string AiSource { get; set; } = "";
         public List<string> AiSources { get; set; } = new();
 
+        // Experimental AI detection (spectral analysis)
+        public bool ExperimentalAiSuspicious { get; set; }
+        public double ExperimentalAiConfidence { get; set; }
+        public List<string> ExperimentalAiFlags { get; set; } = new();
+
         // Album cover
         public bool HasAlbumCover { get; set; }
 
@@ -96,7 +101,19 @@ namespace AudioQualityChecker.Models
         public string ReplayGainDisplay => HasReplayGain ? $"{ReplayGain:+0.00;-0.00;0.00} dB" : "-";
         public string FrequencyDisplay => Frequency > 0 ? $"{Frequency:N0} Hz" : "-";
         public string MqaDisplay => IsMqa ? (IsMqaStudio ? $"MQA Studio ({MqaOriginalSampleRate})" : $"MQA ({MqaOriginalSampleRate})") : "No";
-        public string AiDisplay => IsAiGenerated ? AiSource : "No";
+        public string AiDisplay
+        {
+            get
+            {
+                if (IsAiGenerated && ExperimentalAiSuspicious)
+                    return $"{AiSource} + Spectral ({ExperimentalAiConfidence:P0})";
+                if (IsAiGenerated)
+                    return AiSource;
+                if (ExperimentalAiSuspicious)
+                    return $"Spectral ({ExperimentalAiConfidence:P0})";
+                return "No";
+            }
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null)

@@ -477,7 +477,8 @@
         </Style>
     </Window.Resources>
 
-    <DockPanel>
+    <Grid>
+    <DockPanel x:Name="MainContent">
         <!-- ═══ Toolbar ═══ -->
         <Border DockPanel.Dock="Top" Background="{DynamicResource ToolbarBg}" Padding="8,6"
                 BorderBrush="{DynamicResource BorderColor}" BorderThickness="0,0,0,1">
@@ -656,20 +657,47 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="StatusText"
                            Text="Ready — Drag and drop audio files or folders to begin"
                            Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                           VerticalAlignment="Center" FontFamily="Segoe UI"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <ProgressBar x:Name="AnalysisProgress"
-                                 Width="200" Height="14"
-                                 Visibility="Collapsed"
-                                 Foreground="{DynamicResource AccentColor}"
-                                 Background="{DynamicResource ProgressBg}"
-                                 BorderBrush="{DynamicResource ButtonBorder}" Margin="0,0,10,0"/>
+                           VerticalAlignment="Center" FontFamily="Segoe UI"
+                           TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="FooterSupportText" Grid.Column="1"
+                           Text="Support AudioAuditor ❤"
+                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                           FontFamily="Segoe UI" VerticalAlignment="Center"
+                           Cursor="Hand" Margin="12,0"
+                           MouseLeftButtonDown="FooterSupport_Click">
+                    <TextBlock.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Dismiss" Click="FooterSupport_Dismiss"/>
+                        </ContextMenu>
+                    </TextBlock.ContextMenu>
+                    <TextBlock.ToolTip>
+                        <ToolTip Content="Support AudioAuditor on Ko-fi"/>
+                    </TextBlock.ToolTip>
+                </TextBlock>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Grid x:Name="AnalysisProgressPanel" Width="200" Height="14" Visibility="Collapsed" Margin="0,0,10,0">
+                        <ProgressBar x:Name="AnalysisProgress"
+                                     Foreground="{DynamicResource AccentColor}"
+                                     Background="{DynamicResource ProgressBg}"
+                                     BorderBrush="{DynamicResource ButtonBorder}"/>
+                        <TextBlock x:Name="AnalysisEtaText"
+                                   Text=""
+                                   FontSize="9" FontFamily="Segoe UI" FontWeight="SemiBold"
+                                   Foreground="White"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   IsHitTestVisible="False">
+                            <TextBlock.Effect>
+                                <DropShadowEffect ShadowDepth="0" BlurRadius="3" Opacity="0.7" Color="Black"/>
+                            </TextBlock.Effect>
+                        </TextBlock>
+                    </Grid>
                 </StackPanel>
-                <TextBlock Grid.Column="2" x:Name="LastFmStatusIndicator"
+                <TextBlock Grid.Column="3" x:Name="LastFmStatusIndicator"
                            Text="Last.fm: Not Connected"
                            Foreground="{DynamicResource TextMuted}" FontSize="11"
                            FontFamily="Segoe UI" VerticalAlignment="Center"
@@ -825,7 +853,7 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding ReportedBitrateDisplay}"
-                                           FontSize="12" FontFamily="Segoe UI"
+                                           FontSize="12.5" FontFamily="Segoe UI"
                                            FontWeight="SemiBold">
                                     <TextBlock.Foreground>
                                         <MultiBinding Converter="{StaticResource BitrateToColor}">
@@ -843,7 +871,7 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding ActualBitrateDisplay}"
-                                           FontSize="12" FontFamily="Segoe UI"
+                                           FontSize="12.5" FontFamily="Segoe UI"
                                            FontWeight="SemiBold">
                                     <TextBlock.Foreground>
                                         <MultiBinding Converter="{StaticResource BitrateToColor}">
@@ -1275,4 +1303,78 @@
             </Border>
         </Grid>
     </DockPanel>
+
+    <!-- ═══ Donation Overlay ═══ -->
+    <Grid x:Name="DonationOverlay" Visibility="Collapsed">
+        <!-- Semi-transparent backdrop -->
+        <Border Background="#AA000000" MouseLeftButtonDown="DonationBackdrop_Click"/>
+
+        <!-- Popup card -->
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource PanelBg}"
+                BorderBrush="{DynamicResource AccentColor}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="32,28" MaxWidth="440" MinWidth="360">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.5" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <!-- Heart icon -->
+                <TextBlock Text="❤" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,12"
+                           Foreground="#E25555"/>
+
+                <!-- Title -->
+                <TextBlock Text="Support AudioAuditor" FontSize="18" FontWeight="Bold"
+                           FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,12"/>
+
+                <!-- Message -->
+                <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                           LineHeight="20" Margin="0,0,0,20">
+                    This project is built and maintained by one person. AudioAuditor has no ads, no tracking, is open source, and will be free forever. If you find it helpful, a small donation would mean a lot and help fund further development. Thank you for using AudioAuditor!
+                </TextBlock>
+
+                <!-- Donate button -->
+                <Button Click="DonationDonate_Click" Cursor="Hand" HorizontalAlignment="Center"
+                        Margin="0,0,0,16">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="donateBd" Background="{DynamicResource AccentColor}"
+                                    CornerRadius="6" Padding="24,10">
+                                <TextBlock Text="Donate" FontSize="14" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="White"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="donateBd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <!-- Close / dismiss -->
+                <Button Click="DonationClose_Click" Cursor="Hand" HorizontalAlignment="Center">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <TextBlock x:Name="dismissText" Text="No thanks — don’t show this again"
+                                       FontSize="12.5" FontFamily="Segoe UI"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Opacity="0.75"/>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="dismissText" Property="Opacity" Value="1.0"/>
+                                    <Setter TargetName="dismissText" Property="TextDecorations" Value="Underline"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    </Grid>
 </Window>

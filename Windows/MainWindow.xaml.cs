@@ -41,6 +41,9 @@ namespace AudioQualityChecker
         private CancellationTokenSource? _analysisCts;
         private bool _isAnalyzing;
 
+        // ETA tracking for progress bar
+        private DateTime _analysisStartTime;
+
         // Audio player
         private readonly AudioPlayer _player = new();
         private readonly DispatcherTimer _playerTimer;
@@ -91,6 +94,10 @@ namespace AudioQualityChecker
         // Visualizer
         private bool _visualizerMode;
         private bool _visualizerActive;
+
+        // Animation occlusion pause
+        private bool _isPausedForOcclusion;
+        private DispatcherTimer? _occlusionCheckTimer;
 
         // Spectrogram options
         private bool _spectrogramLinearScale;
@@ -173,6 +180,26 @@ namespace AudioQualityChecker
 
             // Update Last.fm status indicator
             UpdateLastFmStatusIndicator();
+
+            // Animation occlusion pause
+            this.Activated += OnWindowActivated;
+            this.Deactivated += OnWindowDeactivated;
+            this.StateChanged += (s, args) =>
+            {
+                if (WindowState == WindowState.Minimized && !_isPausedForOcclusion)
+                {
+                    _isPausedForOcclusion = true;
+                    PauseAnimations();
+                }
+                else if (WindowState != WindowState.Minimized && _isPausedForOcclusion)
+                {
+                    _isPausedForOcclusion = false;
+                    ResumeAnimations();
+                }
+            };
+
+            // Initialize footer support link visibility
+            InitializeFooterSupport();
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -534,10 +561,12 @@ namespace AudioQualityChecker
             _isAnalyzing = true;
             int total = newPaths.Length;
             int completed = 0;
+            _analysisStartTime = DateTime.UtcNow;
 
-            AnalysisProgress.Visibility = Visibility.Visible;
+            AnalysisProgressPanel.Visibility = Visibility.Visible;
             AnalysisProgress.Maximum = total;
             AnalysisProgress.Value = 0;
+            AnalysisEtaText.Text = "";
             StatusText.Text = $"Analyzing 0 / {total} files...";
 
             int maxParallel = ThemeManager.MaxConcurrency;
@@ -568,6 +597,7 @@ namespace AudioQualityChecker
                         var count = Interlocked.Increment(ref completed);
                         StatusText.Text = $"Analyzed {count} / {total} files...";
                         AnalysisProgress.Value = count;
+                        UpdateAnalysisEta(count, total);
                     });
                 }
                 catch (OperationCanceledException) { }
@@ -588,6 +618,7 @@ namespace AudioQualityChecker
                             });
                             AnalysisProgress.Value = completed;
                             StatusText.Text = $"Analyzed {completed} / {total} files...";
+                            UpdateAnalysisEta(completed, total);
                         });
                     }
                 }
@@ -599,9 +630,128 @@ namespace AudioQualityChecker
 
             try { await Task.WhenAll(tasks); } catch (OperationCanceledException) { }
             _isAnalyzing = false;
-            AnalysisProgress.Visibility = Visibility.Collapsed;
+            AnalysisProgressPanel.Visibility = Visibility.Collapsed;
+            AnalysisEtaText.Text = "";
 
             UpdateStatusSummary();
+            ScheduleDonationPopup();
+        }
+
+        private void UpdateAnalysisEta(int completed, int total)
+        {
+            if (completed < 1 || completed >= total)
+            {
+                AnalysisEtaText.Text = "";
+                return;
+            }
+
+            var elapsed = DateTime.UtcNow - _analysisStartTime;
+            double avgPerFile = elapsed.TotalSeconds / completed;
+            int remaining = total - completed;
+            double etaSeconds = avgPerFile * remaining;
+
+            if (etaSeconds < 1)
+                AnalysisEtaText.Text = "< 1s";
+            else if (etaSeconds < 60)
+                AnalysisEtaText.Text = $"~{(int)etaSeconds}s left";
+            else
+            {
+                int mins = (int)(etaSeconds / 60);
+                int secs = (int)(etaSeconds % 60);
+                AnalysisEtaText.Text = secs > 0 ? $"~{mins}m {secs}s left" : $"~{mins}m left";
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        //  Donation Overlay
+        // ═══════════════════════════════════════════
+
+        private DispatcherTimer? _donationTimer;
+        private bool _donationScheduled;
+
+        private void ScheduleDonationPopup()
+        {
+            if (ThemeManager.DonationDismissed || _donationScheduled) return;
+            _donationScheduled = true;
+
+            _donationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(120) };
+            _donationTimer.Tick += (s, e) =>
+            {
+                _donationTimer!.Stop();
+                _donationTimer = null;
+                // Don't interrupt an in-progress analysis
+                if (_isAnalyzing)
+                {
+                    _donationScheduled = false; // allow re-schedule after next analysis
+                    return;
+                }
+                if (!ThemeManager.DonationDismissed)
+                    ShowDonationOverlay();
+            };
+            _donationTimer.Start();
+        }
+
+        private void ShowDonationOverlay()
+        {
+            DonationOverlay.Visibility = Visibility.Visible;
+            MainContent.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 6 };
+        }
+
+        private void HideDonationOverlay()
+        {
+            DonationOverlay.Visibility = Visibility.Collapsed;
+            MainContent.Effect = null;
+            ThemeManager.DonationDismissed = true;
+            ThemeManager.SetRegistryFlag("DonationDismissed", true);
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void DonationDonate_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("https://ko-fi.com/angelsoftware") { UseShellExecute = true });
+            }
+            catch { }
+            HideDonationOverlay();
+        }
+
+        private void DonationClose_Click(object sender, RoutedEventArgs e)
+        {
+            HideDonationOverlay();
+        }
+
+        private void DonationBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Clicking outside the popup also dismisses it
+            HideDonationOverlay();
+        }
+
+        // ═══════════════════════════════════════════
+        //  Footer Support Link
+        // ═══════════════════════════════════════════
+
+        private void InitializeFooterSupport()
+        {
+            if (ThemeManager.FooterSupportDismissed)
+                FooterSupportText.Visibility = Visibility.Collapsed;
+        }
+
+        private void FooterSupport_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("https://ko-fi.com/angelsoftware") { UseShellExecute = true });
+            }
+            catch { }
+        }
+
+        private void FooterSupport_Dismiss(object sender, RoutedEventArgs e)
+        {
+            FooterSupportText.Visibility = Visibility.Collapsed;
+            ThemeManager.FooterSupportDismissed = true;
+            ThemeManager.SetRegistryFlag("FooterSupportDismissed", true);
+            ThemeManager.SavePlayOptions();
         }
 
         private void UpdateStatusSummary()
@@ -2407,9 +2557,11 @@ namespace AudioQualityChecker
             int maxParallel = Math.Max(1, ThemeManager.MaxConcurrency / 2);
             var spectSemaphore = new SemaphoreSlim(maxParallel);
 
-            AnalysisProgress.Visibility = Visibility.Visible;
+            AnalysisProgressPanel.Visibility = Visibility.Visible;
             AnalysisProgress.Maximum = total;
             AnalysisProgress.Value = 0;
+            AnalysisEtaText.Text = "";
+            _analysisStartTime = DateTime.UtcNow;
             StatusText.Text = $"Saving spectrograms 0 / {total}...";
 
             foreach (var file in filesToProcess)
@@ -2477,9 +2629,11 @@ namespace AudioQualityChecker
                 var c = Interlocked.Increment(ref completed);
                 AnalysisProgress.Value = c;
                 StatusText.Text = $"Saving spectrograms {c} / {total}...";
+                UpdateAnalysisEta(c, total);
             }
 
-            AnalysisProgress.Visibility = Visibility.Collapsed;
+            AnalysisProgressPanel.Visibility = Visibility.Collapsed;
+            AnalysisEtaText.Text = "";
             string msg = failed > 0
                 ? $"Saved {completed - failed} / {total} spectrograms to {folder} ({failed} failed)"
                 : $"Saved {completed} spectrograms to {folder}";
@@ -2552,6 +2706,113 @@ namespace AudioQualityChecker
                 _waveformAnimActive = false;
                 CompositionTarget.Rendering -= WaveformAnimation_Tick;
             }
+        }
+
+        // ═══════════════════════════════════════════
+        //  Animation Occlusion Pause
+        // ═══════════════════════════════════════════
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        private const uint MONITOR_DEFAULTTONEAREST = 2;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+        }
+
+        private void OnWindowActivated(object? sender, EventArgs e)
+        {
+            _occlusionCheckTimer?.Stop();
+            _occlusionCheckTimer = null;
+
+            if (_isPausedForOcclusion)
+            {
+                _isPausedForOcclusion = false;
+                ResumeAnimations();
+            }
+        }
+
+        private void OnWindowDeactivated(object? sender, EventArgs e)
+        {
+            _occlusionCheckTimer?.Stop();
+            _occlusionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _occlusionCheckTimer.Tick += (s, args) =>
+            {
+                if (IsActive) { _occlusionCheckTimer?.Stop(); return; }
+
+                bool fullscreen = IsAnotherAppFullscreen();
+                if (fullscreen && !_isPausedForOcclusion)
+                {
+                    _isPausedForOcclusion = true;
+                    PauseAnimations();
+                }
+                else if (!fullscreen && _isPausedForOcclusion)
+                {
+                    _isPausedForOcclusion = false;
+                    ResumeAnimations();
+                }
+            };
+            _occlusionCheckTimer.Start();
+        }
+
+        private void PauseAnimations()
+        {
+            StopVisualizer();
+            StopWaveformAnimation();
+        }
+
+        private void ResumeAnimations()
+        {
+            if (_visualizerMode && _player.IsPlaying)
+                StartVisualizer();
+            if (_waveformData.Length > 0)
+                StartWaveformAnimation();
+        }
+
+        private bool IsAnotherAppFullscreen()
+        {
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                IntPtr myHwnd = new WindowInteropHelper(this).Handle;
+                if (fg == IntPtr.Zero || fg == myHwnd) return false;
+
+                if (!GetWindowRect(fg, out RECT fgRect)) return false;
+
+                IntPtr monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+                var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                if (!GetMonitorInfo(monitor, ref mi)) return false;
+
+                var bounds = mi.rcMonitor;
+                return fgRect.Left <= bounds.Left &&
+                       fgRect.Top <= bounds.Top &&
+                       fgRect.Right >= bounds.Right &&
+                       fgRect.Bottom >= bounds.Bottom;
+            }
+            catch { return false; }
         }
 
         private void WaveformAnimation_Tick(object? sender, EventArgs e)

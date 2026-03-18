@@ -19,6 +19,10 @@
   <a href="https://ko-fi.com/angelsoftware">
     <img src="https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
+  &nbsp;
+  <a href="https://audioauditor.org">
+    <img src="https://img.shields.io/badge/Website-audioauditor.org-7c5cff?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"/>
+  </a>
 </p>
 
 ---
@@ -108,7 +112,7 @@ AudioAuditor's AI detection tries its best to use **verifiable evidence** - Howe
 | Method | What It Checks |
 |--------|---------------|
 | **Metadata Tags** | ID3v2, Vorbis, APE, MP4 tags for AI service markers (TXXX frames, comments, encoder fields, free-form atoms) |
-| **Raw Byte Patterns** | First 64KB, middle 32KB, and last 64KB of the file for embedded identifiers |
+| **Raw Byte Patterns** | First 128KB, middle 32KB, and last 128KB of the file for embedded identifiers |
 | **C2PA / Content Credentials** | JUMBF box markers, claim manifests, and provenance data |
 | **AI Watermarks** | AudioSeal, SynthID, and WavMark watermark identifiers |
 | **Confidence Scoring** | Strong markers (named services) score higher than generic phrases; minimum 0.4 threshold required |
