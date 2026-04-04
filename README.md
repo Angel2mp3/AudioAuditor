@@ -56,6 +56,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Improved Bitrate Analysis** — Avoids simplistic "320 kbps" labeling for files with steep lowpass filters using a band-energy-drop method; lossless formats (FLAC/WAV/AIFF/APE/WV) report their actual file data rate instead of a lossy-equivalent estimate
 - **Custom FLAC Decoder** — Managed FLAC decoder handles files that NAudio cannot decode natively, ensuring full analysis and playback coverage
 - **Full Metadata Editor** - Full menu for editing, adding, or removing metadata in an audiofile including search buttons to auto search for the metadata for you
+- **Update Checker** - Optionally silently checks for updates in the background each time the program starts
 
 ### Supported Formats
 
