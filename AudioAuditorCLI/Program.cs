@@ -46,6 +46,15 @@ namespace AudioQualityChecker.CLI
             if (Environment.GetEnvironmentVariable("NO_COLOR") != null)
                 _noColor = true;
 
+            // Non-blocking update check — starts in background, prints result if available
+            var updateCheck = !args.Contains("--no-update-check")
+                ? Task.Run(async () =>
+                {
+                    try { return await AudioQualityChecker.Services.UpdateChecker.CheckForUpdateAsync(GetVersion()); }
+                    catch { return false; }
+                })
+                : Task.FromResult(false);
+
             if (args.Length == 0 || args[0] == "--help" || args[0] == "-h")
             {
                 PrintHelp();
@@ -62,7 +71,7 @@ namespace AudioQualityChecker.CLI
 
             string command = args[0].ToLowerInvariant();
 
-            return command switch
+            int result = command switch
             {
                 "analyze" => RunAnalyze(args.Skip(1).ToArray()),
                 "export" => RunExport(args.Skip(1).ToArray()),
@@ -71,6 +80,19 @@ namespace AudioQualityChecker.CLI
                 "spectrogram" or "spectro" => RunSpectrogram(args.Skip(1).ToArray()),
                 _ => Error($"Unknown command: {args[0]}. Use --help for usage.")
             };
+
+            // Print update notification if the background check found one
+            if (updateCheck.IsCompleted && updateCheck.Result)
+            {
+                var ver = AudioQualityChecker.Services.UpdateChecker.LatestVersion;
+                Console.WriteLine();
+                if (!_noColor) Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  Update available: v{ver} (current: v{GetVersion()})");
+                Console.WriteLine($"  https://github.com/Angel2mp3/AudioAuditor/releases/latest");
+                if (!_noColor) Console.ResetColor();
+            }
+
+            return result;
         }
 
         static string GetVersion()

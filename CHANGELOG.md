@@ -1,6 +1,19 @@
 # Changelog
 
-## v1.4.3 & v1.4.2
+## v1.4.4
+
+### New Features
+
+- **Automatic Update Checker** — AudioAuditor now silently checks GitHub for new releases each time it starts. If a newer version is found, a popup shows the new version number with a link to download it. Enabled by default; can be turned off in Settings → Play Options → "Check for Updates on Startup"
+- **CLI Update Notifications** — The CLI now checks for updates in the background while your command runs and prints an update notice at the end if a newer version is available. Pass `--no-update-check` to disable
+
+### Fixes
+
+- **Circle Rings Visualizer — Full 360° Circles** — Fixed the Circle Rings visualizer so bars radiate outward around the full perimeter of each circle (360°) instead of only along the top half. Each of the 5 frequency-band circles now has bars distributed evenly at all angles, matching the original intended design
+
+---
+
+## v1.4.3 & v1.4.2 (they got mixed together)
 
 ### New Features
 

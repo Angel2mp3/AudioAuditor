@@ -189,6 +189,9 @@ namespace AudioQualityChecker
             // Visualizer full-volume
             ChkVisualizerFullVolume.IsChecked = ThemeManager.VisualizerFullVolume;
 
+            // Auto-update check
+            ChkCheckForUpdates.IsChecked = ThemeManager.CheckForUpdates;
+
             _initializing = false;
         }
 
@@ -245,6 +248,7 @@ namespace AudioQualityChecker
             ThemeManager.AudioNormalization = ChkNormalization.IsChecked == true;
             ThemeManager.Crossfade = ChkCrossfade.IsChecked == true;
             ThemeManager.SpatialAudioEnabled = ChkSpatialAudio.IsChecked == true;
+            ThemeManager.CheckForUpdates = ChkCheckForUpdates.IsChecked == true;
             ThemeManager.SavePlayOptions();
         }
 
