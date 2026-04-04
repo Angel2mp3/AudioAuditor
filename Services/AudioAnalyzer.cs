@@ -23,7 +23,8 @@ namespace AudioQualityChecker.Services
             {
                 FilePath = filePath,
                 FileName = Path.GetFileName(filePath),
-                Extension = Path.GetExtension(filePath).ToLowerInvariant()
+                Extension = Path.GetExtension(filePath).ToLowerInvariant(),
+                FolderPath = Path.GetDirectoryName(filePath) ?? ""
             };
 
             try
@@ -192,8 +193,10 @@ namespace AudioQualityChecker.Services
             long totalFrames;
             if (disposable is AudioFileReader afr)
                 totalFrames = afr.Length / afr.WaveFormat.BlockAlign;
+#if !CROSS_PLATFORM
             else if (disposable is MediaFoundationReader mfr2)
                 totalFrames = mfr2.Length / mfr2.WaveFormat.BlockAlign;
+#endif
             else if (disposable is WaveStream ws && ws.Length > 0)
                 totalFrames = ws.Length / ws.WaveFormat.BlockAlign;
             else
@@ -967,8 +970,10 @@ namespace AudioQualityChecker.Services
                 long totalFrames;
                 if (disposable is AudioFileReader afr2)
                     totalFrames = afr2.Length / afr2.WaveFormat.BlockAlign;
+#if !CROSS_PLATFORM
                 else if (disposable is MediaFoundationReader mfr3)
                     totalFrames = mfr3.Length / mfr3.WaveFormat.BlockAlign;
+#endif
                 else
                     totalFrames = (long)(info.DurationSeconds * sampleRate);
 
@@ -1232,12 +1237,21 @@ namespace AudioQualityChecker.Services
                 }
                 catch
                 {
+#if !CROSS_PLATFORM
                     var mfr = new MediaFoundationReader(filePath);
                     var sc = new SampleChannel(mfr, false);
                     sampleReader = sc;
                     readerDisposable = mfr;
                     sampleRate = sc.WaveFormat.SampleRate;
                     channels = sc.WaveFormat.Channels;
+#else
+                    // On cross-platform, re-try via the full OpenAudioFile chain
+                    var (reader, samples, fmt) = OpenAudioFile(filePath);
+                    sampleReader = samples;
+                    readerDisposable = reader;
+                    sampleRate = fmt.SampleRate;
+                    channels = fmt.Channels;
+#endif
                 }
 
                 // Skip first 10 seconds (intros are often sparse), then read up to 60 seconds
@@ -1594,6 +1608,7 @@ namespace AudioQualityChecker.Services
             }
             catch { /* fall through to MediaFoundation */ }
 
+#if !CROSS_PLATFORM
             // MediaFoundationReader with float output
             try
             {
@@ -1648,6 +1663,7 @@ namespace AudioQualityChecker.Services
                 }
             }
             catch { /* fall through to managed FLAC */ }
+#endif
 
             // Managed FLAC decoder (handles hi-res and files MediaFoundation can't decode)
             if (ext is ".flac" or ".fla")

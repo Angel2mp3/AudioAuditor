@@ -18,9 +18,12 @@ Debug/
 x64/
 x86/
 artifacts/
+archive/
 *.exe
 *.pdb
 !*.csproj
+*.csproj
+.csproj
 *_wpftmp.csproj
 
 # NuGet
@@ -37,6 +40,8 @@ project.assets.json
 # User-specific files
 *.user
 *.suo
+proxy/
+Proxy/
 *.userprefs
 *.vspscc
 *.vssscc
@@ -76,6 +81,23 @@ session.dat
 # Dev / temp / personal files
 docs/
 to-do.txt
+
+# Windows shortcuts (embed local paths)
+*.lnk
+
+# Tooling / generated
+.understand-anything/
+.claude/
+
+# SH Labs secrets (contains HMAC shared secret — never commit)
+Services/SHLabsSecrets.cs
+
+# Node / Wrangler
+node_modules/
+.wrangler/
+website/
+Website/
+to-do.txt
 todo.txt
 TODO.txt
 notes.txt
@@ -104,3 +126,7 @@ crashdumps/
 # Test results
 TestResults/
 *.trx
+*.csproj
+*.csproj
+AudioAuditorCLI/AudioAuditorCLI.csproj
+AudioQualityChecker.csproj

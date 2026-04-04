@@ -50,6 +50,56 @@ namespace AudioQualityChecker.Services
         // Rainbow Visualizer: each bar gets its own cycling spectrum color
         public static bool RainbowVisualizerEnabled { get; set; }
 
+        // Visualizer style: 0=Bars, 1=Mirror, 2=Particles, 3=Circles, 4=Scope, 5=Abstract, 6=VU Meter
+        public static int VisualizerStyle { get; set; }
+
+        // Visualizer cycle: speed in seconds, and custom list of style indices (empty = all)
+        public static int VisualizerCycleSpeed { get; set; } = 10; // seconds between switches (5-60)
+        public static string VisualizerCycleList { get; set; } = ""; // comma-separated style indices, empty = all
+
+        // Visualizer theme (independent from playbar theme)
+        private static string _currentVisualizerTheme = ""; // empty = follow playbar
+        public static string CurrentVisualizerTheme => string.IsNullOrEmpty(_currentVisualizerTheme) ? _currentPlaybarTheme : _currentVisualizerTheme;
+        public static bool IsVisualizerFollowingPlaybar => string.IsNullOrEmpty(_currentVisualizerTheme);
+        public static readonly List<string> AvailableVisualizerThemes = new() { "Follow Playbar", "Blue Fire", "Neon Pulse", "Sunset Glow", "Purple Haze", "Minimal", "Golden Wave", "Emerald Wave", "Blurple Wave", "Crimson Wave", "Brown Wave", "Rainbow Bars" };
+
+        public static void SetVisualizerTheme(string theme)
+        {
+            _currentVisualizerTheme = theme == "Follow Playbar" ? "" : theme;
+            _cachedVisualizerColors = null;
+            _cachedVisualizerThemeName = null;
+            SavePlayOptions();
+        }
+
+        private static PlaybarColors? _cachedVisualizerColors;
+        private static string? _cachedVisualizerThemeName;
+
+        /// <summary>
+        /// Returns visualizer-specific colors. Uses its own theme if set, otherwise follows playbar.
+        /// </summary>
+        public static PlaybarColors GetVisualizerColors()
+        {
+            string effectiveTheme = CurrentVisualizerTheme;
+            if (_cachedVisualizerColors != null && _cachedVisualizerThemeName == effectiveTheme)
+                return _cachedVisualizerColors;
+            _cachedVisualizerThemeName = effectiveTheme;
+            // Temporarily swap to compute colors for the visualizer theme
+            string savedPlaybar = _currentPlaybarTheme;
+            _currentPlaybarTheme = effectiveTheme;
+            _cachedPlaybarColors = null;
+            _cachedPlaybarThemeName = null;
+            _cachedVisualizerColors = GetPlaybarColors();
+            // Restore playbar state
+            _currentPlaybarTheme = savedPlaybar;
+            _cachedPlaybarColors = null;
+            _cachedPlaybarThemeName = null;
+            return _cachedVisualizerColors;
+        }
+
+        /// <summary>Whether the visualizer should use rainbow mode (its own theme is Rainbow Bars).</summary>
+        public static bool VisualizerRainbowEnabled =>
+            CurrentVisualizerTheme == "Rainbow Bars";
+
         // Custom service settings (for Custom... slots — 6 slots)
         public static string[] CustomServiceUrls { get; } = new string[6] { "", "", "", "", "", "" };
         public static string[] CustomServiceIcons { get; } = new string[6] { "", "", "", "", "", "" };
@@ -61,7 +111,7 @@ namespace AudioQualityChecker.Services
         // Discord Rich Presence
         public static bool DiscordRpcEnabled { get; set; }
         public static string DiscordRpcClientId { get; set; } = "";
-        public static string DiscordRpcDisplayMode { get; set; } = "ListeningDefault"; // ListeningDefault, TrackDetails, ListeningToMusic, FileName
+        public static string DiscordRpcDisplayMode { get; set; } = "TrackDetails"; // TrackDetails, FileName
         public static bool DiscordRpcShowElapsed { get; set; } = true;
 
         // Last.fm Scrobbling
@@ -79,6 +129,21 @@ namespace AudioQualityChecker.Services
 
         // Experimental AI Detection (spectral analysis — opt-in, higher false positives)
         public static bool ExperimentalAiDetection { get; set; }
+
+        // SH Labs AI Detection (API-based — opt-in, uses rate-limited proxy)
+        public static bool SHLabsAiDetection { get; set; }
+
+        // SH Labs privacy notice accepted — must be true before SH Labs can be used
+        public static bool SHLabsPrivacyAccepted { get; set; }
+
+        // User's own SH Labs API key (bypasses proxy, no rate limits, stored locally)
+        public static string SHLabsCustomApiKey { get; set; } = "";
+
+        // AI Detection config popup dismissed — shown once to new/upgrading users
+        public static bool AiConfigDismissed { get; set; }
+
+        // Visualizer full-volume mode: renders visualizer as if volume is at 100%
+        public static bool VisualizerFullVolume { get; set; }
 
         // Donation popup dismissed — never show again once dismissed
         public static bool DonationDismissed { get; set; }
@@ -200,6 +265,7 @@ namespace AudioQualityChecker.Services
             // Cross-install persistence: registry flags override options.txt
             if (GetRegistryFlag("DonationDismissed")) DonationDismissed = true;
             if (GetRegistryFlag("FooterSupportDismissed")) FooterSupportDismissed = true;
+            if (GetRegistryFlag("AiConfigDismissed")) AiConfigDismissed = true;
 
             // Re-sync playbar accent after playbar theme is loaded from options
             UpdatePlaybarAccentResource();
@@ -483,6 +549,10 @@ namespace AudioQualityChecker.Services
                     $"SpectrogramLinearScale={SpectrogramLinearScale}",
                     $"SpectrogramDifferenceChannel={SpectrogramDifferenceChannel}",
                     $"RainbowVisualizer={RainbowVisualizerEnabled}",
+                    $"VisualizerStyle={VisualizerStyle}",
+                    $"VisualizerCycleSpeed={VisualizerCycleSpeed}",
+                    $"VisualizerCycleList={VisualizerCycleList}",
+                    $"VisualizerTheme={_currentVisualizerTheme}",
                     $"CustomUrl1={CustomServiceUrls[0]}",
                     $"CustomIcon1={CustomServiceIcons[0]}",
                     $"CustomUrl2={CustomServiceUrls[1]}",
@@ -504,6 +574,11 @@ namespace AudioQualityChecker.Services
                     $"ExportFormat={ExportFormat}",
                     $"SpatialAudio={SpatialAudioEnabled}",
                     $"ExperimentalAiDetection={ExperimentalAiDetection}",
+                    $"SHLabsAiDetection={SHLabsAiDetection}",
+                    $"SHLabsPrivacyAccepted={SHLabsPrivacyAccepted}",
+                    $"SHLabsCustomApiKey={SHLabsCustomApiKey}",
+                    $"AiConfigDismissed={AiConfigDismissed}",
+                    $"VisualizerFullVolume={VisualizerFullVolume}",
                     $"ColumnLayout={ColumnLayout}",
                     $"MaxConcurrency={_maxConcurrency}",
                     $"MaxMemoryMB={_maxMemoryMB}",
@@ -566,7 +641,6 @@ namespace AudioQualityChecker.Services
                             if (AvailablePlaybarThemes.Contains(val))
                             {
                                 _currentPlaybarTheme = val;
-                                RainbowVisualizerEnabled = val == "Rainbow Bars";
                             }
                             break;
                         case "Service1": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[0] = val; break;
@@ -579,6 +653,21 @@ namespace AudioQualityChecker.Services
                         case "SpectrogramLinearScale": SpectrogramLinearScale = bool.TryParse(val, out var bsl) && bsl; break;
                         case "SpectrogramDifferenceChannel": SpectrogramDifferenceChannel = bool.TryParse(val, out var bsd) && bsd; break;
                         case "RainbowVisualizer": RainbowVisualizerEnabled = bool.TryParse(val, out var brv) && brv; break;
+                        case "VisualizerStyle":
+                            if (int.TryParse(val, out var vs) && vs >= 0 && vs <= 6) VisualizerStyle = vs;
+                            break;
+                        case "VisualizerCycleSpeed":
+                            if (int.TryParse(val, out var vcs) && vcs >= 5 && vcs <= 60) VisualizerCycleSpeed = vcs;
+                            break;
+                        case "VisualizerCycleList":
+                            VisualizerCycleList = val;
+                            break;
+                        case "VisualizerTheme":
+                            if (AvailablePlaybarThemes.Contains(val))
+                                _currentVisualizerTheme = val;
+                            else
+                                _currentVisualizerTheme = ""; // follow playbar
+                            break;
                         case "CustomUrl1": CustomServiceUrls[0] = val; break;
                         case "CustomIcon1": CustomServiceIcons[0] = val; break;
                         case "CustomUrl2": CustomServiceUrls[1] = val; break;
@@ -604,7 +693,7 @@ namespace AudioQualityChecker.Services
                             break;
                         case "DiscordRpc": DiscordRpcEnabled = bool.TryParse(val, out var bdr) && bdr; break;
                         case "DiscordRpcDisplayMode":
-                            if (new[] { "TrackDetails", "ListeningToMusic", "FileName" }.Contains(val))
+                            if (new[] { "TrackDetails", "FileName" }.Contains(val))
                                 DiscordRpcDisplayMode = val;
                             break;
                         case "DiscordRpcShowElapsed": DiscordRpcShowElapsed = !(bool.TryParse(val, out var bde) && !bde); break;
@@ -615,6 +704,11 @@ namespace AudioQualityChecker.Services
                             break;
                         case "SpatialAudio": SpatialAudioEnabled = bool.TryParse(val, out var bsa) && bsa; break;
                         case "ExperimentalAiDetection": ExperimentalAiDetection = bool.TryParse(val, out var bea) && bea; AudioAnalyzer.EnableExperimentalAi = ExperimentalAiDetection; break;
+                        case "SHLabsAiDetection": SHLabsAiDetection = bool.TryParse(val, out var bsh) && bsh; break;
+                        case "SHLabsPrivacyAccepted": SHLabsPrivacyAccepted = bool.TryParse(val, out var bsp) && bsp; break;
+                        case "SHLabsCustomApiKey": SHLabsCustomApiKey = val; break;
+                        case "AiConfigDismissed": AiConfigDismissed = bool.TryParse(val, out var bac) && bac; break;
+                        case "VisualizerFullVolume": VisualizerFullVolume = bool.TryParse(val, out var bvfv) && bvfv; break;
                         case "ColumnLayout": ColumnLayout = val; break;
                         case "MaxConcurrency":
                             if (int.TryParse(val, out var mc) && mc >= 0 && mc <= 32)

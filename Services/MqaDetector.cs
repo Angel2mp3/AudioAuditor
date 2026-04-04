@@ -96,6 +96,7 @@ namespace AudioQualityChecker.Services
                 }
                 catch
                 {
+#if !CROSS_PLATFORM
                     try
                     {
                         var mfr = new MediaFoundationReader(filePath);
@@ -110,6 +111,19 @@ namespace AudioQualityChecker.Services
                     {
                         return null;
                     }
+#else
+                    try
+                    {
+                        var (d, sp, fmt) = AudioAnalyzer.OpenAudioFile(filePath);
+                        reader = d;
+                        sampleProvider = sp;
+                        waveFormat = fmt;
+                    }
+                    catch
+                    {
+                        return null;
+                    }
+#endif
                 }
 
                 using (reader)

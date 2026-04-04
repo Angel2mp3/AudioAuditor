@@ -28,6 +28,7 @@ namespace AudioQualityChecker.Models
         public string Title { get; set; } = "";
         public string FileName { get; set; } = "";
         public string FilePath { get; set; } = "";
+        public string FolderPath { get; set; } = "";
         public int SampleRate { get; set; }
         public int BitsPerSample { get; set; }
         public string Duration { get; set; } = "";
@@ -74,6 +75,13 @@ namespace AudioQualityChecker.Models
         public double ExperimentalAiConfidence { get; set; }
         public List<string> ExperimentalAiFlags { get; set; } = new();
 
+        // SH Labs AI detection (API-based)
+        public bool SHLabsScanned { get; set; }
+        public string SHLabsPrediction { get; set; } = ""; // "Human Made", "Pure AI", "Processed AI"
+        public double SHLabsProbability { get; set; }       // 0–100
+        public double SHLabsConfidence { get; set; }        // 0–100
+        public string SHLabsAiType { get; set; } = "";
+
         // Album cover
         public bool HasAlbumCover { get; set; }
 
@@ -105,13 +113,23 @@ namespace AudioQualityChecker.Models
         {
             get
             {
-                if (IsAiGenerated && ExperimentalAiSuspicious)
-                    return $"{AiSource} + Spectral ({ExperimentalAiConfidence:P0})";
+                var parts = new List<string>();
                 if (IsAiGenerated)
-                    return AiSource;
+                    parts.Add(AiSource);
                 if (ExperimentalAiSuspicious)
-                    return $"Spectral ({ExperimentalAiConfidence:P0})";
-                return "No";
+                    parts.Add($"Spectral ({ExperimentalAiConfidence:P0})");
+                if (SHLabsScanned && SHLabsPrediction != "Human Made")
+                {
+                    string label = !string.IsNullOrEmpty(SHLabsAiType)
+                        ? $"SH Labs: {SHLabsPrediction} — {SHLabsAiType} ({SHLabsProbability:F0}%)"
+                        : $"SH Labs: {SHLabsPrediction} ({SHLabsProbability:F0}%)";
+                    parts.Add(label);
+                }
+                else if (SHLabsScanned)
+                {
+                    parts.Add("SH Labs: Human Made");
+                }
+                return parts.Count > 0 ? string.Join(" + ", parts) : "No";
             }
         }
 

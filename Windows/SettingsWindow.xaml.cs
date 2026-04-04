@@ -18,6 +18,12 @@ namespace AudioQualityChecker
         private bool _discordIdVisible = false;
         private string _realDiscordAppId = "";
 
+        /// <summary>When true, MainWindow should show the SH Labs privacy overlay after Settings closes.</summary>
+        public bool RequestPrivacyOnClose { get; private set; }
+
+        /// <summary>When true, MainWindow should show the AI config overlay after Settings closes.</summary>
+        public bool RequestAiConfigOnClose { get; private set; }
+
         public SettingsWindow()
         {
             InitializeComponent();
@@ -32,6 +38,13 @@ namespace AudioQualityChecker
                 PlaybarCombo.Items.Add(pt);
             PlaybarCombo.SelectedItem = ThemeManager.CurrentPlaybarTheme;
 
+            // Populate visualizer theme combo
+            foreach (var vt in ThemeManager.AvailableVisualizerThemes)
+                VisualizerThemeCombo.Items.Add(vt);
+            VisualizerThemeCombo.SelectedItem = ThemeManager.IsVisualizerFollowingPlaybar
+                ? "Follow Playbar"
+                : ThemeManager.CurrentVisualizerTheme;
+
             // Set play option checkboxes from saved state
             ChkAutoPlay.IsChecked = ThemeManager.AutoPlayNext;
             ChkNormalization.IsChecked = ThemeManager.AudioNormalization;
@@ -40,6 +53,11 @@ namespace AudioQualityChecker
             CrossfadeDurationLabel.Text = $"{ThemeManager.CrossfadeDuration}s";
             ChkSpatialAudio.IsChecked = ThemeManager.SpatialAudioEnabled;
             // Rainbow mode is now driven by the "Rainbow Bars" playbar style
+
+            // Visualizer cycle settings
+            CycleSpeedSlider.Value = ThemeManager.VisualizerCycleSpeed;
+            CycleSpeedLabel.Text = $"{ThemeManager.VisualizerCycleSpeed}s";
+            LoadCycleStyleChecks();
 
             // Populate all 6 music service combos
             var serviceCombos = new[] { ServiceCombo0, ServiceCombo1, ServiceCombo2, ServiceCombo3, ServiceCombo4, ServiceCombo5 };
@@ -69,16 +87,12 @@ namespace AudioQualityChecker
             ChkDiscordShowElapsed.IsChecked = ThemeManager.DiscordRpcShowElapsed;
 
             // Discord display mode combo
-            DiscordDisplayModeCombo.Items.Add("Listening to: Music on AudioAuditor");
             DiscordDisplayModeCombo.Items.Add("Track Details (Title + Artist)");
-            DiscordDisplayModeCombo.Items.Add("Listening to Music");
             DiscordDisplayModeCombo.Items.Add("File Name Only");
             DiscordDisplayModeCombo.SelectedIndex = ThemeManager.DiscordRpcDisplayMode switch
             {
-                "TrackDetails" => 1,
-                "ListeningToMusic" => 2,
-                "FileName" => 3,
-                _ => 0 // ListeningDefault
+                "FileName" => 1,
+                _ => 0 // TrackDetails
             };
 
             // Hide Discord App ID by default
@@ -167,6 +181,14 @@ namespace AudioQualityChecker
             // Experimental AI detection
             ChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
 
+            // SH Labs AI detection
+            ChkSHLabsAi.IsChecked = ThemeManager.SHLabsAiDetection;
+            SHLabsApiKeyBox.Text = ThemeManager.SHLabsCustomApiKey;
+            UpdateSHLabsQuota();
+
+            // Visualizer full-volume
+            ChkVisualizerFullVolume.IsChecked = ThemeManager.VisualizerFullVolume;
+
             _initializing = false;
         }
 
@@ -202,8 +224,16 @@ namespace AudioQualityChecker
             if (PlaybarCombo.SelectedItem is string playbarTheme)
             {
                 ThemeManager.SetPlaybarTheme(playbarTheme);
-                ThemeManager.RainbowVisualizerEnabled = playbarTheme == "Rainbow Bars";
                 ThemeManager.SavePlayOptions();
+            }
+        }
+
+        private void VisualizerThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (VisualizerThemeCombo.SelectedItem is string vizTheme)
+            {
+                ThemeManager.SetVisualizerTheme(vizTheme);
             }
         }
 
@@ -215,7 +245,6 @@ namespace AudioQualityChecker
             ThemeManager.AudioNormalization = ChkNormalization.IsChecked == true;
             ThemeManager.Crossfade = ChkCrossfade.IsChecked == true;
             ThemeManager.SpatialAudioEnabled = ChkSpatialAudio.IsChecked == true;
-            ThemeManager.RainbowVisualizerEnabled = ThemeManager.CurrentPlaybarTheme == "Rainbow Bars";
             ThemeManager.SavePlayOptions();
         }
 
@@ -225,6 +254,68 @@ namespace AudioQualityChecker
             int val = (int)CrossfadeSlider.Value;
             CrossfadeDurationLabel.Text = $"{val}s";
             ThemeManager.CrossfadeDuration = val;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void CycleSpeedSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_initializing) return;
+            int val = (int)CycleSpeedSlider.Value;
+            CycleSpeedLabel.Text = $"{val}s";
+            ThemeManager.VisualizerCycleSpeed = val;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void CycleStyleCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            SaveCycleStyleChecks();
+        }
+
+        private void LoadCycleStyleChecks()
+        {
+            var list = ThemeManager.VisualizerCycleList;
+            if (string.IsNullOrWhiteSpace(list))
+            {
+                // All checked by default
+                ChkCycleBars.IsChecked = true;
+                ChkCycleMirror.IsChecked = true;
+                ChkCycleParticles.IsChecked = true;
+                ChkCycleCircles.IsChecked = true;
+                ChkCycleScope.IsChecked = true;
+                ChkCycleKaleido.IsChecked = true;
+                ChkCycleVU.IsChecked = true;
+                return;
+            }
+
+            var indices = new HashSet<int>();
+            foreach (var part in list.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (int.TryParse(part.Trim(), out int idx))
+                    indices.Add(idx);
+            }
+
+            ChkCycleBars.IsChecked = indices.Contains(0);
+            ChkCycleMirror.IsChecked = indices.Contains(1);
+            ChkCycleParticles.IsChecked = indices.Contains(2);
+            ChkCycleCircles.IsChecked = indices.Contains(3);
+            ChkCycleScope.IsChecked = indices.Contains(4);
+            ChkCycleKaleido.IsChecked = indices.Contains(5);
+            ChkCycleVU.IsChecked = indices.Contains(6);
+        }
+
+        private void SaveCycleStyleChecks()
+        {
+            var selected = new List<int>();
+            if (ChkCycleBars.IsChecked == true) selected.Add(0);
+            if (ChkCycleMirror.IsChecked == true) selected.Add(1);
+            if (ChkCycleParticles.IsChecked == true) selected.Add(2);
+            if (ChkCycleCircles.IsChecked == true) selected.Add(3);
+            if (ChkCycleScope.IsChecked == true) selected.Add(4);
+            if (ChkCycleKaleido.IsChecked == true) selected.Add(5);
+            if (ChkCycleVU.IsChecked == true) selected.Add(6);
+
+            ThemeManager.VisualizerCycleList = string.Join(",", selected);
             ThemeManager.SavePlayOptions();
         }
 
@@ -289,6 +380,83 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.ExperimentalAiDetection = ChkExperimentalAi.IsChecked == true;
             AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void SHLabsAi_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+
+            bool wantsSHLabs = ChkSHLabsAi.IsChecked == true;
+
+            // If enabling and privacy not yet accepted, close Settings and show privacy on MainWindow
+            if (wantsSHLabs && !ThemeManager.SHLabsPrivacyAccepted)
+            {
+                ChkSHLabsAi.IsChecked = false;
+                RequestPrivacyOnClose = true;
+                Close();
+                return;
+            }
+
+            ThemeManager.SHLabsAiDetection = wantsSHLabs;
+            ThemeManager.SavePlayOptions();
+            UpdateSHLabsQuota();
+        }
+
+        private void SHLabsPrivacyIcon_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Close Settings and show the privacy notice on MainWindow
+            RequestPrivacyOnClose = true;
+            Close();
+        }
+
+        private void ShowAiSetup_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Close Settings and show the AI config overlay on MainWindow
+            RequestAiConfigOnClose = true;
+            Close();
+        }
+
+        private void SHLabsApiKey_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.SHLabsCustomApiKey = SHLabsApiKeyBox.Text.Trim();
+            ThemeManager.SavePlayOptions();
+            UpdateSHLabsQuota();
+        }
+
+        private void SHLabsApiKeyClear_Click(object sender, RoutedEventArgs e)
+        {
+            SHLabsApiKeyBox.Text = "";
+            ThemeManager.SHLabsCustomApiKey = "";
+            ThemeManager.SavePlayOptions();
+            UpdateSHLabsQuota();
+        }
+
+        private void UpdateSHLabsQuota()
+        {
+            if (ThemeManager.SHLabsAiDetection)
+            {
+                if (SHLabsDetectionService.HasCustomApiKey)
+                {
+                    SHLabsQuotaText.Text = "Using your own API key — no rate limits apply";
+                }
+                else
+                {
+                    var (daily, monthly) = SHLabsDetectionService.GetQuota();
+                    SHLabsQuotaText.Text = $"Remaining today: {daily}  •  This month: {monthly}";
+                }
+            }
+            else
+            {
+                SHLabsQuotaText.Text = "";
+            }
+        }
+
+        private void VisualizerFullVolume_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.VisualizerFullVolume = ChkVisualizerFullVolume.IsChecked == true;
             ThemeManager.SavePlayOptions();
         }
 
@@ -364,10 +532,8 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.DiscordRpcDisplayMode = DiscordDisplayModeCombo.SelectedIndex switch
             {
-                1 => "TrackDetails",
-                2 => "ListeningToMusic",
-                3 => "FileName",
-                _ => "ListeningDefault"
+                1 => "FileName",
+                _ => "TrackDetails"
             };
             ThemeManager.SavePlayOptions();
         }

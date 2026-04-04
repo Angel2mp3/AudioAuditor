@@ -210,9 +210,10 @@ namespace AudioQualityChecker.Services
                 // For Opus files, use dedicated Concentus decoder first
                 if (ext == ".opus")
                 {
+                    OpusFileReader? opusReader = null;
                     try
                     {
-                        var opusReader = new OpusFileReader(filePath);
+                        opusReader = new OpusFileReader(filePath);
                         _sampleChannel = new SampleChannel(opusReader, true);
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
                         _extraDisposable = opusReader;
@@ -221,6 +222,7 @@ namespace AudioQualityChecker.Services
                     }
                     catch
                     {
+                        opusReader?.Dispose();
                         _sampleChannel = null;
                         _extraDisposable = null;
                         _waveStreamReader = null;
@@ -230,9 +232,10 @@ namespace AudioQualityChecker.Services
                 // For Ogg Vorbis files, use VorbisWaveReader
                 if (!opened && (ext == ".ogg"))
                 {
+                    VorbisWaveReader? vorbisReader = null;
                     try
                     {
-                        var vorbisReader = new VorbisWaveReader(filePath);
+                        vorbisReader = new VorbisWaveReader(filePath);
                         _sampleChannel = new SampleChannel(vorbisReader, true);
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
                         _extraDisposable = vorbisReader;
@@ -241,6 +244,7 @@ namespace AudioQualityChecker.Services
                     }
                     catch
                     {
+                        vorbisReader?.Dispose();
                         _sampleChannel = null;
                         _extraDisposable = null;
                         _waveStreamReader = null;
@@ -250,9 +254,10 @@ namespace AudioQualityChecker.Services
                 // For DSD files (.dsf, .dff), use DSD-to-PCM converter
                 if (!opened && (ext == ".dsf" || ext == ".dff"))
                 {
+                    DsdToPcmReader? dsdReader = null;
                     try
                     {
-                        var dsdReader = new DsdToPcmReader(filePath);
+                        dsdReader = new DsdToPcmReader(filePath);
                         _sampleChannel = new SampleChannel(dsdReader, true);
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
                         _extraDisposable = dsdReader;
@@ -261,6 +266,7 @@ namespace AudioQualityChecker.Services
                     }
                     catch
                     {
+                        dsdReader?.Dispose();
                         _sampleChannel = null;
                         _extraDisposable = null;
                         _waveStreamReader = null;
@@ -349,10 +355,11 @@ namespace AudioQualityChecker.Services
                 // Try managed FLAC decoder (handles hi-res and files MediaFoundation can't decode)
                 if (!opened && (ext == ".flac" || ext == ".fla"))
                 {
+                    FlacFileReader? flacReader = null;
                     try
                     {
                         // Decode on thread pool to avoid UI freeze on large hi-res files
-                        var flacReader = System.Threading.Tasks.Task.Run(() => new FlacFileReader(filePath)).Result;
+                        flacReader = System.Threading.Tasks.Task.Run(() => new FlacFileReader(filePath)).Result;
                         _sampleChannel = new SampleChannel(flacReader, true);
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
                         _extraDisposable = flacReader;
@@ -361,6 +368,7 @@ namespace AudioQualityChecker.Services
                     }
                     catch
                     {
+                        flacReader?.Dispose();
                         _sampleChannel = null;
                         _extraDisposable = null;
                         _waveStreamReader = null;
@@ -370,17 +378,19 @@ namespace AudioQualityChecker.Services
                 // Try VorbisWaveReader as fallback for any Ogg-based format
                 if (!opened)
                 {
+                    VorbisWaveReader? vorbisReader2 = null;
                     try
                     {
-                        var vorbisReader = new VorbisWaveReader(filePath);
-                        _sampleChannel = new SampleChannel(vorbisReader, true);
+                        vorbisReader2 = new VorbisWaveReader(filePath);
+                        _sampleChannel = new SampleChannel(vorbisReader2, true);
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
-                        _extraDisposable = vorbisReader;
-                        _waveStreamReader = vorbisReader;
+                        _extraDisposable = vorbisReader2;
+                        _waveStreamReader = vorbisReader2;
                         opened = true;
                     }
                     catch
                     {
+                        vorbisReader2?.Dispose();
                         _sampleChannel = null;
                         _extraDisposable = null;
                         _waveStreamReader = null;
@@ -390,20 +400,23 @@ namespace AudioQualityChecker.Services
                 // Try WaveFileReader for raw WAV/RF64/BWF (including 24-bit)
                 if (!opened)
                 {
+                    WaveFileReader? rawReader = null;
+                    IDisposable? converter = null;
                     try
                     {
-                        var rawReader = new WaveFileReader(filePath);
+                        rawReader = new WaveFileReader(filePath);
                         // For 24-bit or other non-standard WAV, convert to PCM then resample
                         if (rawReader.WaveFormat.BitsPerSample == 24 || rawReader.WaveFormat.BitsPerSample == 32)
                         {
-                            // Convert to IEEE float for 24/32-bit WAV
                             var floatProvider = new Wave32To16Stream(rawReader);
+                            converter = floatProvider;
                             _sampleChannel = new SampleChannel(floatProvider, true);
                             _extraDisposable2 = floatProvider;
                         }
                         else
                         {
                             var pcmStream = WaveFormatConversionStream.CreatePcmStream(rawReader);
+                            converter = pcmStream;
                             _sampleChannel = new SampleChannel(pcmStream, true);
                             _extraDisposable2 = pcmStream;
                         }
@@ -414,25 +427,30 @@ namespace AudioQualityChecker.Services
                     }
                     catch
                     {
+                        converter?.Dispose();
+                        rawReader?.Dispose();
                         _sampleChannel = null;
                         _waveStreamReader = null;
+                        _extraDisposable2 = null;
                     }
                 }
 
                 // Try Opus decoder as last resort for any unrecognized file
                 if (!opened)
                 {
+                    OpusFileReader? opusReader2 = null;
                     try
                     {
-                        var opusReader = new OpusFileReader(filePath);
-                        _sampleChannel = new SampleChannel(opusReader, true);
+                        opusReader2 = new OpusFileReader(filePath);
+                        _sampleChannel = new SampleChannel(opusReader2, true);
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
-                        _extraDisposable = opusReader;
-                        _waveStreamReader = opusReader;
+                        _extraDisposable = opusReader2;
+                        _waveStreamReader = opusReader2;
                         opened = true;
                     }
                     catch
                     {
+                        opusReader2?.Dispose();
                         _sampleChannel = null;
                         _extraDisposable = null;
                         _waveStreamReader = null;
@@ -442,17 +460,19 @@ namespace AudioQualityChecker.Services
                 // Try managed FLAC decoder as absolute last resort (may be FLAC with wrong extension)
                 if (!opened)
                 {
+                    FlacFileReader? flacReader2 = null;
                     try
                     {
-                        var flacReader = System.Threading.Tasks.Task.Run(() => new FlacFileReader(filePath)).Result;
-                        _sampleChannel = new SampleChannel(flacReader, true);
+                        flacReader2 = System.Threading.Tasks.Task.Run(() => new FlacFileReader(filePath)).Result;
+                        _sampleChannel = new SampleChannel(flacReader2, true);
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
-                        _extraDisposable = flacReader;
-                        _waveStreamReader = flacReader;
+                        _extraDisposable = flacReader2;
+                        _waveStreamReader = flacReader2;
                         opened = true;
                     }
                     catch
                     {
+                        flacReader2?.Dispose();
                         _sampleChannel = null;
                         _extraDisposable = null;
                         _waveStreamReader = null;
@@ -597,9 +617,10 @@ namespace AudioQualityChecker.Services
                 // Opus
                 if (ext == ".opus")
                 {
+                    OpusFileReader? opusReader = null;
                     try
                     {
-                        var opusReader = new OpusFileReader(filePath);
+                        opusReader = new OpusFileReader(filePath);
                         _sampleChannel = new SampleChannel(opusReader, true);
                         _sampleChannel.Volume = 0f;
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
@@ -607,15 +628,16 @@ namespace AudioQualityChecker.Services
                         _waveStreamReader = opusReader;
                         opened = true;
                     }
-                    catch { _sampleChannel = null; _extraDisposable = null; _waveStreamReader = null; }
+                    catch { opusReader?.Dispose(); _sampleChannel = null; _extraDisposable = null; _waveStreamReader = null; }
                 }
 
                 // Ogg Vorbis
                 if (!opened && ext == ".ogg")
                 {
+                    VorbisWaveReader? vorbisReader = null;
                     try
                     {
-                        var vorbisReader = new VorbisWaveReader(filePath);
+                        vorbisReader = new VorbisWaveReader(filePath);
                         _sampleChannel = new SampleChannel(vorbisReader, true);
                         _sampleChannel.Volume = 0f;
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
@@ -623,15 +645,16 @@ namespace AudioQualityChecker.Services
                         _waveStreamReader = vorbisReader;
                         opened = true;
                     }
-                    catch { _sampleChannel = null; _extraDisposable = null; _waveStreamReader = null; }
+                    catch { vorbisReader?.Dispose(); _sampleChannel = null; _extraDisposable = null; _waveStreamReader = null; }
                 }
 
                 // DSD
                 if (!opened && (ext == ".dsf" || ext == ".dff"))
                 {
+                    DsdToPcmReader? dsdReader = null;
                     try
                     {
-                        var dsdReader = new DsdToPcmReader(filePath);
+                        dsdReader = new DsdToPcmReader(filePath);
                         _sampleChannel = new SampleChannel(dsdReader, true);
                         _sampleChannel.Volume = 0f;
                         playbackSource = new SampleToWaveProvider(_sampleChannel);
@@ -639,7 +662,7 @@ namespace AudioQualityChecker.Services
                         _waveStreamReader = dsdReader;
                         opened = true;
                     }
-                    catch { _sampleChannel = null; _extraDisposable = null; _waveStreamReader = null; }
+                    catch { dsdReader?.Dispose(); _sampleChannel = null; _extraDisposable = null; _waveStreamReader = null; }
                 }
 
                 // AudioFileReader
