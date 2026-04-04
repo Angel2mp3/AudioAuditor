@@ -53,6 +53,9 @@ namespace AudioQualityChecker.Services
         // Visualizer style: 0=Bars, 1=Mirror, 2=Particles, 3=Circles, 4=Scope, 5=Abstract, 6=VU Meter
         public static int VisualizerStyle { get; set; }
 
+        // Auto-update check: silently checks GitHub on startup (on by default)
+        public static bool CheckForUpdates { get; set; } = true;
+
         // Visualizer cycle: speed in seconds, and custom list of style indices (empty = all)
         public static int VisualizerCycleSpeed { get; set; } = 10; // seconds between switches (5-60)
         public static string VisualizerCycleList { get; set; } = ""; // comma-separated style indices, empty = all
@@ -583,7 +586,8 @@ namespace AudioQualityChecker.Services
                     $"MaxConcurrency={_maxConcurrency}",
                     $"MaxMemoryMB={_maxMemoryMB}",
                     $"DonationDismissed={DonationDismissed}",
-                    $"FooterSupportDismissed={FooterSupportDismissed}"
+                    $"FooterSupportDismissed={FooterSupportDismissed}",
+                    $"CheckForUpdates={CheckForUpdates}"
                 };
                 File.WriteAllLines(OptionsFile, lines);
             }
@@ -720,6 +724,7 @@ namespace AudioQualityChecker.Services
                             break;
                         case "DonationDismissed": DonationDismissed = bool.TryParse(val, out var bdd) && bdd; break;
                         case "FooterSupportDismissed": FooterSupportDismissed = bool.TryParse(val, out var bfs) && bfs; break;
+                        case "CheckForUpdates": CheckForUpdates = !bool.TryParse(val, out var bcu) || bcu; break; // default true
                     }
                 }
             }

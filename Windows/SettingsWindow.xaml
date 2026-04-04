@@ -420,6 +420,14 @@
                            Foreground="{DynamicResource TextDim}" FontSize="11"
                            FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
 
+                <CheckBox x:Name="ChkCheckForUpdates" Content="Check for Updates on Startup"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                          FontFamily="Segoe UI" Margin="0,10,0,0"
+                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+                <TextBlock Text="Silently checks GitHub for a new version each time AudioAuditor starts and shows a notification if an update is available."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
                 <!-- Visualizer Cycle Settings -->
                 <TextBlock Text="Visualizer Cycle" FontSize="13" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"

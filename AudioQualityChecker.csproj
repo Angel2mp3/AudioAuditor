@@ -8,7 +8,8 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor</AssemblyName>
-    <Version>1.4.1</Version>
+    <Version>1.4.4</Version>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -24,6 +25,8 @@
     <None Remove="temp\**" />
     <EmbeddedResource Remove="temp\**" />
     <Page Remove="temp\**" />
+    <Compile Remove="archive\**" />
+    <None Remove="archive\**" />
   </ItemGroup>
 
   <ItemGroup>

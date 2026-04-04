@@ -1675,5 +1675,67 @@
         </Border>
     </Grid>
 
+    <!-- ═══ Update Available Overlay ═══ -->
+    <Grid x:Name="UpdateOverlay" Visibility="Collapsed">
+        <Border Background="#AA000000" MouseLeftButtonDown="UpdateBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource PanelBg}"
+                BorderBrush="{DynamicResource AccentColor}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="32,28" MaxWidth="420" MinWidth="340">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.5" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="🔔" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+
+                <TextBlock Text="Update Available" FontSize="18" FontWeight="Bold"
+                           FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+
+                <TextBlock x:Name="UpdateVersionText" TextWrapping="Wrap" TextAlignment="Center"
+                           FontSize="13" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="20"
+                           Margin="0,0,0,20"/>
+
+                <Button Click="UpdateDownload_Click" Cursor="Hand" HorizontalAlignment="Center"
+                        Margin="0,0,0,16">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="updateDlBd" Background="{DynamicResource AccentColor}"
+                                    CornerRadius="6" Padding="24,10">
+                                <TextBlock Text="Download Update" FontSize="14" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="White"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="updateDlBd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <Button Click="UpdateDismiss_Click" Cursor="Hand" HorizontalAlignment="Center">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <TextBlock x:Name="updateDismissText" Text="Skip this version"
+                                       FontSize="12.5" FontFamily="Segoe UI"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Opacity="0.75"/>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="updateDismissText" Property="Opacity" Value="1.0"/>
+                                    <Setter TargetName="updateDismissText" Property="TextDecorations" Value="Underline"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </Border>
+    </Grid>
+
     </Grid>
 </Window>

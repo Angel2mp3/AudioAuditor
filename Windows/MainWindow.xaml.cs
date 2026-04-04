@@ -216,6 +216,29 @@ namespace AudioQualityChecker
                     ShowAiConfigOverlay();
                 }, DispatcherPriority.Loaded);
             }
+
+            // Silent update check on startup
+            if (ThemeManager.CheckForUpdates)
+            {
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        string currentVersion = System.Reflection.Assembly.GetExecutingAssembly()
+                            .GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "0.0.0";
+                        bool hasUpdate = await UpdateChecker.CheckForUpdateAsync(currentVersion);
+                        if (hasUpdate && UpdateChecker.LatestVersion != null)
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                UpdateVersionText.Text = $"AudioAuditor v{UpdateChecker.LatestVersion} is available!\nYou're currently on v{currentVersion}.";
+                                UpdateOverlay.Visibility = Visibility.Visible;
+                            });
+                        }
+                    }
+                    catch { /* silently ignore update check failures */ }
+                });
+            }
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -815,6 +838,27 @@ namespace AudioQualityChecker
         {
             // Clicking outside the popup also dismisses it
             HideDonationOverlay();
+        }
+
+        // ═══════════════════════════════════════════
+        //  Update Available Overlay
+        // ═══════════════════════════════════════════
+
+        private void UpdateBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            UpdateOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void UpdateDownload_Click(object sender, RoutedEventArgs e)
+        {
+            UpdateOverlay.Visibility = Visibility.Collapsed;
+            string url = UpdateChecker.ReleaseUrl ?? "https://github.com/Angel2mp3/AudioAuditor/releases/latest";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+        }
+
+        private void UpdateDismiss_Click(object sender, RoutedEventArgs e)
+        {
+            UpdateOverlay.Visibility = Visibility.Collapsed;
         }
 
         // ═══════════════════════════════════════════
@@ -4167,8 +4211,8 @@ namespace AudioQualityChecker
         }
 
         // ── Circle Rings renderer ──
-        // 5 circles, each assigned to a different frequency band with vertical bars on top
-        // Bar count scales dynamically with canvas/circle size for crisp scaling at any resolution
+        // 5 circles, each assigned to a different frequency band with bars radiating
+        // outward around the full 360° perimeter of each circle
         private const int CircleRingCount = 5;
         private int _lastCircleTotalLines; // track element count for reallocation
 
@@ -4185,8 +4229,8 @@ namespace AudioQualityChecker
             double spacing = availableWidth / CircleRingCount;
             double baseRadius = Math.Min(spacing * 0.28, height * 0.22);
 
-            // Scale bars per circle with diameter: ~1 bar per 4px of diameter, clamped 8–64
-            int barsPerCircle = Math.Clamp((int)(2 * baseRadius / 4.0), 8, 64);
+            // Scale bars per circle: ~1 bar per 5° of arc, clamped 24–72
+            int barsPerCircle = Math.Clamp((int)(2 * Math.PI * baseRadius / 5.0), 24, 72);
             int totalLines = CircleRingCount * barsPerCircle;
 
             // Clean up other mode elements
@@ -4226,8 +4270,8 @@ namespace AudioQualityChecker
             // Frequency band ranges per circle (sub-bass, bass, low-mid, high-mid, treble)
             int barsPerBand = numBars / CircleRingCount;
 
-            // Bar width based on spacing between bars
-            double barWidth = Math.Max(1.5, (baseRadius * 2.0) / barsPerCircle * 0.7);
+            // Bar width: thinner to avoid overlap around the circle
+            double barWidth = Math.Max(1.5, 2 * Math.PI * baseRadius / barsPerCircle * 0.55);
 
             for (int c = 0; c < CircleRingCount; c++)
             {
@@ -4242,38 +4286,33 @@ namespace AudioQualityChecker
                 {
                     int lineIdx = c * barsPerCircle + s;
 
-                    // Distribute bars evenly across circle diameter (left to right)
-                    double barX = cx - baseRadius + (2.0 * baseRadius * (s + 0.5)) / barsPerCircle;
+                    // Distribute bars evenly around the full 360° circle
+                    double angle = (2.0 * Math.PI * s) / barsPerCircle - Math.PI / 2; // start from top
 
                     // Map this bar to a frequency within this circle's band
                     int barIdx = bandStart + (s * (bandEnd - bandStart)) / barsPerCircle;
                     barIdx = Math.Clamp(barIdx, 0, numBars - 1);
                     double energy = _vizSmoothed[barIdx];
 
-                    // Calculate the Y position on the circle at this X
-                    double dx = barX - cx;
-                    double distFromCenter = Math.Abs(dx);
-                    if (distFromCenter >= baseRadius)
-                    {
-                        // Bar is outside the circle — hide it
-                        _circleElements[lineIdx].X1 = 0;
-                        _circleElements[lineIdx].Y1 = 0;
-                        _circleElements[lineIdx].X2 = 0;
-                        _circleElements[lineIdx].Y2 = 0;
-                        continue;
-                    }
-
-                    // Top of circle at this X position
-                    double circleY = cy - Math.Sqrt(baseRadius * baseRadius - dx * dx);
-
-                    // Bar extends upward from the circle surface
-                    double barHeight = energy * baseRadius * 1.2;
+                    // Bar radiates outward from the circle perimeter
+                    double barHeight = energy * baseRadius * 1.0;
                     if (barHeight < 1) barHeight = 1;
 
-                    _circleElements[lineIdx].X1 = barX;
-                    _circleElements[lineIdx].Y1 = circleY;
-                    _circleElements[lineIdx].X2 = barX;
-                    _circleElements[lineIdx].Y2 = circleY - barHeight;
+                    double cosA = Math.Cos(angle);
+                    double sinA = Math.Sin(angle);
+
+                    // Inner point: on the circle perimeter
+                    double x1 = cx + baseRadius * cosA;
+                    double y1 = cy + baseRadius * sinA;
+
+                    // Outer point: extends outward by barHeight
+                    double x2 = cx + (baseRadius + barHeight) * cosA;
+                    double y2 = cy + (baseRadius + barHeight) * sinA;
+
+                    _circleElements[lineIdx].X1 = x1;
+                    _circleElements[lineIdx].Y1 = y1;
+                    _circleElements[lineIdx].X2 = x2;
+                    _circleElements[lineIdx].Y2 = y2;
                     _circleElements[lineIdx].StrokeThickness = barWidth;
 
                     // Color: each circle gets a band-based color

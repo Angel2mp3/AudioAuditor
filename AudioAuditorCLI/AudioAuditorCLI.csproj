@@ -7,7 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditorCLI</AssemblyName>
-    <Version>1.4.1</Version>
+    <Version>1.4.4</Version>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <DefineConstants>CROSS_PLATFORM</DefineConstants>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -35,6 +36,7 @@
     <Compile Include="..\Services\ExportService.cs" Link="Services\ExportService.cs" />
     <Compile Include="..\Services\AudioFormatReaders.cs" Link="Services\AudioFormatReaders.cs" />
     <Compile Include="..\Services\SpectrogramGenerator.cs" Link="Services\SpectrogramGenerator.cs" />
+    <Compile Include="..\Services\UpdateChecker.cs" Link="Services\UpdateChecker.cs" />
   </ItemGroup>
 
 </Project>
