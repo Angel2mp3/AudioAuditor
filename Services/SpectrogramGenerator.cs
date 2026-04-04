@@ -58,8 +58,10 @@ namespace AudioQualityChecker.Services
                 long totalFrames;
                 if (disposable is AudioFileReader afr)
                     totalFrames = afr.Length / afr.WaveFormat.BlockAlign;
+#if !CROSS_PLATFORM
                 else if (disposable is MediaFoundationReader mfr)
                     totalFrames = mfr.Length / mfr.WaveFormat.BlockAlign;
+#endif
                 else if (disposable is WaveStream ws && ws.Length > 0)
                     totalFrames = ws.Length / ws.WaveFormat.BlockAlign;
                 else if (disposable is VorbisWaveReader vbr)

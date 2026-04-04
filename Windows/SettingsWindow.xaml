@@ -344,6 +344,8 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="8"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="8"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Color Theme:"
@@ -357,6 +359,12 @@
                                Foreground="{DynamicResource TextSecondary}"/>
                     <ComboBox Grid.Row="2" Grid.Column="1" x:Name="PlaybarCombo" FontSize="13"
                               SelectionChanged="PlaybarCombo_SelectionChanged"/>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Visualizer Style:"
+                               FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <ComboBox Grid.Row="4" Grid.Column="1" x:Name="VisualizerThemeCombo" FontSize="13"
+                              SelectionChanged="VisualizerThemeCombo_SelectionChanged"/>
                 </Grid>
             </StackPanel>
 
@@ -404,7 +412,67 @@
                            Foreground="{DynamicResource TextDim}" FontSize="11"
                            FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
 
+                <CheckBox x:Name="ChkVisualizerFullVolume" Content="Visualizer Full Volume"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                          FontFamily="Segoe UI" Margin="0,10,0,0"
+                          Checked="VisualizerFullVolume_Changed" Unchecked="VisualizerFullVolume_Changed"/>
+                <TextBlock Text="Makes the visualizer always respond as if the volume is at 100%, even when you lower it. Keeps the visual effects lively at any volume level."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
 
+                <!-- Visualizer Cycle Settings -->
+                <TextBlock Text="Visualizer Cycle" FontSize="13" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                           Margin="0,14,0,6"/>
+                <TextBlock Text="When cycling, automatically switches between visualizer styles."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="Speed:" FontSize="12" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
+                               Margin="0,0,8,0"/>
+                    <Slider x:Name="CycleSpeedSlider" Minimum="5" Maximum="60" Value="10"
+                            Width="140" IsSnapToTickEnabled="True" TickFrequency="5"
+                            ValueChanged="CycleSpeedSlider_Changed"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource CrossfadeSlider}"/>
+                    <TextBlock x:Name="CycleSpeedLabel" Text="10s" FontSize="12"
+                               FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                               VerticalAlignment="Center" Margin="8,0,0,0" Width="28"/>
+                </StackPanel>
+                <TextBlock Text="Custom cycle selection (check styles to include):"
+                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="0,0,0,4"/>
+                <WrapPanel x:Name="CycleStyleChecks" Margin="0,0,0,0">
+                    <CheckBox x:Name="ChkCycleBars" Content="Bars" Margin="0,0,12,4"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                              FontFamily="Segoe UI" IsChecked="True"
+                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                    <CheckBox x:Name="ChkCycleMirror" Content="Mirror" Margin="0,0,12,4"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                              FontFamily="Segoe UI" IsChecked="True"
+                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                    <CheckBox x:Name="ChkCycleParticles" Content="Particles" Margin="0,0,12,4"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                              FontFamily="Segoe UI" IsChecked="True"
+                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                    <CheckBox x:Name="ChkCycleCircles" Content="Circles" Margin="0,0,12,4"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                              FontFamily="Segoe UI" IsChecked="True"
+                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                    <CheckBox x:Name="ChkCycleScope" Content="Scope" Margin="0,0,12,4"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                              FontFamily="Segoe UI" IsChecked="True"
+                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                    <CheckBox x:Name="ChkCycleKaleido" Content="Abstract" Margin="0,0,12,4"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                              FontFamily="Segoe UI" IsChecked="True"
+                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                    <CheckBox x:Name="ChkCycleVU" Content="VU Meter" Margin="0,0,12,4"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                              FontFamily="Segoe UI" IsChecked="True"
+                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                </WrapPanel>
 
             </StackPanel>
 
@@ -947,18 +1015,73 @@
                            FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
-            <!-- Experimental Section -->
+            <!-- AI Detection Section -->
             <StackPanel Grid.Row="18">
-                <TextBlock Text="Experimental" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
+                <DockPanel Margin="0,0,0,8">
+                    <TextBlock Text="AI Detection" FontSize="14" FontWeight="SemiBold"
+                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                    <TextBlock Text="Show AI Setup" FontSize="11" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource AccentColor}" Cursor="Hand"
+                               VerticalAlignment="Center" HorizontalAlignment="Right"
+                               MouseLeftButtonDown="ShowAiSetup_Click"
+                               TextDecorations="Underline" Margin="0,1,0,0"/>
+                </DockPanel>
+
+                <!-- Default (watermark) detector — always available -->
+                <CheckBox x:Name="ChkDefaultAi" Content="Default AI Detection (Watermark / Metadata)"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                          FontFamily="Segoe UI" Margin="0,0,0,2" IsChecked="True" IsEnabled="False"/>
+                <TextBlock Text="Scans metadata, watermarks, and known AI markers. Always enabled, unlimited, no network needed."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,2,0,8" TextWrapping="Wrap"/>
+
+                <!-- Experimental spectral detector -->
                 <CheckBox x:Name="ChkExperimentalAi" Content="Aggressive AI Detection (Spectral Analysis)"
                           Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,4"
+                          FontFamily="Segoe UI" Margin="0,0,0,2"
                           Checked="ExperimentalAi_Changed" Unchecked="ExperimentalAi_Changed"/>
                 <TextBlock Text="⚠ Uses spectral analysis (ultrasonic energy, stereo correlation, spectral regularity) to detect AI-generated audio. This will produce more false positives than standard detection but can catch AI audio that has been stripped of metadata markers."
                            Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+                           FontFamily="Segoe UI" Margin="22,2,0,8" TextWrapping="Wrap"/>
+
+                <!-- SH Labs API detector -->
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                    <CheckBox x:Name="ChkSHLabsAi" Content="SH Labs AI Audio Detection (API)"
+                              Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                              FontFamily="Segoe UI"
+                              Checked="SHLabsAi_Changed" Unchecked="SHLabsAi_Changed"/>
+                    <TextBlock x:Name="SHLabsPrivacyIcon" Text=" ⚠️" FontSize="14"
+                               VerticalAlignment="Center" Cursor="Hand"
+                               ToolTip="View SH Labs privacy information"
+                               MouseLeftButtonDown="SHLabsPrivacyIcon_Click"/>
+                </StackPanel>
+                <TextBlock Text="AI audio detection via SH Labs. Can sometimes be more accurate than the other options but limited to 15 scans/day and 100/month. When the limit is reached, your other selected detection methods will be used instead."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,2,0,4" TextWrapping="Wrap"/>
+                <TextBlock x:Name="SHLabsQuotaText" Text=""
+                           Foreground="{DynamicResource AccentColor}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,0,0,6"/>
+
+                <!-- Custom API Key -->
+                <TextBlock Text="Use your own SH Labs API key (optional):" FontSize="11.5"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                           Margin="22,4,0,4"/>
+                <StackPanel Orientation="Horizontal" Margin="22,0,0,2">
+                    <TextBox x:Name="SHLabsApiKeyBox" Width="280" FontSize="12"
+                             FontFamily="Segoe UI" Padding="4,3"
+                             Background="{DynamicResource InputBg}"
+                             Foreground="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource ButtonBorder}"
+                             TextChanged="SHLabsApiKey_Changed"/>
+                    <Button Content="Clear" FontSize="11" FontFamily="Segoe UI" Margin="8,0,0,0"
+                            Click="SHLabsApiKeyClear_Click" Cursor="Hand" Padding="8,3"
+                            Background="{DynamicResource ButtonBg}"
+                            Foreground="{DynamicResource TextPrimary}"
+                            BorderBrush="{DynamicResource ButtonBorder}"/>
+                </StackPanel>
+                <TextBlock Text="With your own key, audio goes directly to SH Labs — no proxy, no rate limits, no data collection by AudioAuditor."
+                           Foreground="{DynamicResource TextDim}" FontSize="10.5"
+                           FontFamily="Segoe UI" Margin="22,3,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
             <!-- Attribution -->

@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: Angel.AudioAuditorCLI
+PackageVersion: 1.4.1
+InstallerLocale: en-US
+InstallerType: portable
+InstallModes:
+  - silent
+  - silentWithProgress
+  - interactive
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/Angel2mp3/AudioAuditor/releases/download/v1.4.1/AudioAuditorCLI.exe
+    InstallerSha256: 3BFEAD6C85CA01FF1C2F7BB0238CC86BD5576FC025DBDFDAC8B6B9600B85BAA5
+    Commands:
+      - AudioAuditorCLI
+    InstallScope: user
+    Dependencies:
+      PackageDependencies:
+        - PackageIdentifier: Microsoft.DotNet.Runtime.8
+          MinimumVersion: 8.0.0
+ManifestType: installer
+ManifestVersion: 1.6.0

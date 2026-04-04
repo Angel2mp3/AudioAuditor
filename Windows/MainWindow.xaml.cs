@@ -94,6 +94,7 @@ namespace AudioQualityChecker
         // Visualizer
         private bool _visualizerMode;
         private bool _visualizerActive;
+        private int _visualizerStyle; // 0=Classic Bars, 1=Mirrored Bars, 2=Particle Fountain, 3=Circle Rings, 4=Oscilloscope, 5=Abstract, 6=VU Meter
 
         // Animation occlusion pause
         private bool _isPausedForOcclusion;
@@ -141,6 +142,7 @@ namespace AudioQualityChecker
             // Set up filtered view
             _filteredView = CollectionViewSource.GetDefaultView(_files);
             _filteredView.Filter = SearchFilter;
+            _filteredView.GroupDescriptions.Add(new PropertyGroupDescription("FolderPath"));
             FileGrid.ItemsSource = _filteredView;
 
             _player.PlaybackStopped += Player_PlaybackStopped;
@@ -154,7 +156,9 @@ namespace AudioQualityChecker
 
             // Restore visualizer mode
             _visualizerMode = ThemeManager.VisualizerMode;
+            _visualizerStyle = ThemeManager.VisualizerStyle;
             UpdateVisualizerToggleText();
+            UpdateVisualizerStyleText();
 
             // Restore spectrogram display preferences
             _spectrogramLinearScale = ThemeManager.SpectrogramLinearScale;
@@ -200,6 +204,18 @@ namespace AudioQualityChecker
 
             // Initialize footer support link visibility
             InitializeFooterSupport();
+
+            // Show AI config popup for first-time or upgrading users
+            if (!ThemeManager.AiConfigDismissed)
+            {
+                Dispatcher.InvokeAsync(() =>
+                {
+                    AiConfigChkDefault.IsChecked = true;
+                    AiConfigChkExperimental.IsChecked = ThemeManager.ExperimentalAiDetection;
+                    AiConfigChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
+                    ShowAiConfigOverlay();
+                }, DispatcherPriority.Loaded);
+            }
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -257,6 +273,8 @@ namespace AudioQualityChecker
             StopWaveformAnimation();
             StopVisualizer();
             _playerTimer.Stop();
+            _donationTimer?.Stop();
+            _occlusionCheckTimer?.Stop();
             _player.Dispose();
             _discord.Dispose();
             _lastFm.Dispose();
@@ -554,6 +572,46 @@ namespace AudioQualityChecker
 
             if (newPaths.Length == 0) return;
 
+            // ── SH Labs pre-flight: decide which files will use the API ──
+            HashSet<string>? shLabsTargets = null;
+            if (ThemeManager.SHLabsAiDetection)
+            {
+                // Count how many actually need an API call (no cache hit)
+                var uncached = newPaths.Where(p => SHLabsDetectionService.GetCachedResult(p) == null).ToList();
+                var (dailyRem, monthlyRem) = SHLabsDetectionService.GetQuota();
+                int available = Math.Min(dailyRem, monthlyRem);
+
+                if (uncached.Count > available && available > 0)
+                {
+                    // More files than remaining quota — let the user know
+                    var msg = $"You have {available} SH Labs scan{(available == 1 ? "" : "s")} remaining today. " +
+                              $"{uncached.Count} file{(uncached.Count == 1 ? "" : "s")} need scanning.\n\n" +
+                              $"The first {available} file{(available == 1 ? "" : "s")} will be scanned with SH Labs. " +
+                              $"The rest will use your other selected detection methods.\n\nContinue?";
+                    var confirmed = await ShowSHLabsLimitOverlayAsync(msg, showCancel: true);
+                    if (!confirmed) return;
+
+                    // Take first N uncached files
+                    shLabsTargets = new HashSet<string>(uncached.Take(available), StringComparer.OrdinalIgnoreCase);
+                    // Also include all cached files (free lookups)
+                    foreach (var p in newPaths.Where(p => SHLabsDetectionService.GetCachedResult(p) != null))
+                        shLabsTargets.Add(p);
+                }
+                else if (available == 0)
+                {
+                    // No quota left — inform and continue without SH Labs
+                    await ShowSHLabsLimitOverlayAsync(
+                        "You've reached your SH Labs scan limit. Files will be analyzed using your other selected detection methods.",
+                        showCancel: false);
+                    shLabsTargets = null; // disable SH Labs for this batch
+                }
+                else
+                {
+                    // Enough quota for all files
+                    shLabsTargets = new HashSet<string>(newPaths, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+
             _analysisCts?.Cancel();
             _analysisCts = new CancellationTokenSource();
             var ct = _analysisCts.Token;
@@ -571,9 +629,11 @@ namespace AudioQualityChecker
 
             int maxParallel = ThemeManager.MaxConcurrency;
             var semaphore = new SemaphoreSlim(maxParallel);
+            var shLabsSemaphore = new SemaphoreSlim(3); // Limit concurrent SH Labs HTTP calls
 
             var tasks = newPaths.Select(async path =>
             {
+                AudioFileInfo? info = null;
                 bool acquired = false;
                 try
                 {
@@ -583,7 +643,7 @@ namespace AudioQualityChecker
                     // Wait if memory usage exceeds configured limit
                     await ThemeManager.WaitForMemoryAsync();
                     ct.ThrowIfCancellationRequested();
-                    var info = await Task.Run(() =>
+                    info = await Task.Run(() =>
                     {
                         // Lower thread priority to reduce CPU spikes during analysis
                         Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
@@ -591,16 +651,8 @@ namespace AudioQualityChecker
                         finally { Thread.CurrentThread.Priority = ThreadPriority.Normal; }
                     }, ct);
                     ct.ThrowIfCancellationRequested();
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        _files.Add(info);
-                        var count = Interlocked.Increment(ref completed);
-                        StatusText.Text = $"Analyzed {count} / {total} files...";
-                        AnalysisProgress.Value = count;
-                        UpdateAnalysisEta(count, total);
-                    });
                 }
-                catch (OperationCanceledException) { }
+                catch (OperationCanceledException) { return; }
                 catch
                 {
                     Interlocked.Increment(ref completed);
@@ -612,6 +664,7 @@ namespace AudioQualityChecker
                             {
                                 FilePath = path,
                                 FileName = IOPath.GetFileName(path),
+                                FolderPath = IOPath.GetDirectoryName(path) ?? "",
                                 Extension = IOPath.GetExtension(path).ToLowerInvariant(),
                                 Status = AudioStatus.Corrupt,
                                 ErrorMessage = "Failed to open or analyze"
@@ -621,10 +674,47 @@ namespace AudioQualityChecker
                             UpdateAnalysisEta(completed, total);
                         });
                     }
+                    return;
                 }
                 finally
                 {
                     if (acquired) semaphore.Release();
+                }
+
+                // ── SH Labs detection (runs outside analysis semaphore to avoid blocking local analysis) ──
+                if (info != null && shLabsTargets != null && shLabsTargets.Contains(path))
+                {
+                    try
+                    {
+                        await shLabsSemaphore.WaitAsync(ct);
+                        try
+                        {
+                            var shResult = await SHLabsDetectionService.AnalyzeAsync(path, ct);
+                            if (shResult != null)
+                            {
+                                info.SHLabsScanned = true;
+                                info.SHLabsPrediction = shResult.Prediction;
+                                info.SHLabsProbability = shResult.Probability;
+                                info.SHLabsConfidence = shResult.Confidence;
+                                info.SHLabsAiType = shResult.MostLikelyAiType;
+                            }
+                        }
+                        finally { shLabsSemaphore.Release(); }
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch { /* SH Labs failure is non-fatal — other detectors still ran */ }
+                }
+
+                if (info != null)
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        _files.Add(info);
+                        var count = Interlocked.Increment(ref completed);
+                        StatusText.Text = $"Analyzed {count} / {total} files...";
+                        AnalysisProgress.Value = count;
+                        UpdateAnalysisEta(count, total);
+                    });
                 }
             });
 
@@ -728,6 +818,129 @@ namespace AudioQualityChecker
         }
 
         // ═══════════════════════════════════════════
+        //  AI Detection Config Overlay
+        // ═══════════════════════════════════════════
+
+        private void ShowAiConfigOverlay()
+        {
+            AiConfigOverlay.Visibility = Visibility.Visible;
+            MainContent.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 6 };
+        }
+
+        private void HideAiConfigOverlay()
+        {
+            AiConfigOverlay.Visibility = Visibility.Collapsed;
+            MainContent.Effect = null;
+        }
+
+        private void AiConfigSave_Click(object sender, RoutedEventArgs e)
+        {
+            // Persist choices
+            ThemeManager.ExperimentalAiDetection = AiConfigChkExperimental.IsChecked == true;
+            AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
+
+            bool wantsSHLabs = AiConfigChkSHLabs.IsChecked == true;
+
+            // If SH Labs was just enabled and privacy not yet accepted, show privacy notice first
+            if (wantsSHLabs && !ThemeManager.SHLabsPrivacyAccepted)
+            {
+                ThemeManager.AiConfigDismissed = true;
+                ThemeManager.SetRegistryFlag("AiConfigDismissed", true);
+                ThemeManager.SavePlayOptions();
+                HideAiConfigOverlay();
+                ShowSHLabsPrivacyOverlay();
+                return;
+            }
+
+            ThemeManager.SHLabsAiDetection = wantsSHLabs;
+            ThemeManager.AiConfigDismissed = true;
+            ThemeManager.SetRegistryFlag("AiConfigDismissed", true);
+            ThemeManager.SavePlayOptions();
+            HideAiConfigOverlay();
+        }
+
+        private void AiConfigBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Clicking outside does nothing — user must press Save
+        }
+
+        // ═══════════════════════════════════════════
+        //  SH Labs Privacy Notice Overlay
+        // ═══════════════════════════════════════════
+
+        private void ShowSHLabsPrivacyOverlay()
+        {
+            SHLabsPrivacyOverlay.Visibility = Visibility.Visible;
+            MainContent.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 6 };
+        }
+
+        private void HideSHLabsPrivacyOverlay()
+        {
+            SHLabsPrivacyOverlay.Visibility = Visibility.Collapsed;
+            MainContent.Effect = null;
+        }
+
+        private void SHLabsPrivacyAccept_Click(object sender, RoutedEventArgs e)
+        {
+            ThemeManager.SHLabsPrivacyAccepted = true;
+            ThemeManager.SHLabsAiDetection = true;
+            ThemeManager.SavePlayOptions();
+            HideSHLabsPrivacyOverlay();
+        }
+
+        private void SHLabsPrivacyDecline_Click(object sender, RoutedEventArgs e)
+        {
+            // User declined — SH Labs stays off
+            ThemeManager.SHLabsAiDetection = false;
+            ThemeManager.SavePlayOptions();
+            HideSHLabsPrivacyOverlay();
+        }
+
+        private void SHLabsPrivacyBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Clicking outside = decline
+            SHLabsPrivacyDecline_Click(sender, e);
+        }
+
+        /// <summary>
+        /// Called from SettingsWindow when user enables SH Labs and needs privacy confirmation.
+        /// </summary>
+        public void RequestSHLabsPrivacyFromSettings()
+        {
+            ShowSHLabsPrivacyOverlay();
+        }
+
+        // ═══════════════════════════════════════════
+        //  SH Labs Scan Limit Overlay
+        // ═══════════════════════════════════════════
+
+        private TaskCompletionSource<bool>? _shLabsLimitTcs;
+
+        private Task<bool> ShowSHLabsLimitOverlayAsync(string message, bool showCancel)
+        {
+            _shLabsLimitTcs = new TaskCompletionSource<bool>();
+            SHLabsLimitMessage.Text = message;
+            SHLabsLimitCancelBtn.Visibility = showCancel ? Visibility.Visible : Visibility.Collapsed;
+            SHLabsLimitOverlay.Visibility = Visibility.Visible;
+            return _shLabsLimitTcs.Task;
+        }
+
+        private void HideSHLabsLimitOverlay(bool result)
+        {
+            SHLabsLimitOverlay.Visibility = Visibility.Collapsed;
+            _shLabsLimitTcs?.TrySetResult(result);
+        }
+
+        private void SHLabsLimitOk_Click(object sender, RoutedEventArgs e)
+            => HideSHLabsLimitOverlay(true);
+
+        private void SHLabsLimitCancel_Click(object sender, RoutedEventArgs e)
+            => HideSHLabsLimitOverlay(false);
+
+        private void SHLabsLimitBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+            => HideSHLabsLimitOverlay(false);
+
+        // ═══════════════════════════════════════════
         //  Footer Support Link
         // ═══════════════════════════════════════════
 
@@ -812,6 +1025,7 @@ namespace AudioQualityChecker
                 SpectrogramImage.Visibility = Visibility.Collapsed;
                 VisualizerCanvas.Visibility = Visibility.Visible;
                 FreqLabelGrid.Visibility = Visibility.Collapsed;
+                BtnVisualizerStyle.Visibility = Visibility.Visible;
                 if ((_player.IsPlaying || _player.IsPaused) && _player.CurrentFile != null &&
                     string.Equals(selectedFile.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
                 {
@@ -916,6 +1130,7 @@ namespace AudioQualityChecker
                         SpectrogramImage.Visibility = Visibility.Collapsed;
                         VisualizerCanvas.Visibility = Visibility.Visible;
                         FreqLabelGrid.Visibility = Visibility.Collapsed;
+                        BtnVisualizerStyle.Visibility = Visibility.Visible;
                         if (_player.IsPlaying) StartVisualizer();
                     }
                     else
@@ -923,6 +1138,7 @@ namespace AudioQualityChecker
                         SpectrogramImage.Visibility = Visibility.Visible;
                         VisualizerCanvas.Visibility = Visibility.Collapsed;
                         FreqLabelGrid.Visibility = Visibility.Visible;
+                        BtnVisualizerStyle.Visibility = Visibility.Collapsed;
                     }
                 }
                 else
@@ -937,6 +1153,7 @@ namespace AudioQualityChecker
                         SpectrogramImage.Visibility = Visibility.Collapsed;
                         VisualizerCanvas.Visibility = Visibility.Visible;
                         FreqLabelGrid.Visibility = Visibility.Collapsed;
+                        BtnVisualizerStyle.Visibility = Visibility.Visible;
                     }
                     else
                     {
@@ -959,6 +1176,7 @@ namespace AudioQualityChecker
                         SpectrogramImage.Visibility = Visibility.Collapsed;
                         VisualizerCanvas.Visibility = Visibility.Visible;
                         FreqLabelGrid.Visibility = Visibility.Collapsed;
+                        BtnVisualizerStyle.Visibility = Visibility.Visible;
                     }
                     else
                     {
@@ -1967,6 +2185,20 @@ namespace AudioQualityChecker
         {
             var settingsWindow = new SettingsWindow { Owner = this };
             settingsWindow.ShowDialog();
+
+            // If Settings requested the SH Labs privacy overlay, show it now (on top)
+            if (settingsWindow.RequestPrivacyOnClose)
+                ShowSHLabsPrivacyOverlay();
+
+            // If Settings requested the AI config overlay, show it now
+            if (settingsWindow.RequestAiConfigOnClose)
+            {
+                ThemeManager.AiConfigDismissed = false;
+                AiConfigChkExperimental.IsChecked = ThemeManager.ExperimentalAiDetection;
+                AiConfigChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
+                ShowAiConfigOverlay();
+            }
+
             // Refresh service button labels after settings change
             UpdateServiceButtonLabels();
             // Refresh title bar color after theme change
@@ -2042,6 +2274,13 @@ namespace AudioQualityChecker
         private string BuildSpectrogramTitle(AudioFileInfo file)
         {
             string titlePrefix = _visualizerMode ? "Visualizer" : "Spectrogram";
+
+            // In visualizer mode, show a compact title to avoid overlapping toolbar buttons
+            if (_visualizerMode)
+            {
+                return $"{titlePrefix}: {file.FileName}";
+            }
+
             string statusDisplay = StatusDisplayText(file.Status);
             string statusExtra = file.HasClipping ? " | CLIPPING DETECTED"
                                : file.HasScaledClipping ? $" | SCALED CLIPPING ({file.MaxSampleLevelDb:F1} dB)"
@@ -2833,6 +3072,26 @@ namespace AudioQualityChecker
             var playbarColors = ThemeManager.GetPlaybarColors();
             double animSpeed = playbarColors.AnimationSpeed;
 
+            // Rainbow Bars: dynamically cycle gradient + accent color each frame
+            bool isRainbow = ThemeManager.CurrentPlaybarTheme == "Rainbow Bars";
+            Color[] gradientOverride = playbarColors.ProgressGradient;
+            if (isRainbow)
+            {
+                double hueBase = (elapsed * 30.0) % 360.0; // 30 degrees/sec cycle
+                gradientOverride = new[]
+                {
+                    HsvToColor(hueBase, 0.85, 0.9),
+                    HsvToColor((hueBase + 120) % 360, 0.85, 0.9),
+                    HsvToColor((hueBase + 240) % 360, 0.85, 0.9)
+                };
+                // Update accent resource so shuffle/volume buttons also cycle
+                var accentColor = HsvToColor(hueBase, 0.85, 0.95);
+                accentColor.A = 255;
+                var accentBrush = new SolidColorBrush(accentColor);
+                accentBrush.Freeze();
+                Application.Current.Resources["PlaybarAccentColor"] = accentBrush;
+            }
+
             // Animate base data with time-varying phase
             int points = _waveformBaseData.Length;
             double mid = canvasHeight / 2;
@@ -2916,7 +3175,7 @@ namespace AudioQualityChecker
 
             if (progressPixel > 0)
             {
-                var gradientColors = playbarColors.ProgressGradient;
+                var gradientColors = isRainbow ? gradientOverride : playbarColors.ProgressGradient;
                 var gradient = new LinearGradientBrush(
                     new GradientStopCollection
                     {
@@ -3016,6 +3275,7 @@ namespace AudioQualityChecker
                 SpectrogramImage.Visibility = Visibility.Collapsed;
                 VisualizerCanvas.Visibility = Visibility.Visible;
                 FreqLabelGrid.Visibility = Visibility.Collapsed;
+                BtnVisualizerStyle.Visibility = Visibility.Visible;
                 StartVisualizer();
             }
             else
@@ -3023,6 +3283,7 @@ namespace AudioQualityChecker
                 VisualizerCanvas.Visibility = Visibility.Collapsed;
                 SpectrogramImage.Visibility = Visibility.Visible;
                 FreqLabelGrid.Visibility = Visibility.Visible;
+                BtnVisualizerStyle.Visibility = Visibility.Collapsed;
                 StopVisualizer();
             }
 
@@ -3037,6 +3298,171 @@ namespace AudioQualityChecker
         {
             if (VisualizerToggleText != null)
                 VisualizerToggleText.Text = _visualizerMode ? "Spectrogram" : "Visualizer";
+        }
+
+        // ── Visualizer Style Names ──
+        private static readonly string[] _vizStyleNames =
+        {
+            "Bars", "Mirror", "Particles", "Circles", "Scope", "Abstract", "VU Meter"
+        };
+        private const int VizStyleCount = 7; // number of real styles (0-6)
+
+        private void VisualizerStyle_Click(object sender, RoutedEventArgs e)
+        {
+            // Build the dropdown menu items dynamically, themed to current settings
+            VisualizerStyleMenu.Children.Clear();
+
+            var panelBg = (System.Windows.Media.Brush)FindResource("PanelBg");
+            var hoverBg = (System.Windows.Media.Brush)FindResource("ButtonBg");
+            var textBrush = (System.Windows.Media.Brush)FindResource("TextPrimary");
+            var accentBrush = (System.Windows.Media.Brush)FindResource("AccentColor");
+            var borderBrush = (System.Windows.Media.Brush)FindResource("ButtonBorder");
+
+            for (int i = 0; i < VizStyleCount; i++)
+            {
+                int styleIdx = i; // capture for lambda
+                bool isActive = (i == _visualizerStyle && !_vizCycleActive);
+
+                var tb = new TextBlock
+                {
+                    Text = _vizStyleNames[i],
+                    Foreground = isActive ? accentBrush : textBrush,
+                    FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal,
+                    FontSize = 11,
+                    FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+                    Padding = new Thickness(6, 3, 6, 3),
+                    Cursor = System.Windows.Input.Cursors.Hand,
+                    Background = System.Windows.Media.Brushes.Transparent
+                };
+
+                tb.MouseEnter += (s, _) => ((TextBlock)s!).Background = hoverBg;
+                tb.MouseLeave += (s, _) => ((TextBlock)s!).Background = System.Windows.Media.Brushes.Transparent;
+                tb.MouseLeftButtonUp += (s, _) =>
+                {
+                    StopVisualizerCycle();
+                    ApplyVisualizerStyle(styleIdx);
+                    VisualizerStylePopup.IsOpen = false;
+                };
+
+                VisualizerStyleMenu.Children.Add(tb);
+            }
+
+            // Separator
+            VisualizerStyleMenu.Children.Add(new System.Windows.Controls.Separator
+            {
+                Margin = new Thickness(2, 1, 2, 1),
+                Background = borderBrush
+            });
+
+            // Cycle option
+            bool cycleActive = _vizCycleActive;
+            var cycleTb = new TextBlock
+            {
+                Text = "⟳ Cycle All",
+                Foreground = cycleActive ? accentBrush : textBrush,
+                FontWeight = cycleActive ? FontWeights.SemiBold : FontWeights.Normal,
+                FontSize = 11,
+                FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+                Padding = new Thickness(6, 3, 6, 3),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Background = System.Windows.Media.Brushes.Transparent
+            };
+            cycleTb.MouseEnter += (s, _) => ((TextBlock)s!).Background = hoverBg;
+            cycleTb.MouseLeave += (s, _) => ((TextBlock)s!).Background = System.Windows.Media.Brushes.Transparent;
+            cycleTb.MouseLeftButtonUp += (s, _) =>
+            {
+                StartVisualizerCycle();
+                VisualizerStylePopup.IsOpen = false;
+            };
+            VisualizerStyleMenu.Children.Add(cycleTb);
+
+            VisualizerStylePopup.IsOpen = true;
+        }
+
+        private void ApplyVisualizerStyle(int style)
+        {
+            _visualizerStyle = style;
+            ThemeManager.VisualizerStyle = _visualizerStyle;
+            ThemeManager.SavePlayOptions();
+            UpdateVisualizerStyleText();
+
+            // Force recreation of visual elements on style change
+            _vizBars = null;
+            _vizMirrorBars = null;
+            _particles = null;
+            _particleElements = null;
+            _circleElements = null;
+            _scopeLine = null;
+            _kaleidoPolys = null;
+            _vuBlocks = null;
+            VisualizerCanvas.Children.Clear();
+        }
+
+        private bool _vizCycleActive;
+        private int _vizCycleIndex;
+
+        private void StartVisualizerCycle()
+        {
+            _vizCycleActive = true;
+            _vizCycleIndex = 0;
+
+            // Parse the custom cycle list from settings
+            _vizCycleList = new List<int>();
+            if (!string.IsNullOrWhiteSpace(ThemeManager.VisualizerCycleList))
+            {
+                foreach (var part in ThemeManager.VisualizerCycleList.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (int.TryParse(part.Trim(), out int idx) && idx >= 0 && idx < VizStyleCount)
+                        _vizCycleList.Add(idx);
+                }
+            }
+            // Fallback: if empty or nothing valid parsed, use all styles
+            if (_vizCycleList.Count == 0)
+            {
+                for (int i = 0; i < VizStyleCount; i++) _vizCycleList.Add(i);
+            }
+
+            if (_vizCycleTimer == null)
+            {
+                _vizCycleTimer = new System.Windows.Threading.DispatcherTimer();
+                _vizCycleTimer.Tick += VizCycleTimer_Tick;
+            }
+            _vizCycleTimer.Interval = TimeSpan.FromSeconds(ThemeManager.VisualizerCycleSpeed);
+            _vizCycleTimer.Start();
+
+            // Apply first style immediately
+            ApplyVisualizerStyle(_vizCycleList[0]);
+            UpdateVisualizerStyleText();
+        }
+
+        private void StopVisualizerCycle()
+        {
+            _vizCycleActive = false;
+            _vizCycleTimer?.Stop();
+        }
+
+        private void VizCycleTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_vizCycleList == null || _vizCycleList.Count == 0) return;
+            _vizCycleIndex = (_vizCycleIndex + 1) % _vizCycleList.Count;
+            ApplyVisualizerStyle(_vizCycleList[_vizCycleIndex]);
+        }
+
+        private void UpdateVisualizerStyleText()
+        {
+            if (VisualizerStyleText != null)
+            {
+                if (_vizCycleActive)
+                {
+                    VisualizerStyleText.Text = "Cycle";
+                }
+                else
+                {
+                    VisualizerStyleText.Text = _visualizerStyle < _vizStyleNames.Length
+                        ? _vizStyleNames[_visualizerStyle]
+                        : "Bars";
+                }
+            }
         }
 
         // ═══════════════════════════════════════════
@@ -3256,6 +3682,17 @@ namespace AudioQualityChecker
                 CompositionTarget.Rendering -= Visualizer_Tick;
                 VisualizerCanvas.Children.Clear();
                 _vizBars = null;
+                _particles = null;
+                _particleElements = null;
+                _particleBrushes = null;
+                _circleElements = null;
+                _circleBrushes = null;
+                _scopeLine = null;
+                _kaleidoPolys = null;
+                _kaleidoBrushes = null;
+                _vuBlocks = null;
+                _vuBrushes = null;
+                StopVisualizerCycle();
             }
         }
 
@@ -3272,6 +3709,43 @@ namespace AudioQualityChecker
         private readonly double[] _vizMags = new double[VizFftSize / 2];
         private readonly double[] _vizBarValues = new double[VizNumBars];
 
+        // Particle Fountain system
+        private struct Particle
+        {
+            public double X, Y, VelocityX, VelocityY;
+            public double Life, MaxLife;
+            public int Band;
+        }
+        private List<Particle>? _particles;
+        private System.Windows.Shapes.Ellipse[]? _particleElements;
+        private SolidColorBrush[]? _particleBrushes;
+        private const int MaxParticles = 300;
+
+        // Circle Rings system
+        private System.Windows.Shapes.Line[]? _circleElements;
+        private SolidColorBrush[]? _circleBrushes;
+
+        // Oscilloscope system
+        private System.Windows.Shapes.Polyline? _scopeLine;
+
+        // Abstract system — infinite zoom tunnel
+        private System.Windows.Shapes.Polygon[]? _kaleidoPolys;
+        private SolidColorBrush[]? _kaleidoBrushes;
+        private const int KaleidoRingCount = 14;   // concentric shape layers
+        private const int KaleidoSides = 8;        // sides per polygon ring
+        private double _kaleidoPhase;              // continuous zoom phase (0..1 wraps)
+        private double _kaleidoRotation;           // slow global spin
+
+        // VU Meter system
+        private System.Windows.Shapes.Rectangle[]? _vuBlocks;
+        private SolidColorBrush[]? _vuBrushes;
+        private const int VuColumns = 32;   // number of frequency columns
+        private const int VuRows = 20;      // blocks per column
+
+        // Visualizer cycle mode
+        private System.Windows.Threading.DispatcherTimer? _vizCycleTimer;
+        private List<int>? _vizCycleList;  // which styles to cycle through
+
         private void Visualizer_Tick(object? sender, EventArgs e)
         {
             if (!_player.IsPlaying && !_player.IsPaused)
@@ -3279,6 +3753,12 @@ namespace AudioQualityChecker
                 if (VisualizerCanvas.Children.Count > 0)
                     VisualizerCanvas.Children.Clear();
                 _vizBars = null;
+                _particles = null;
+                _particleElements = null;
+                _circleElements = null;
+                _scopeLine = null;
+                _kaleidoPolys = null;
+                _vuBlocks = null;
                 return;
             }
 
@@ -3309,6 +3789,14 @@ namespace AudioQualityChecker
             {
                 double w = 0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (fftSize - 1)));
                 _vizReal[i] = samples[offset + i] * w;
+            }
+
+            // Compensate for volume when VisualizerFullVolume is enabled
+            if (ThemeManager.VisualizerFullVolume && _player.Volume > 0.01f && _player.Volume < 1f)
+            {
+                double gain = 1.0 / _player.Volume;
+                for (int i = 0; i < fftSize; i++)
+                    _vizReal[i] *= gain;
             }
 
             VisualizerFFT(_vizReal, _vizImag);
@@ -3355,12 +3843,50 @@ namespace AudioQualityChecker
                     _vizSmoothed[b] = _vizBarValues[b] * 0.15 + _vizSmoothed[b] * 0.85; // slow decay
             }
 
-            var playbarColors = ThemeManager.GetPlaybarColors();
-            var gradient = playbarColors.ProgressGradient;
+            // Dispatch to the active style renderer
+            switch (_visualizerStyle)
+            {
+                case 1:
+                    RenderMirroredBars(width, height, numBars);
+                    break;
+                case 2:
+                    RenderParticleFountain(width, height, numBars);
+                    break;
+                case 3:
+                    RenderCircleRings(width, height, numBars);
+                    break;
+                case 4:
+                    RenderOscilloscope(width, height);
+                    break;
+                case 5:
+                    RenderKaleidoscope(width, height, numBars);
+                    break;
+                case 6:
+                    RenderVuMeter(width, height, numBars);
+                    break;
+                default:
+                    RenderClassicBars(width, height, numBars);
+                    break;
+            }
+        }
+
+        // ── Classic Bars renderer ──
+        private void RenderClassicBars(double width, double height, int numBars)
+        {
+            var vizColors = ThemeManager.GetVisualizerColors();
+            var gradient = vizColors.ProgressGradient;
             double barWidth = width / numBars * 0.8;
             double gap = width / numBars * 0.2;
 
-            // Pre-create bar rectangles on first frame or size change
+            // Ensure we're in bars mode (not particles)
+            if (_particleElements != null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _particleElements = null;
+                _particles = null;
+                _vizBars = null;
+            }
+
             if (_vizBars == null || _vizBars.Length != numBars)
             {
                 VisualizerCanvas.Children.Clear();
@@ -3384,9 +3910,8 @@ namespace AudioQualityChecker
                 }
             }
 
-            // Update existing bar properties (much faster than recreating)
-            bool rainbow = ThemeManager.RainbowVisualizerEnabled;
-            double time = Environment.TickCount64 / 1000.0; // seconds for smooth cycling
+            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
+            double time = Environment.TickCount64 / 1000.0;
 
             for (int b = 0; b < numBars; b++)
             {
@@ -3398,23 +3923,225 @@ namespace AudioQualityChecker
                 Canvas.SetLeft(_vizBars[b], b * (barWidth + gap) + gap / 2);
                 Canvas.SetTop(_vizBars[b], height - barHeight);
 
+                _vizBrushes![b].Color = GetBarColor(b, numBars, _vizSmoothed[b], gradient, rainbow, time);
+            }
+        }
+
+        // ── Mirrored Bars renderer ──
+        private System.Windows.Shapes.Rectangle[]? _vizMirrorBars;
+        private SolidColorBrush[]? _vizMirrorBrushes;
+
+        private void RenderMirroredBars(double width, double height, int numBars)
+        {
+            var vizColors = ThemeManager.GetVisualizerColors();
+            var gradient = vizColors.ProgressGradient;
+            double barWidth = width / numBars * 0.8;
+            double gap = width / numBars * 0.2;
+            double centerY = height / 2.0;
+
+            // Ensure we're in mirrored mode (not particles or classic)
+            if (_particleElements != null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _particleElements = null;
+                _particles = null;
+                _vizBars = null;
+                _vizMirrorBars = null;
+            }
+
+            // Need 2x bars (top half + bottom half)
+            if (_vizBars == null || _vizBars.Length != numBars || _vizMirrorBars == null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _vizBars = new System.Windows.Shapes.Rectangle[numBars];
+                _vizMirrorBars = new System.Windows.Shapes.Rectangle[numBars];
+                _vizBrushes = new SolidColorBrush[numBars];
+                _vizMirrorBrushes = new SolidColorBrush[numBars];
+                for (int b = 0; b < numBars; b++)
+                {
+                    _vizBrushes[b] = new SolidColorBrush(gradient[0]);
+                    _vizMirrorBrushes[b] = new SolidColorBrush(gradient[0]);
+
+                    // Top bar (grows upward from center)
+                    _vizBars[b] = new System.Windows.Shapes.Rectangle
+                    {
+                        Width = barWidth,
+                        Height = 2,
+                        Fill = _vizBrushes[b],
+                        RadiusX = 2,
+                        RadiusY = 2,
+                        IsHitTestVisible = false
+                    };
+                    Canvas.SetLeft(_vizBars[b], b * (barWidth + gap) + gap / 2);
+                    Canvas.SetTop(_vizBars[b], centerY - 1);
+                    VisualizerCanvas.Children.Add(_vizBars[b]);
+
+                    // Bottom bar (grows downward from center, slightly dimmer)
+                    _vizMirrorBars[b] = new System.Windows.Shapes.Rectangle
+                    {
+                        Width = barWidth,
+                        Height = 2,
+                        Fill = _vizMirrorBrushes[b],
+                        RadiusX = 2,
+                        RadiusY = 2,
+                        Opacity = 0.6,
+                        IsHitTestVisible = false
+                    };
+                    Canvas.SetLeft(_vizMirrorBars[b], b * (barWidth + gap) + gap / 2);
+                    Canvas.SetTop(_vizMirrorBars[b], centerY);
+                    VisualizerCanvas.Children.Add(_vizMirrorBars[b]);
+                }
+            }
+
+            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
+            double time = Environment.TickCount64 / 1000.0;
+
+            for (int b = 0; b < numBars; b++)
+            {
+                double barHeight = _vizSmoothed[b] * centerY * 0.90;
+                if (barHeight < 2) barHeight = 2;
+
+                // Top half — grows upward from center
+                _vizBars[b].Width = barWidth;
+                _vizBars[b].Height = barHeight;
+                Canvas.SetLeft(_vizBars[b], b * (barWidth + gap) + gap / 2);
+                Canvas.SetTop(_vizBars[b], centerY - barHeight);
+
+                // Bottom half — mirrors downward from center
+                _vizMirrorBars![b].Width = barWidth;
+                _vizMirrorBars[b].Height = barHeight;
+                Canvas.SetLeft(_vizMirrorBars[b], b * (barWidth + gap) + gap / 2);
+                Canvas.SetTop(_vizMirrorBars[b], centerY);
+
+                var color = GetBarColor(b, numBars, _vizSmoothed[b], gradient, rainbow, time);
+                _vizBrushes![b].Color = color;
+                _vizMirrorBrushes![b].Color = color;
+            }
+        }
+
+        // ── Particle Fountain renderer ──
+        private readonly Random _particleRng = new();
+
+        private void RenderParticleFountain(double width, double height, int numBars)
+        {
+            var vizColors = ThemeManager.GetVisualizerColors();
+            var gradient = vizColors.ProgressGradient;
+            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
+            double time = Environment.TickCount64 / 1000.0;
+
+            // Ensure we're in particle mode (not bars)
+            if (_vizBars != null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _vizBars = null;
+                _vizMirrorBars = null;
+                _particleElements = null;
+                _particles = null;
+            }
+
+            // Initialize particle pool
+            if (_particles == null)
+            {
+                _particles = new List<Particle>(MaxParticles);
+                _particleElements = new System.Windows.Shapes.Ellipse[MaxParticles];
+                _particleBrushes = new SolidColorBrush[MaxParticles];
+                for (int i = 0; i < MaxParticles; i++)
+                {
+                    _particleBrushes[i] = new SolidColorBrush(Colors.White);
+                    _particleElements[i] = new System.Windows.Shapes.Ellipse
+                    {
+                        Width = 4,
+                        Height = 4,
+                        Fill = _particleBrushes[i],
+                        IsHitTestVisible = false,
+                        Visibility = Visibility.Collapsed
+                    };
+                    VisualizerCanvas.Children.Add(_particleElements[i]);
+                }
+            }
+
+            double dt = 1.0 / 60.0; // ~16ms frame time
+
+            // Spawn new particles based on frequency energy
+            // Use fewer "spawn bands" (8) to group the 64 bars
+            int spawnBands = 8;
+            for (int sb = 0; sb < spawnBands; sb++)
+            {
+                int barStart = sb * numBars / spawnBands;
+                int barEnd = (sb + 1) * numBars / spawnBands;
+                double bandEnergy = 0;
+                for (int b = barStart; b < barEnd; b++)
+                    bandEnergy = Math.Max(bandEnergy, _vizSmoothed[b]);
+
+                // Spawn probability proportional to energy
+                if (bandEnergy > 0.15 && _particleRng.NextDouble() < bandEnergy * 0.8)
+                {
+                    if (_particles.Count < MaxParticles)
+                    {
+                        double spawnX = width * ((sb + 0.5) / spawnBands) + (_particleRng.NextDouble() - 0.5) * (width / spawnBands * 0.6);
+                        _particles.Add(new Particle
+                        {
+                            X = spawnX,
+                            Y = height,
+                            VelocityX = (_particleRng.NextDouble() - 0.5) * 25,
+                            VelocityY = -(40 + bandEnergy * 160 + _particleRng.NextDouble() * 30),
+                            Life = 0,
+                            MaxLife = 1.8 + bandEnergy * 1.5 + _particleRng.NextDouble() * 0.8,
+                            Band = (barStart + barEnd) / 2
+                        });
+                    }
+                }
+            }
+
+            // Update and render particles
+            for (int i = _particles.Count - 1; i >= 0; i--)
+            {
+                var p = _particles[i];
+                p.Life += dt;
+
+                if (p.Life >= p.MaxLife || p.Y > height + 20)
+                {
+                    _particles.RemoveAt(i);
+                    continue;
+                }
+
+                // Physics: gravity pulls down, air resistance slows horizontal drift
+                p.VelocityY += 80 * dt; // gentler gravity — particles arc rather than plummet
+                p.VelocityX *= 0.992;   // slight air drag on horizontal
+                p.VelocityY *= 0.998;   // slight air drag on vertical too
+                p.X += p.VelocityX * dt;
+                p.Y += p.VelocityY * dt;
+
+                _particles[i] = p;
+            }
+
+            // Hide all particle elements first, then assign visible ones
+            for (int i = 0; i < MaxParticles; i++)
+                _particleElements![i].Visibility = Visibility.Collapsed;
+
+            for (int i = 0; i < _particles.Count && i < MaxParticles; i++)
+            {
+                var p = _particles[i];
+                double lifeFrac = p.Life / p.MaxLife;
+                double alpha = lifeFrac < 0.15 ? lifeFrac / 0.15 : Math.Max(0, 1.0 - (lifeFrac - 0.15) / 0.85); // gentle fade in, slow fade out
+                alpha = Math.Clamp(alpha, 0, 1);
+
+                double bandNorm = (double)p.Band / numBars;
+                double size = 4 + (1 - lifeFrac) * 4; // starts at 8px, shrinks to 4px
+
                 Color color;
                 if (rainbow)
                 {
-                    // Each bar gets its own hue, shifting over time at different rates
-                    double hue = ((double)b / numBars + time * 0.15 + _vizSmoothed[b] * 0.3) % 1.0;
-                    double saturation = 0.85 + _vizSmoothed[b] * 0.15; // more vivid when louder
-                    double brightness = 0.5 + _vizSmoothed[b] * 0.5; // brighter when louder
-                    color = HsvToColor(hue * 360, saturation, brightness);
+                    double hue = (bandNorm + time * 0.15) % 1.0;
+                    color = HsvToColor(hue * 360, 0.9, 0.6 + alpha * 0.4);
                 }
                 else
                 {
-                    double t = _vizSmoothed[b];
+                    double t = bandNorm;
                     if (t < 0.5)
                     {
                         double seg = t / 0.5;
-                        color = Color.FromArgb(
-                            (byte)(gradient[0].A + (gradient[1].A - gradient[0].A) * seg),
+                        color = Color.FromArgb(255,
                             (byte)(gradient[0].R + (gradient[1].R - gradient[0].R) * seg),
                             (byte)(gradient[0].G + (gradient[1].G - gradient[0].G) * seg),
                             (byte)(gradient[0].B + (gradient[1].B - gradient[0].B) * seg));
@@ -3422,15 +4149,529 @@ namespace AudioQualityChecker
                     else
                     {
                         double seg = (t - 0.5) / 0.5;
-                        color = Color.FromArgb(
-                            (byte)(gradient[1].A + (gradient[2].A - gradient[1].A) * seg),
+                        color = Color.FromArgb(255,
                             (byte)(gradient[1].R + (gradient[2].R - gradient[1].R) * seg),
                             (byte)(gradient[1].G + (gradient[2].G - gradient[1].G) * seg),
                             (byte)(gradient[1].B + (gradient[2].B - gradient[1].B) * seg));
                     }
                 }
 
-                _vizBrushes![b].Color = color;
+                color.A = (byte)(alpha * 255);
+                _particleBrushes![i].Color = color;
+                _particleElements![i].Width = size;
+                _particleElements[i].Height = size;
+                _particleElements[i].Visibility = Visibility.Visible;
+                Canvas.SetLeft(_particleElements[i], p.X - size / 2);
+                Canvas.SetTop(_particleElements[i], p.Y - size / 2);
+            }
+        }
+
+        // ── Circle Rings renderer ──
+        // 5 circles, each assigned to a different frequency band with vertical bars on top
+        // Bar count scales dynamically with canvas/circle size for crisp scaling at any resolution
+        private const int CircleRingCount = 5;
+        private int _lastCircleTotalLines; // track element count for reallocation
+
+        private void RenderCircleRings(double width, double height, int numBars)
+        {
+            var vizColors = ThemeManager.GetVisualizerColors();
+            var gradient = vizColors.ProgressGradient;
+            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
+            double time = Environment.TickCount64 / 1000.0;
+
+            // Dynamic layout: compute circle spacing and radius from canvas
+            double margin = width * 0.06;
+            double availableWidth = width - 2 * margin;
+            double spacing = availableWidth / CircleRingCount;
+            double baseRadius = Math.Min(spacing * 0.28, height * 0.22);
+
+            // Scale bars per circle with diameter: ~1 bar per 4px of diameter, clamped 8–64
+            int barsPerCircle = Math.Clamp((int)(2 * baseRadius / 4.0), 8, 64);
+            int totalLines = CircleRingCount * barsPerCircle;
+
+            // Clean up other mode elements
+            if (_particleElements != null || _vizBars != null || _scopeLine != null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _particleElements = null;
+                _particles = null;
+                _vizBars = null;
+                _vizMirrorBars = null;
+                _scopeLine = null;
+                _circleElements = null;
+            }
+
+            // Initialize / reallocate circle bar elements when count changes
+            if (_circleElements == null || _circleElements.Length != totalLines)
+            {
+                VisualizerCanvas.Children.Clear();
+                _circleElements = new System.Windows.Shapes.Line[totalLines];
+                _circleBrushes = new SolidColorBrush[totalLines];
+                for (int i = 0; i < totalLines; i++)
+                {
+                    _circleBrushes[i] = new SolidColorBrush(Colors.White);
+                    _circleElements[i] = new System.Windows.Shapes.Line
+                    {
+                        Stroke = _circleBrushes[i],
+                        StrokeThickness = 2,
+                        IsHitTestVisible = false
+                    };
+                    VisualizerCanvas.Children.Add(_circleElements[i]);
+                }
+                _lastCircleTotalLines = totalLines;
+            }
+
+            double centerY = height / 2.0;
+
+            // Frequency band ranges per circle (sub-bass, bass, low-mid, high-mid, treble)
+            int barsPerBand = numBars / CircleRingCount;
+
+            // Bar width based on spacing between bars
+            double barWidth = Math.Max(1.5, (baseRadius * 2.0) / barsPerCircle * 0.7);
+
+            for (int c = 0; c < CircleRingCount; c++)
+            {
+                double cx = margin + spacing * (c + 0.5);
+                double cy = centerY;
+
+                // Get energy for this circle's frequency band
+                int bandStart = c * barsPerBand;
+                int bandEnd = Math.Min(bandStart + barsPerBand, numBars);
+
+                for (int s = 0; s < barsPerCircle; s++)
+                {
+                    int lineIdx = c * barsPerCircle + s;
+
+                    // Distribute bars evenly across circle diameter (left to right)
+                    double barX = cx - baseRadius + (2.0 * baseRadius * (s + 0.5)) / barsPerCircle;
+
+                    // Map this bar to a frequency within this circle's band
+                    int barIdx = bandStart + (s * (bandEnd - bandStart)) / barsPerCircle;
+                    barIdx = Math.Clamp(barIdx, 0, numBars - 1);
+                    double energy = _vizSmoothed[barIdx];
+
+                    // Calculate the Y position on the circle at this X
+                    double dx = barX - cx;
+                    double distFromCenter = Math.Abs(dx);
+                    if (distFromCenter >= baseRadius)
+                    {
+                        // Bar is outside the circle — hide it
+                        _circleElements[lineIdx].X1 = 0;
+                        _circleElements[lineIdx].Y1 = 0;
+                        _circleElements[lineIdx].X2 = 0;
+                        _circleElements[lineIdx].Y2 = 0;
+                        continue;
+                    }
+
+                    // Top of circle at this X position
+                    double circleY = cy - Math.Sqrt(baseRadius * baseRadius - dx * dx);
+
+                    // Bar extends upward from the circle surface
+                    double barHeight = energy * baseRadius * 1.2;
+                    if (barHeight < 1) barHeight = 1;
+
+                    _circleElements[lineIdx].X1 = barX;
+                    _circleElements[lineIdx].Y1 = circleY;
+                    _circleElements[lineIdx].X2 = barX;
+                    _circleElements[lineIdx].Y2 = circleY - barHeight;
+                    _circleElements[lineIdx].StrokeThickness = barWidth;
+
+                    // Color: each circle gets a band-based color
+                    double bandNorm = (double)c / CircleRingCount;
+                    Color color;
+                    if (rainbow)
+                    {
+                        double hue = (bandNorm + time * 0.15 + (double)s / barsPerCircle * 0.3) % 1.0;
+                        color = HsvToColor(hue * 360, 0.85, 0.5 + energy * 0.5);
+                    }
+                    else
+                    {
+                        color = GetBarColor(c, CircleRingCount, energy, gradient, false, time);
+                    }
+                    _circleBrushes![lineIdx].Color = color;
+                }
+            }
+        }
+
+        // ── Oscilloscope renderer ──
+        // Draws the raw audio waveform as a continuous polyline
+        private void RenderOscilloscope(double width, double height)
+        {
+            var vizColors = ThemeManager.GetVisualizerColors();
+            var gradient = vizColors.ProgressGradient;
+            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
+            double time = Environment.TickCount64 / 1000.0;
+
+            // Clean up other mode elements
+            if (_particleElements != null || _vizBars != null || _circleElements != null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _particleElements = null;
+                _particles = null;
+                _vizBars = null;
+                _vizMirrorBars = null;
+                _circleElements = null;
+                _scopeLine = null;
+            }
+
+            // Get raw samples for waveform display
+            float[] vizData = _player.GetVisualizerSamples(VizFftSize);
+            if (vizData.Length == 0) return;
+
+            // Initialize scope polyline
+            if (_scopeLine == null)
+            {
+                var brush = new SolidColorBrush(gradient.Length > 1 ? gradient[1] : Colors.Lime);
+                _scopeLine = new System.Windows.Shapes.Polyline
+                {
+                    Stroke = brush,
+                    StrokeThickness = 1.5,
+                    IsHitTestVisible = false
+                };
+                VisualizerCanvas.Children.Add(_scopeLine);
+            }
+
+            // Color the scope line
+            Color lineColor;
+            if (rainbow)
+            {
+                double hue = (time * 0.2) % 1.0;
+                lineColor = HsvToColor(hue * 360, 0.8, 0.9);
+            }
+            else
+            {
+                lineColor = gradient.Length > 1 ? gradient[1] : Colors.Lime;
+            }
+            ((SolidColorBrush)_scopeLine.Stroke).Color = lineColor;
+
+            // Number of points to draw across the width
+            int pointCount = Math.Min((int)width, vizData.Length);
+            if (pointCount < 2) return;
+
+            double centerY = height / 2.0;
+            double amplitude = height * 0.42; // leave some margin
+
+            var points = new System.Windows.Media.PointCollection(pointCount);
+            double step = (double)vizData.Length / pointCount;
+
+            for (int i = 0; i < pointCount; i++)
+            {
+                int sampleIdx = Math.Min((int)(i * step), vizData.Length - 1);
+                double sample = vizData[sampleIdx];
+                double x = (double)i / pointCount * width;
+                double y = centerY - sample * amplitude;
+                points.Add(new System.Windows.Point(x, y));
+            }
+
+            _scopeLine.Points = points;
+        }
+
+        // ── Abstract renderer ──
+        // Infinite zoom tunnel: concentric polygon rings scale outward continuously
+        // Smoothed energy for organic, non-spazzy motion
+        private double _kaleidoSmoothedEnergy;
+        private void RenderKaleidoscope(double width, double height, int numBars)
+        {
+            var vizColors = ThemeManager.GetVisualizerColors();
+            var gradient = vizColors.ProgressGradient;
+            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
+            double time = Environment.TickCount64 / 1000.0;
+
+            // Clean up other mode elements
+            if (_particleElements != null || _vizBars != null || _circleElements != null
+                || _scopeLine != null || _vuBlocks != null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _particleElements = null;
+                _particles = null;
+                _vizBars = null;
+                _vizMirrorBars = null;
+                _circleElements = null;
+                _scopeLine = null;
+                _vuBlocks = null;
+                _kaleidoPolys = null;
+            }
+
+            // Initialize polygon ring elements
+            if (_kaleidoPolys == null || _kaleidoPolys.Length != KaleidoRingCount)
+            {
+                VisualizerCanvas.Children.Clear();
+                _kaleidoPolys = new System.Windows.Shapes.Polygon[KaleidoRingCount];
+                _kaleidoBrushes = new SolidColorBrush[KaleidoRingCount];
+                for (int i = 0; i < KaleidoRingCount; i++)
+                {
+                    _kaleidoBrushes[i] = new SolidColorBrush(Colors.White);
+                    _kaleidoPolys[i] = new System.Windows.Shapes.Polygon
+                    {
+                        Stroke = _kaleidoBrushes[i],
+                        StrokeThickness = 2.5,
+                        Fill = null,
+                        StrokeLineJoin = System.Windows.Media.PenLineJoin.Round,
+                        IsHitTestVisible = false
+                    };
+                    VisualizerCanvas.Children.Add(_kaleidoPolys[i]);
+                }
+                _kaleidoPhase = 0;
+                _kaleidoSmoothedEnergy = 0;
+            }
+
+            // Compute overall energy with heavy smoothing for organic feel
+            double rawEnergy = 0;
+            for (int b = 0; b < numBars; b++) rawEnergy += _vizSmoothed[b];
+            rawEnergy /= numBars;
+            // Heavy inertia: moderate attack, slow decay — responsive but smooth
+            if (rawEnergy > _kaleidoSmoothedEnergy)
+                _kaleidoSmoothedEnergy = rawEnergy * 0.25 + _kaleidoSmoothedEnergy * 0.75;
+            else
+                _kaleidoSmoothedEnergy = rawEnergy * 0.08 + _kaleidoSmoothedEnergy * 0.92;
+            double totalEnergy = _kaleidoSmoothedEnergy;
+
+            // Zoom speed: gentle base with moderate energy influence
+            double zoomSpeed = 0.14 + totalEnergy * 0.28;
+            _kaleidoPhase += zoomSpeed * (1.0 / 60.0);
+            if (_kaleidoPhase >= 1.0) _kaleidoPhase -= 1.0;
+
+            // Global rotation: smooth spin with energy push
+            _kaleidoRotation += (0.07 + totalEnergy * 0.18) * (1.0 / 60.0);
+
+            double cx = width / 2.0;
+            double cy = height / 2.0;
+            double maxRadius = Math.Sqrt(cx * cx + cy * cy) * 1.2;
+            double ringSpacing = 1.0 / KaleidoRingCount;
+
+            for (int ring = 0; ring < KaleidoRingCount; ring++)
+            {
+                double ringPhase = (_kaleidoPhase + ring * ringSpacing) % 1.0;
+
+                // Gentler exponential scale for smoother tunnel perspective
+                double scale = Math.Pow(2.0, ringPhase * 3.2) - 0.9;
+                double radius = scale * maxRadius * 0.08;
+
+                // Frequency band for this ring
+                int barIdx = Math.Clamp((int)((1.0 - ringPhase) * numBars), 0, numBars - 1);
+                double energy = _vizSmoothed[barIdx];
+
+                // Subtle radius pulse
+                radius *= (0.90 + energy * 0.20);
+
+                // Ring rotation with gentle per-ring variation
+                double ringRotation = _kaleidoRotation * (1.0 + ring * 0.04);
+                if (ring % 2 == 1) ringRotation = -ringRotation;
+
+                int sides = KaleidoSides + (ring % 3);
+
+                var points = new System.Windows.Media.PointCollection(sides);
+                for (int s = 0; s < sides; s++)
+                {
+                    double angle = ringRotation + s * 2 * Math.PI / sides;
+                    double r = radius;
+                    // Subtle star modulation
+                    if (s % 2 == 0)
+                        r *= (0.85 + energy * 0.25);
+
+                    points.Add(new System.Windows.Point(cx + Math.Cos(angle) * r, cy + Math.Sin(angle) * r));
+                }
+                _kaleidoPolys[ring].Points = points;
+
+                // Thickness: gentle scaling
+                double thickness = Math.Clamp(1.0 + scale * 0.3 + energy * 1.0, 1.0, 4.0);
+                _kaleidoPolys[ring].StrokeThickness = thickness;
+
+                Color color;
+                if (rainbow)
+                {
+                    double hue = (ringPhase + time * 0.05 + (double)ring / KaleidoRingCount * 0.3) % 1.0;
+                    color = HsvToColor(hue * 360, 0.8, 0.4 + energy * 0.5);
+                }
+                else
+                {
+                    double t = (ringPhase + time * 0.025) % 1.0;
+                    if (t < 0.5)
+                    {
+                        double f = t / 0.5;
+                        color = Color.FromRgb(
+                            (byte)(gradient[0].R + (gradient[1].R - gradient[0].R) * f),
+                            (byte)(gradient[0].G + (gradient[1].G - gradient[0].G) * f),
+                            (byte)(gradient[0].B + (gradient[1].B - gradient[0].B) * f));
+                    }
+                    else
+                    {
+                        double f = (t - 0.5) / 0.5;
+                        color = Color.FromRgb(
+                            (byte)(gradient[1].R + (gradient[2].R - gradient[1].R) * f),
+                            (byte)(gradient[1].G + (gradient[2].G - gradient[1].G) * f),
+                            (byte)(gradient[1].B + (gradient[2].B - gradient[1].B) * f));
+                    }
+                }
+
+                double fadeFactor = Math.Sin(ringPhase * Math.PI);
+                color.A = (byte)Math.Clamp(60 + fadeFactor * 160 + energy * 25, 30, 255);
+                _kaleidoBrushes![ring].Color = color;
+            }
+        }
+
+        // ── VU Meter renderer ──
+        // DJ-style blocky stacked blocks — classic retro stereo VU look
+        private void RenderVuMeter(double width, double height, int numBars)
+        {
+            var vizColors = ThemeManager.GetVisualizerColors();
+            var gradient = vizColors.ProgressGradient;
+            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
+            double time = Environment.TickCount64 / 1000.0;
+
+            int totalBlocks = VuColumns * VuRows;
+
+            // Clean up other mode elements
+            if (_particleElements != null || _vizBars != null || _circleElements != null
+                || _scopeLine != null || _kaleidoPolys != null)
+            {
+                VisualizerCanvas.Children.Clear();
+                _particleElements = null;
+                _particles = null;
+                _vizBars = null;
+                _vizMirrorBars = null;
+                _circleElements = null;
+                _scopeLine = null;
+                _kaleidoPolys = null;
+                _vuBlocks = null;
+            }
+
+            // Initialize VU blocks
+            if (_vuBlocks == null || _vuBlocks.Length != totalBlocks)
+            {
+                VisualizerCanvas.Children.Clear();
+                _vuBlocks = new System.Windows.Shapes.Rectangle[totalBlocks];
+                _vuBrushes = new SolidColorBrush[totalBlocks];
+                for (int i = 0; i < totalBlocks; i++)
+                {
+                    _vuBrushes[i] = new SolidColorBrush(Colors.Black);
+                    _vuBlocks[i] = new System.Windows.Shapes.Rectangle
+                    {
+                        Fill = _vuBrushes[i],
+                        IsHitTestVisible = false,
+                        RadiusX = 1,
+                        RadiusY = 1
+                    };
+                    VisualizerCanvas.Children.Add(_vuBlocks[i]);
+                }
+            }
+
+            // Layout constants
+            double gap = 2;
+            double totalGapW = gap * (VuColumns + 1);
+            double totalGapH = gap * (VuRows + 1);
+            double blockW = (width - totalGapW) / VuColumns;
+            double blockH = (height - totalGapH) / VuRows;
+
+            // Map each column to a frequency band via logarithmic spread
+            for (int col = 0; col < VuColumns; col++)
+            {
+                // Map column to frequency bar
+                int barIdx = (col * numBars) / VuColumns;
+                barIdx = Math.Clamp(barIdx, 0, numBars - 1);
+                double energy = _vizSmoothed[barIdx];
+
+                // How many rows should be lit (from bottom)
+                int litRows = (int)(energy * VuRows);
+                litRows = Math.Clamp(litRows, 0, VuRows);
+
+                double x = gap + col * (blockW + gap);
+
+                for (int row = 0; row < VuRows; row++)
+                {
+                    int blockIdx = col * VuRows + row;
+                    // row 0 = top, row VuRows-1 = bottom; we light from bottom
+                    int rowFromBottom = VuRows - 1 - row;
+                    double y = gap + row * (blockH + gap);
+
+                    Canvas.SetLeft(_vuBlocks[blockIdx], x);
+                    Canvas.SetTop(_vuBlocks[blockIdx], y);
+                    _vuBlocks[blockIdx].Width = Math.Max(1, blockW);
+                    _vuBlocks[blockIdx].Height = Math.Max(1, blockH);
+
+                    bool isLit = rowFromBottom < litRows;
+                    double rowNorm = (double)rowFromBottom / VuRows; // 0=bottom, 1=top
+
+                    Color color;
+                    if (rainbow)
+                    {
+                        double hue = ((double)col / VuColumns + time * 0.08) % 1.0;
+                        color = HsvToColor(hue * 360, 0.85, isLit ? (0.5 + rowNorm * 0.5) : 0.08);
+                    }
+                    else
+                    {
+                        // Theme-aware VU: use visualizer gradient colors mapped bottom→top
+                        Color vuBase;
+                        if (rowNorm < 0.5)
+                        {
+                            double t = rowNorm / 0.5;
+                            vuBase = Color.FromRgb(
+                                (byte)(gradient[0].R + (gradient[1].R - gradient[0].R) * t),
+                                (byte)(gradient[0].G + (gradient[1].G - gradient[0].G) * t),
+                                (byte)(gradient[0].B + (gradient[1].B - gradient[0].B) * t));
+                        }
+                        else
+                        {
+                            double t = (rowNorm - 0.5) / 0.5;
+                            vuBase = Color.FromRgb(
+                                (byte)(gradient[1].R + (gradient[2].R - gradient[1].R) * t),
+                                (byte)(gradient[1].G + (gradient[2].G - gradient[1].G) * t),
+                                (byte)(gradient[1].B + (gradient[2].B - gradient[1].B) * t));
+                        }
+                        color = vuBase;
+                    }
+
+                    if (isLit)
+                    {
+                        // Lit block: full brightness with slight glow for top blocks
+                        double brightness = 0.8 + rowNorm * 0.2;
+                        color.A = (byte)(200 + brightness * 55);
+                    }
+                    else
+                    {
+                        // Dim/dark block: very faint ghost of the color
+                        color = Color.FromArgb(30,
+                            (byte)(color.R * 0.3),
+                            (byte)(color.G * 0.3),
+                            (byte)(color.B * 0.3));
+                    }
+
+                    _vuBrushes![blockIdx].Color = color;
+                }
+            }
+        }
+
+        // ── Shared color utility for bar-based modes ──
+        private Color GetBarColor(int barIndex, int numBars, double value, Color[] gradient, bool rainbow, double time)
+        {
+            if (rainbow)
+            {
+                double hue = ((double)barIndex / numBars + time * 0.15 + value * 0.3) % 1.0;
+                double saturation = 0.85 + value * 0.15;
+                double brightness = 0.5 + value * 0.5;
+                return HsvToColor(hue * 360, saturation, brightness);
+            }
+            else
+            {
+                double t = value;
+                if (t < 0.5)
+                {
+                    double seg = t / 0.5;
+                    return Color.FromArgb(
+                        (byte)(gradient[0].A + (gradient[1].A - gradient[0].A) * seg),
+                        (byte)(gradient[0].R + (gradient[1].R - gradient[0].R) * seg),
+                        (byte)(gradient[0].G + (gradient[1].G - gradient[0].G) * seg),
+                        (byte)(gradient[0].B + (gradient[1].B - gradient[0].B) * seg));
+                }
+                else
+                {
+                    double seg = (t - 0.5) / 0.5;
+                    return Color.FromArgb(
+                        (byte)(gradient[1].A + (gradient[2].A - gradient[1].A) * seg),
+                        (byte)(gradient[1].R + (gradient[2].R - gradient[1].R) * seg),
+                        (byte)(gradient[1].G + (gradient[2].G - gradient[1].G) * seg),
+                        (byte)(gradient[1].B + (gradient[2].B - gradient[1].B) * seg));
+                }
             }
         }
 

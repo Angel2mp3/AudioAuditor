@@ -751,6 +751,44 @@
                       EnableRowVirtualization="True"
                       EnableColumnVirtualization="True">
 
+                <!-- Folder group headers -->
+                <DataGrid.GroupStyle>
+                    <GroupStyle>
+                        <GroupStyle.HeaderTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource HeaderBg}"
+                                        BorderBrush="{DynamicResource BorderColor}"
+                                        BorderThickness="0,0,0,1"
+                                        Padding="8,4">
+                                    <TextBlock FontSize="11" FontFamily="Segoe UI"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}">
+                                        <Run Text="📁 "/>
+                                        <Run Text="{Binding Name, Mode=OneWay}"/>
+                                        <Run Text=" — " Foreground="{DynamicResource TextMuted}"/>
+                                        <Run Text="{Binding ItemCount, Mode=OneWay, StringFormat='{}{0} files'}"
+                                             Foreground="{DynamicResource TextMuted}"/>
+                                    </TextBlock>
+                                </Border>
+                            </DataTemplate>
+                        </GroupStyle.HeaderTemplate>
+                        <GroupStyle.ContainerStyle>
+                            <Style TargetType="GroupItem">
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="GroupItem">
+                                            <StackPanel>
+                                                <ContentPresenter/>
+                                                <ItemsPresenter/>
+                                            </StackPanel>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </GroupStyle.ContainerStyle>
+                    </GroupStyle>
+                </DataGrid.GroupStyle>
+
                 <!-- Column Header Style -->
                 <DataGrid.ColumnHeaderStyle>
                     <Style TargetType="DataGridColumnHeader">
@@ -799,6 +837,7 @@
                         </Setter>
                         <Style.Triggers>
                             <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource SelectionBg}"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                         </Style.Triggers>
@@ -1191,7 +1230,8 @@
                             <Grid DockPanel.Dock="Top" Margin="10,5,10,6">
                                 <TextBlock x:Name="SpectrogramTitle"
                                            Foreground="{DynamicResource TextPrimary}" FontSize="12"
-                                           FontWeight="SemiBold" FontFamily="Segoe UI"/>
+                                           FontWeight="SemiBold" FontFamily="Segoe UI"
+                                           TextTrimming="CharacterEllipsis"/>
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                                     <Button x:Name="BtnSpectrogramChannel" Click="SpectrogramChannel_Click"
                                             Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
@@ -1224,6 +1264,27 @@
                                         <TextBlock x:Name="AlbumCoverToggleText" Text="Cover"
                                                    FontSize="10" FontFamily="Segoe UI"/>
                                     </Button>
+                                    <Button x:Name="BtnVisualizerStyle" Click="VisualizerStyle_Click"
+                                            Cursor="Hand" Style="{StaticResource DarkButton}" Padding="6,2"
+                                            ToolTip="Choose visualizer style"
+                                            Margin="0,0,6,0" Visibility="Collapsed">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="VisualizerStyleText" Text="Style"
+                                                       FontSize="10" FontFamily="Segoe UI"/>
+                                            <TextBlock Text=" ▾" FontSize="9" FontFamily="Segoe UI"
+                                                       VerticalAlignment="Center" Opacity="0.6"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Popup x:Name="VisualizerStylePopup" StaysOpen="False"
+                                           Placement="Bottom" PlacementTarget="{Binding ElementName=BtnVisualizerStyle}"
+                                           AllowsTransparency="True" PopupAnimation="Fade">
+                                        <Border Background="{DynamicResource PanelBg}"
+                                                BorderBrush="{DynamicResource ButtonBorder}"
+                                                BorderThickness="1" CornerRadius="3"
+                                                Padding="2" Margin="0,1,0,0">
+                                            <StackPanel x:Name="VisualizerStyleMenu" MinWidth="90"/>
+                                        </Border>
+                                    </Popup>
                                     <Button x:Name="BtnToggleVisualizer" Click="ToggleVisualizer_Click"
                                             HorizontalAlignment="Right" Cursor="Hand"
                                             Style="{StaticResource DarkButton}" Padding="6,2"
@@ -1372,6 +1433,244 @@
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <!-- ═══ AI Detection Config Overlay (first-run / new-feature popup) ═══ -->
+    <Grid x:Name="AiConfigOverlay" Visibility="Collapsed">
+        <Border Background="#AA000000" MouseLeftButtonDown="AiConfigBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource PanelBg}"
+                BorderBrush="{DynamicResource AccentColor}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="32,28" MaxWidth="520" MinWidth="400">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.5" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <Image Source="/Resources/icon.png" Width="32" Height="32" HorizontalAlignment="Center" Margin="0,0,0,12" RenderOptions.BitmapScalingMode="HighQuality"/>
+
+                <TextBlock Text="AI Detection Setup" FontSize="18" FontWeight="Bold"
+                           FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,12"/>
+
+                <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                           LineHeight="20" Margin="0,0,0,18">
+                    AudioAuditor now has three AI detection options. You can enable one or more. The SH Labs API provides the most accurate results but is limited to 15 scans per day and 100 per month — when the limit is reached, it will automatically fall back to your other selected options. You can change these anytime in Settings.
+                </TextBlock>
+
+                <!-- Default (watermark) detector -->
+                <CheckBox x:Name="AiConfigChkDefault" IsChecked="True" Margin="0,6" Cursor="Hand">
+                    <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                        <TextBlock Text="Default AI Detection" FontSize="13" FontWeight="SemiBold"
+                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                        <TextBlock Text="Scans metadata, watermarks, and known AI markers. Unlimited, fast, no network needed."
+                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                   TextWrapping="Wrap" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </CheckBox>
+
+                <!-- Experimental spectral detector -->
+                <CheckBox x:Name="AiConfigChkExperimental" IsChecked="False" Margin="0,6" Cursor="Hand">
+                    <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                        <TextBlock Text="Experimental Spectral Detection" FontSize="13" FontWeight="SemiBold"
+                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                        <TextBlock Text="Analyzes spectral patterns for AI artifacts. Unlimited, local-only, but may produce false positives."
+                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                   TextWrapping="Wrap" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </CheckBox>
+
+                <!-- SH Labs API detector -->
+                <CheckBox x:Name="AiConfigChkSHLabs" IsChecked="False" Margin="0,6" Cursor="Hand">
+                    <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                        <TextBlock Text="SH Labs AI Audio Detection (API)" FontSize="13" FontWeight="SemiBold"
+                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                        <TextBlock Text="AI audio detection via SH Labs. Can sometimes be more accurate than the other options but limited to 15 scans/day and 100/month. When the limit is reached, your other selected options will be used instead."
+                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                   TextWrapping="Wrap" Margin="0,2,0,0"/>
+                    </StackPanel>
+                </CheckBox>
+
+                <!-- Save button -->
+                <Button Click="AiConfigSave_Click" Cursor="Hand" HorizontalAlignment="Center" Margin="0,20,0,12">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="aiSaveBd" Background="{DynamicResource AccentColor}"
+                                    CornerRadius="6" Padding="28,10">
+                                <TextBlock Text="Save &amp; Continue" FontSize="14" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="White"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="aiSaveBd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <TextBlock Text="You can change these anytime in Settings → AI Detection"
+                           FontSize="11" FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondary}" Opacity="0.7"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <!-- ═══ SH Labs Privacy Notice Overlay ═══ -->
+    <Grid x:Name="SHLabsPrivacyOverlay" Visibility="Collapsed">
+        <Border Background="#AA000000" MouseLeftButtonDown="SHLabsPrivacyBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource PanelBg}"
+                BorderBrush="{DynamicResource AccentColor}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="32,24" MaxWidth="560" MinWidth="420">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.5" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="⚠️" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+
+                <TextBlock Text="SH Labs — Privacy Notice" FontSize="17" FontWeight="Bold"
+                           FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,14"/>
+
+                <TextBlock TextWrapping="Wrap" FontSize="12.5" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="19" Margin="0,0,0,10">
+                    When SH Labs AI Detection is enabled, the following occurs:
+                </TextBlock>
+
+                <TextBlock TextWrapping="Wrap" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="19" Margin="8,0,0,6">
+                    <Bold>What is sent:</Bold> The audio file you scan is uploaded to the AudioAuditor proxy server so it can be forwarded to the SH Labs API for analysis. Only the audio file content is transmitted — no personal information, filenames, folder paths, or system details are included.
+                </TextBlock>
+
+                <TextBlock TextWrapping="Wrap" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="19" Margin="8,0,0,6">
+                    <Bold>Where it is sent:</Bold> Your audio file is routed through a proxy hosted on Cloudflare and then forwarded to the SH Labs API (shlabs.music). The proxy exists solely to protect the shared API key — it does not store your files or results.
+                </TextBlock>
+
+                <TextBlock TextWrapping="Wrap" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="19" Margin="8,0,0,6">
+                    <Bold>What is used for:</Bold> The audio is analyzed by SH Labs to determine whether it was generated by AI. The result (prediction, confidence score, and AI type) is returned to AudioAuditor and cached locally on your computer. No results are shared externally or stored on any server.
+                </TextBlock>
+
+                <TextBlock TextWrapping="Wrap" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="19" Margin="8,0,0,6">
+                    <Bold>What is stored locally:</Bold> An anonymous installation ID (derived from your machine name), scan results cached by file hash, and daily/monthly usage counters — all in your Documents/AudioAuditor folder.
+                </TextBlock>
+
+                <TextBlock TextWrapping="Wrap" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="19" Margin="8,0,0,6">
+                    <Bold>Third-party disclaimer:</Bold> While AudioAuditor does not send any information beyond what is described above, we have no control over or oversight of the SH Labs API or its internal practices. We cannot fully guarantee that audio files, once received by SH Labs, are not retained, used for training, shared, or otherwise processed on their end — although SH Labs does not explicitly state that they do so. By enabling this feature, you acknowledge this limitation.
+                </TextBlock>
+
+                <TextBlock TextWrapping="Wrap" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" LineHeight="19" Margin="8,0,0,10">
+                    <Bold>Alternative:</Bold> You can use your own SH Labs API key in Settings → AI Detection to bypass the proxy entirely. With a personal key, audio is sent directly to SH Labs with no intermediary and no rate limits.
+                </TextBlock>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+                    <Button Click="SHLabsPrivacyAccept_Click" Cursor="Hand" Margin="0,0,12,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="privAccBd" Background="{DynamicResource AccentColor}"
+                                        CornerRadius="6" Padding="24,9">
+                                    <TextBlock Text="I Understand — Enable SH Labs" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="White"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="privAccBd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button Click="SHLabsPrivacyDecline_Click" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="privDecBd" Background="{DynamicResource ButtonBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1"
+                                        CornerRadius="6" Padding="24,9">
+                                    <TextBlock Text="Cancel" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="privDecBd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <!-- ═══ SH Labs Scan Limit Overlay (themed replacement for MessageBox) ═══ -->
+    <Grid x:Name="SHLabsLimitOverlay" Visibility="Collapsed">
+        <Border Background="#AA000000" MouseLeftButtonDown="SHLabsLimitBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource PanelBg}"
+                BorderBrush="{DynamicResource AccentColor}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="32,24" MaxWidth="480" MinWidth="360">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.5" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="SH Labs Scan Limit" FontSize="17" FontWeight="Bold"
+                           FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,14"/>
+
+                <TextBlock x:Name="SHLabsLimitMessage" TextWrapping="Wrap" FontSize="13"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                           LineHeight="20" TextAlignment="Center" Margin="0,0,0,20"/>
+
+                <StackPanel x:Name="SHLabsLimitButtons" Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button x:Name="SHLabsLimitOkBtn" Click="SHLabsLimitOk_Click" Cursor="Hand" Margin="0,0,12,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="limOkBd" Background="{DynamicResource AccentColor}"
+                                        CornerRadius="6" Padding="24,9">
+                                    <TextBlock Text="Continue" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="White"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="limOkBd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button x:Name="SHLabsLimitCancelBtn" Click="SHLabsLimitCancel_Click" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="limCancelBd" Background="{DynamicResource ButtonBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1"
+                                        CornerRadius="6" Padding="24,9">
+                                    <TextBlock Text="Cancel" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="limCancelBd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </StackPanel>
             </StackPanel>
         </Border>
     </Grid>

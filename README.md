@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/.NET-8.0-purple?style=flat-square&logo=dotnet" alt=".NET 8"/>
   <img src="https://img.shields.io/badge/Platform-Windows-blue?style=flat-square&logo=windows" alt="Windows"/>
   <img src="https://img.shields.io/badge/UI-WPF-0078D4?style=flat-square" alt="WPF"/>
-  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License"/>
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License"/>
 </p>
 
 <p align="center">
@@ -97,9 +97,12 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ### Real-time Audio Visualizer
 - 64-band FFT frequency visualizer running at 60 FPS
-- Smooth attack/decay animation
+- **7 visualizer modes** — Bars, Mirror, Particles, Circles, Scope, Abstract, VU Meter
+- Smooth attack/decay animation with per-mode rendering
 - Log-frequency bar distribution matching human hearing
-- Theme-aware accent colors
+- Independent visualizer theme — choose a separate color theme for the visualizer or follow the playbar
+- Theme-aware accent colors across all modes
+- Auto-cycling between selected modes on a configurable timer
 - Toggle between spectrogram and visualizer modes
 
 ### Music Service Integration
@@ -141,7 +144,7 @@ All columns exported including: Status, Title, Artist, File Name, File Path, Sam
 - Auto-advance through the queue
 
 ### Integrations
-- **Discord Rich Presence** — Shows currently playing track, artist, and time remaining in your Discord status (toggle in Settings)
+- **Discord Rich Presence** — Shows currently playing track, artist, elapsed time, and song duration bar in your Discord status. Fetches album art from Last.fm when available. Includes play/pause state icons and automatic reconnection (toggle in Settings)
 - **Last.fm Scrobbling** — Full authentication flow with browser-based token exchange, Now Playing updates, and automatic scrobbling at 50% or 4 minutes (whichever comes first)
 
 ### Performance Controls
@@ -172,11 +175,11 @@ All columns exported including: Status, Title, Artist, File Name, File Path, Sam
 
 Each theme covers window backgrounds, panels, toolbars, headers, DataGrid rows (alternating colors and hover states), scrollbars, buttons, inputs, borders, context menus, dropdown menus, title bar caption color (via Windows DWM), and playbar waveform colors.
 
-### 10 Animated Playbar Themes
+### 11 Animated Playbar Themes
 
-Blue Fire · Neon Pulse · Sunset Glow · Purple Haze · Minimal · Golden Wave · Emerald Wave · Blurple Wave · Crimson Wave · Brown Wave
+Blue Fire · Neon Pulse · Sunset Glow · Purple Haze · Minimal · Golden Wave · Emerald Wave · Blurple Wave · Crimson Wave · Brown Wave · Rainbow Bars
 
-Each playbar theme has unique gradient colors and animation speed for the waveform visualization.
+Each playbar theme has unique gradient colors and animation speed for the waveform visualization. Rainbow Bars cycles through all hues in real-time, including the shuffle and volume button accents.
 
 ---
 
@@ -185,6 +188,22 @@ Each playbar theme has unique gradient colors and animation speed for the wavefo
 ### Prerequisites
 - **Windows 10** or later (x64)
 - [**.NET 8.0 Desktop Runtime**](https://dotnet.microsoft.com/download/dotnet/8.0) or SDK
+
+### Install via WinGet
+
+Once the package is available in the [winget-pkgs](https://github.com/microsoft/winget-pkgs) repository, you can install either edition with a single command:
+
+```powershell
+# GUI desktop app
+winget install Angel.AudioAuditor
+
+# CLI tool
+winget install Angel.AudioAuditorCLI
+```
+
+WinGet will automatically handle downloading the executable and making it available on your system. The `AudioAuditorCLI` command will be added to your PATH. The GUI app can be launched by running `AudioAuditor` from a terminal or via its shortcut.
+
+> **Note for new versions:** When a new release is published, update the `InstallerUrl`, `InstallerSha256`, and `PackageVersion` fields in the manifests under `winget/manifests/` and submit a PR to [winget-pkgs](https://github.com/microsoft/winget-pkgs).
 
 ### Build from Source
 
@@ -218,6 +237,7 @@ Or open `Audio Quality Checker.sln` in Visual Studio 2022+ and press **F5**.
 
 ### Keyboard & Interaction
 - **Drag & Drop** — Drop audio files or folders anywhere on the window
+- **Column Rearranging** — Drag any DataGrid column header left or right to reorder the layout; the new order is reflected in exports
 - **Ctrl+F** — Focus the search bar
 - **Search Box** — Filter by filename, artist, title, path, extension, or status; use the status dropdown to filter by analysis result
 - **Context Menu** — Right-click for Play, Add to Queue, Save Spectrogram, View Album Cover, Open File Location, Copy Path, Copy File Name, Remove
@@ -376,7 +396,10 @@ If you'd like to contribute, feel free to open an issue or submit a pull request
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [Apache License 2.0](LICENSE).
+
+> **Trademark & Brand Notice:**
+> The AudioAuditor name, logo, website ([audioauditor.org](https://audioauditor.org)), domain, and all associated brand assets are **not** covered by the Apache 2.0 license and are not part of the open-source grant. They remain the exclusive property of the project owner. You may **not** use the name, logo, or brand assets without explicit written permission.
 
 ---
 
