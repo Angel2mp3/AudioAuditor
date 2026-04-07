@@ -1,5 +1,42 @@
 # Changelog
 
+## v1.5.0
+
+### New Features
+
+- **AcoustID Fingerprinting** — Identify unknown tracks via audio fingerprint using the AcoustID/MusicBrainz database. Automatically downloads fpcalc if not found. Configure your API key in Settings → Integrations
+- **Fake Stereo Detection Column** — New dedicated "Fake Stereo" column in the DataGrid and all exports. Detects mono-duplicate and near-mono stereo files using inter-channel correlation analysis (thresholds: ≥0.9999 = "Mono Duplicate", ≥0.995 = "Near-Mono"). Toggleable via the Feature Config overlay
+- **True Peak Measurement** — Measures inter-sample true peak level (dBTP) for each file using 4× oversampling, displayed in a dedicated column
+- **LUFS Measurement** — Calculates integrated loudness (LUFS / LKFS) per ITU-R BS.1770 with K-weighting, displayed in a dedicated column
+- **Rip/Encode Quality Detection (Experimental)** — Analyzes audio for signs of bad rips: zero-sector gaps, clicks/pops, stuck samples, and bit truncation. Opt-in via the feature config overlay; column hidden by default
+- **Waveform Comparison** — Select two files (Ctrl+Click) and compare their waveforms in a stacked top/bottom layout with a vertical blend slider to overlay them and a horizontal offset slider for alignment. Shows correlation, RMS difference, and peak difference stats
+- **Unified AI Detection Column** — The AI column now reflects results from **all** enabled detection sources (standard metadata/byte scan, experimental spectral analysis, and SH Labs API). Previously only standard detection colored the column — now if any model flags a file, the column highlights orange and displays combined results
+- **Batch Rename & Organize** — Rename selected files using configurable patterns (`{artist}`, `{title}`, `{track}`, etc.) with collision detection and optional folder organization
+- **Duplicate Detection** — Scan loaded files for duplicates by metadata (artist + title) and file fingerprint (size + duration)
+- **Metadata Strip Tool** — Strip all metadata tags from selected audio files (removes ID3, Vorbis comments, APE tags, etc.)
+- **Playlist Import (M3U / PLS)** — Import `.m3u`, `.m3u8`, and `.pls` playlist files; resolves relative and absolute paths and loads contained audio files
+- **Cue Sheet Support** — Import `.cue` files; parses tracks with start/end times and adds them as virtual entries with full analysis
+- **Feature Config Overlay** — On first launch of each new version, a configuration overlay lets you enable/disable optional features.
+- **Multi-Select in File Grid** — DataGrid now supports extended selection (Ctrl+Click, Shift+Click) for waveform comparison and batch operations
+
+### Improvements
+
+- **Export Service — "Real" Status Label** — Export reports now show "Real" instead of the internal "Valid" enum name for files that pass quality check
+- **Themed Metadata Strip Window** — The metadata strip confirmation window now respects the current app theme
+
+### Safety
+
+- **Seek Audio Blast Protection** — Fixed a critical safety issue where seeking during playback (especially with Opus files) could produce an extremely loud burst of white noise static. Root cause: thread-unsafe Position/Read operations in custom audio readers (Opus, DSD, FLAC) allowed corrupted buffer data when the UI thread's seek collided with the audio thread's read. Now protected by 6 layers of safety: thread-safe reader locks with block alignment, WaveOut device-level volume mute during seek, seek generation counter to detect mid-read corruption, mute buffers (~500ms silence after seek), quadratic fade-in ramp, and per-sample hard limiter with NaN/Infinity protection
+
+### Fixes
+
+- **All Features Now Toggleable** — The 7 core analysis features (Silence, Fake Stereo, DR, True Peak, LUFS, Clipping, MQA) that were previously locked to always-on can now be individually toggled off in the feature config overlay. Disabled features are skipped during analysis and their columns are hidden from the results grid
+- **Feature Toggle Startup Sync** — Fixed feature toggles not being applied on startup. Previously, disabling a feature and restarting the app would still run it until the feature config overlay was opened and saved again
+- **Discord RPC Shows Selected Not Playing** — Fixed Discord Rich Presence updating to the highlighted/selected file in the grid instead of the actually playing track. Now correctly uses the right song thats playing instead of selected one.
+- **Batch Rename Crash** — Fixed crash when renaming files with certain special characters in metadata
+
+---
+
 ## v1.4.4
 
 ### New Features

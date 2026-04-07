@@ -827,6 +827,8 @@ SET OPTIONS:
                     if (r.IsAiGenerated) flags.Add($"AI: {r.AiSource}");
                     if (r.ExperimentalAiSuspicious) flags.Add($"Spectral AI: {r.ExperimentalAiConfidence:P0}");
                     if (r.HasReplayGain) flags.Add($"RG: {r.ReplayGain:+0.0;-0.0;0.0} dB");
+                    if (r.IsFakeStereo) flags.Add($"Fake Stereo: {r.FakeStereoType}");
+                    if (r.HasExcessiveSilence) flags.Add("Excessive Silence");
                     if (r.HasAlbumCover) flags.Add("Cover: Yes");
                     if (flags.Count > 0)
                         Console.WriteLine($"  Flags:     {string.Join(" | ", flags)}");
@@ -847,7 +849,7 @@ SET OPTIONS:
             else
             {
                 // For large result sets, just show fakes/corrupt/flagged files
-                var flagged = results.Where(r => r.Status == AudioStatus.Fake || r.Status == AudioStatus.Corrupt || r.IsAiGenerated || r.ExperimentalAiSuspicious || r.HasClipping || r.HasScaledClipping).ToList();
+                var flagged = results.Where(r => r.Status == AudioStatus.Fake || r.Status == AudioStatus.Corrupt || r.IsAiGenerated || r.ExperimentalAiSuspicious || r.HasClipping || r.HasScaledClipping || r.IsFakeStereo || r.HasExcessiveSilence).ToList();
                 if (flagged.Count > 0)
                 {
                     Console.WriteLine($"\nFlagged files ({flagged.Count}):");
@@ -956,7 +958,15 @@ SET OPTIONS:
             Console.WriteLine($"Peak Level:      {(r.MaxSampleLevel > 0 ? $"{r.MaxSampleLevelDb:F1} dBFS" : "-")}");
             Console.WriteLine($"BPM:             {(r.Bpm > 0 ? r.Bpm.ToString() : "-")}");
             Console.WriteLine($"Replay Gain:     {(r.HasReplayGain ? $"{r.ReplayGain:F1} dB" : "-")}");
+            Console.WriteLine($"Dynamic Range:   {r.DynamicRangeDisplay}");
             Console.WriteLine($"Album Cover:     {(r.HasAlbumCover ? "Yes" : "No")}");
+            Console.WriteLine();
+            Console.WriteLine($"Fake Stereo:     {r.FakeStereoDisplay}");
+            if (r.IsFakeStereo)
+                Console.WriteLine($"Stereo Corr:     {r.StereoCorrelation:F4}");
+            Console.WriteLine($"Silence:         {r.SilenceDisplay}");
+            Console.WriteLine($"Date Modified:   {r.DateModifiedDisplay}");
+            Console.WriteLine($"Date Created:    {r.DateCreatedDisplay}");
             Console.WriteLine();
             Console.WriteLine($"MQA:             {(r.IsMqa ? (r.IsMqaStudio ? "MQA Studio" : "MQA") : "No")}");
             if (r.IsMqa)
@@ -1009,6 +1019,8 @@ SET OPTIONS:
                 Console.WriteLine($"    \"bpm\": {r.Bpm},");
                 Console.WriteLine($"    \"replayGain\": {r.ReplayGain:F1},");
                 Console.WriteLine($"    \"hasReplayGain\": {(r.HasReplayGain ? "true" : "false")},");
+                Console.WriteLine($"    \"dynamicRange\": {r.DynamicRange:F1},");
+                Console.WriteLine($"    \"hasDynamicRange\": {(r.HasDynamicRange ? "true" : "false")},");
                 Console.WriteLine($"    \"isMqa\": {(r.IsMqa ? "true" : "false")},");
                 Console.WriteLine($"    \"isMqaStudio\": {(r.IsMqaStudio ? "true" : "false")},");
                 Console.WriteLine($"    \"mqaOriginalSampleRate\": {JsonEscape(r.MqaOriginalSampleRate)},");
@@ -1017,7 +1029,16 @@ SET OPTIONS:
                 Console.WriteLine($"    \"aiSource\": {JsonEscape(r.AiSource)},");
                 Console.WriteLine($"    \"experimentalAiSuspicious\": {(r.ExperimentalAiSuspicious ? "true" : "false")},");
                 Console.WriteLine($"    \"experimentalAiConfidence\": {r.ExperimentalAiConfidence:F2},");
-                Console.WriteLine($"    \"hasAlbumCover\": {(r.HasAlbumCover ? "true" : "false")}");
+                Console.WriteLine($"    \"hasAlbumCover\": {(r.HasAlbumCover ? "true" : "false")},");
+                Console.WriteLine($"    \"isFakeStereo\": {(r.IsFakeStereo ? "true" : "false")},");
+                Console.WriteLine($"    \"fakeStereoType\": {JsonEscape(r.FakeStereoType)},");
+                Console.WriteLine($"    \"stereoCorrelation\": {r.StereoCorrelation:F4},");
+                Console.WriteLine($"    \"hasExcessiveSilence\": {(r.HasExcessiveSilence ? "true" : "false")},");
+                Console.WriteLine($"    \"leadingSilenceMs\": {r.LeadingSilenceMs:F0},");
+                Console.WriteLine($"    \"trailingSilenceMs\": {r.TrailingSilenceMs:F0},");
+                Console.WriteLine($"    \"midTrackSilenceGaps\": {r.MidTrackSilenceGaps},");
+                Console.WriteLine($"    \"dateModified\": {JsonEscape(r.DateModifiedDisplay)},");
+                Console.WriteLine($"    \"dateCreated\": {JsonEscape(r.DateCreatedDisplay)}");
                 Console.WriteLine($"  }}{comma}");
             }
             Console.WriteLine("]");

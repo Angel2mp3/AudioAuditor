@@ -2,15 +2,16 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor</AssemblyName>
-    <Version>1.4.4</Version>
+    <Version>1.5.0</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <!-- Exclude sub-projects from being compiled by this project -->
@@ -27,6 +28,9 @@
     <Page Remove="temp\**" />
     <Compile Remove="archive\**" />
     <None Remove="archive\**" />
+    <Compile Remove="Experimental-Builds\**" />
+    <None Remove="Experimental-Builds\**" />
+    <Page Remove="Experimental-Builds\**" />
   </ItemGroup>
 
   <ItemGroup>

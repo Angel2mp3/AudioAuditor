@@ -29,8 +29,24 @@ namespace AudioQualityChecker.Services
         {
             "Status", "Title", "Artist", "File Name", "File Path",
             "Sample Rate", "Bit Depth", "Channels", "Duration", "File Size",
-            "Reported Bitrate", "Actual Bitrate", "Extension", "Max Frequency",
-            "Clipping", "Clipping %", "BPM", "Replay Gain", "MQA", "MQA Encoder"
+            "Reported Bitrate", "Actual Bitrate", "Format", "Max Frequency",
+            "Clipping", "Clipping %", "BPM", "Replay Gain", "Dynamic Range", "MQA", "MQA Encoder",
+            "AI", "Fake Stereo", "Silence", "Date Modified", "Date Created",
+            "True Peak", "LUFS", "Rip Quality"
+        };
+
+        /// <summary>
+        /// Returns the user-facing status label for an AudioStatus enum value.
+        /// </summary>
+        private static string StatusLabel(AudioStatus status) => status switch
+        {
+            AudioStatus.Valid => "Real",
+            AudioStatus.Fake => "Fake",
+            AudioStatus.Unknown => "Unknown",
+            AudioStatus.Corrupt => "Corrupt",
+            AudioStatus.Optimized => "Optimized",
+            AudioStatus.Analyzing => "Analyzing",
+            _ => status.ToString()
         };
 
         /// <summary>
@@ -74,7 +90,7 @@ namespace AudioQualityChecker.Services
         {
             return bindingPath switch
             {
-                "Status" => f.Status.ToString(),
+                "Status" => StatusLabel(f.Status),
                 "Title" => f.Title,
                 "Artist" => f.Artist,
                 "FileName" => f.FileName,
@@ -92,10 +108,19 @@ namespace AudioQualityChecker.Services
                 "ClippingPercentage" => f.HasClipping ? $"{f.ClippingPercentage:F2}%" : "-",
                 "BpmDisplay" or "Bpm" => f.BpmDisplay,
                 "ReplayGainDisplay" or "ReplayGain" => f.ReplayGainDisplay,
+                "DynamicRangeDisplay" or "DynamicRange" => f.DynamicRangeDisplay,
                 "IsMqa" or "MqaDisplay" => f.MqaDisplay,
                 "MqaEncoder" => f.MqaEncoder,
                 "IsAiGenerated" or "AiDisplay" => f.AiDisplay,
                 "AiSource" => f.AiSource,
+                "FakeStereoDisplay" or "IsFakeStereo" => f.FakeStereoDisplay,
+                "SilenceDisplay" or "HasExcessiveSilence" => f.SilenceDisplay,
+                "DateModifiedDisplay" or "DateModified" => f.DateModifiedDisplay,
+                "DateCreatedDisplay" or "DateCreated" => f.DateCreatedDisplay,
+                "FormatDisplay" => f.FormatDisplay,
+                "TruePeakDisplay" or "TruePeakDbTP" => f.TruePeakDisplay,
+                "LufsDisplay" or "IntegratedLufs" => f.LufsDisplay,
+                "RipQualityDisplay" or "RipQuality" => f.RipQualityDisplay,
                 _ => "-"
             };
         }
@@ -116,7 +141,7 @@ namespace AudioQualityChecker.Services
         {
             return new[]
             {
-                f.Status.ToString(),
+                StatusLabel(f.Status),
                 f.Title,
                 f.Artist,
                 f.FileName,
@@ -134,8 +159,17 @@ namespace AudioQualityChecker.Services
                 f.HasClipping ? $"{f.ClippingPercentage:F2}%" : "-",
                 f.Bpm > 0 ? $"{f.Bpm}" : "-",
                 f.HasReplayGain ? $"{f.ReplayGain:+0.00;-0.00;0.00} dB" : "-",
+                f.DynamicRangeDisplay,
                 f.MqaDisplay,
-                f.MqaEncoder
+                f.MqaEncoder,
+                f.AiDisplay,
+                f.FakeStereoDisplay,
+                f.SilenceDisplay,
+                f.DateModifiedDisplay,
+                f.DateCreatedDisplay,
+                f.TruePeakDisplay,
+                f.LufsDisplay,
+                f.RipQualityDisplay
             };
         }
 
@@ -178,7 +212,7 @@ namespace AudioQualityChecker.Services
             int unknown = fileList.Count(f => f.Status == AudioStatus.Unknown);
 
             sb.AppendLine($"  Total Files: {fileList.Count}");
-            sb.AppendLine($"  Valid: {valid}  |  Fake: {fake}  |  Optimized: {optimized}  |  Corrupt: {corrupt}  |  Unknown: {unknown}");
+            sb.AppendLine($"  Real: {valid}  |  Fake: {fake}  |  Optimized: {optimized}  |  Corrupt: {corrupt}  |  Unknown: {unknown}");
             sb.AppendLine();
             sb.AppendLine("───────────────────────────────────────────────────────────────");
 
@@ -190,7 +224,7 @@ namespace AudioQualityChecker.Services
                     var headers = GetHeaders(columns);
                     var values = GetRow(f, columns);
                     sb.AppendLine();
-                    sb.AppendLine($"  [{f.Status}]  {f.FileName}");
+                    sb.AppendLine($"  [{StatusLabel(f.Status)}]  {f.FileName}");
                     for (int i = 0; i < headers.Length; i++)
                     {
                         if (headers[i] == "Status") continue; // already shown above
@@ -200,7 +234,7 @@ namespace AudioQualityChecker.Services
                 else
                 {
                     sb.AppendLine();
-                    sb.AppendLine($"  [{f.Status}]  {f.FileName}");
+                    sb.AppendLine($"  [{StatusLabel(f.Status)}]  {f.FileName}");
                     if (!string.IsNullOrEmpty(f.Artist) || !string.IsNullOrEmpty(f.Title))
                         sb.AppendLine($"    Artist: {f.Artist}  |  Title: {f.Title}");
                     sb.AppendLine($"    Format: {f.FormatDisplay}  |  Duration: {f.Duration}  |  Size: {f.FileSize}");
@@ -209,7 +243,13 @@ namespace AudioQualityChecker.Services
                     sb.AppendLine($"    Max Freq: {(f.EffectiveFrequency > 0 ? $"{f.EffectiveFrequency} Hz" : "-")}  |  Clipping: {f.ClippingDisplay}");
                     if (f.Bpm > 0) sb.AppendLine($"    BPM: {f.Bpm}");
                     if (f.HasReplayGain) sb.AppendLine($"    Replay Gain: {f.ReplayGain:+0.00;-0.00;0.00} dB");
+                    if (f.HasDynamicRange) sb.AppendLine($"    Dynamic Range: {f.DynamicRangeDisplay}");
                     if (f.IsMqa) sb.AppendLine($"    MQA: {f.MqaDisplay}  |  Encoder: {f.MqaEncoder}");
+                    sb.AppendLine($"    AI: {f.AiDisplay}  |  Fake Stereo: {f.FakeStereoDisplay}");
+                    if (f.HasExcessiveSilence) sb.AppendLine($"    Silence: {f.SilenceDisplay}");
+                    if (f.HasTruePeak) sb.AppendLine($"    True Peak: {f.TruePeakDisplay}");
+                    if (f.HasLufs) sb.AppendLine($"    LUFS: {f.LufsDisplay}");
+                    if (f.HasRipQuality) sb.AppendLine($"    Rip Quality: {f.RipQualityDisplay}");
                     sb.AppendLine($"    Path: {f.FilePath}");
                 }
                 sb.AppendLine("  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─");
@@ -330,7 +370,7 @@ namespace AudioQualityChecker.Services
             int optimized = fileList.Count(f => f.Status == AudioStatus.Optimized);
             int corrupt = fileList.Count(f => f.Status == AudioStatus.Corrupt);
             int unknown = fileList.Count(f => f.Status == AudioStatus.Unknown);
-            contentLines.AppendLine($"Valid: {valid}  |  Fake: {fake}  |  Optimized: {optimized}  |  Corrupt: {corrupt}  |  Unknown: {unknown}");
+            contentLines.AppendLine($"Real: {valid}  |  Fake: {fake}  |  Optimized: {optimized}  |  Corrupt: {corrupt}  |  Unknown: {unknown}");
             contentLines.AppendLine("");
 
             // CSV-style header
@@ -491,7 +531,7 @@ namespace AudioQualityChecker.Services
             int optimized = fileList.Count(f => f.Status == AudioStatus.Optimized);
             int corrupt = fileList.Count(f => f.Status == AudioStatus.Corrupt);
             int unknown = fileList.Count(f => f.Status == AudioStatus.Unknown);
-            AddWordParagraph(docXml, $"Total Files: {fileList.Count}  |  Valid: {valid}  |  Fake: {fake}  |  Optimized: {optimized}  |  Corrupt: {corrupt}  |  Unknown: {unknown}", false, 20);
+            AddWordParagraph(docXml, $"Total Files: {fileList.Count}  |  Real: {valid}  |  Fake: {fake}  |  Optimized: {optimized}  |  Corrupt: {corrupt}  |  Unknown: {unknown}", false, 20);
             AddWordParagraph(docXml, "", false, 20);
 
             // Table header

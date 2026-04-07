@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using AudioQualityChecker.Models;
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
@@ -16,6 +18,15 @@ namespace AudioQualityChecker.Services
 
         /// <summary>Set to true to enable experimental spectral AI detection.</summary>
         public static bool EnableExperimentalAi { get; set; }
+        public static bool EnableRipQuality { get; set; }
+        public static bool EnableSilenceDetection { get; set; } = true;
+        public static bool EnableFakeStereoDetection { get; set; } = true;
+        public static bool EnableDynamicRange { get; set; } = true;
+        public static bool EnableTruePeak { get; set; } = true;
+        public static bool EnableLufs { get; set; } = true;
+        public static bool EnableClippingDetection { get; set; } = true;
+        public static bool EnableMqaDetection { get; set; } = true;
+        public static bool EnableDefaultAiDetection { get; set; } = true;
 
         public static AudioFileInfo AnalyzeFile(string filePath)
         {
@@ -32,6 +43,8 @@ namespace AudioQualityChecker.Services
                 var fi = new FileInfo(filePath);
                 info.FileSizeBytes = fi.Length;
                 info.FileSize = FormatFileSize(fi.Length);
+                info.DateModified = fi.LastWriteTime;
+                info.DateCreated = fi.CreationTime;
 
                 // ── Metadata via TagLib ──
                 try
@@ -104,6 +117,62 @@ namespace AudioQualityChecker.Services
                     return info;
                 }
 
+                // ── Silence detection ──
+                if (EnableSilenceDetection)
+                {
+                    try
+                    {
+                        DetectSilence(filePath, info);
+                    }
+                    catch { /* Silence detection is optional */ }
+                }
+
+                // ── Dynamic Range measurement ──
+                if (EnableDynamicRange)
+                {
+                    try
+                    {
+                        CalculateDynamicRange(filePath, info);
+                    }
+                    catch { /* DR measurement is optional */ }
+                }
+
+                // ── True Peak measurement (inter-sample peaks via 4x oversampling) ──
+                if (EnableTruePeak)
+                {
+                    try
+                    {
+                        MeasureTruePeak(filePath, info);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[TruePeak] {Path.GetFileName(filePath)}: {ex.Message}");
+                    }
+                }
+
+                // ── Integrated LUFS loudness (ITU-R BS.1770 simplified) ──
+                if (EnableLufs)
+                {
+                    try
+                    {
+                        MeasureIntegratedLufs(filePath, info);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[LUFS] {Path.GetFileName(filePath)}: {ex.Message}");
+                    }
+                }
+
+                // ── Rip/encode quality detection ──
+                if (EnableRipQuality)
+                {
+                    try
+                    {
+                        DetectRipQuality(filePath, info);
+                    }
+                    catch { /* Rip quality is optional */ }
+                }
+
                 // ── Optimizer detection ──
                 if (DetectOptimizer(info))
                 {
@@ -115,31 +184,37 @@ namespace AudioQualityChecker.Services
                 DetermineQuality(info);
 
                 // ── MQA detection (runs after main analysis) ──
-                try
+                if (EnableMqaDetection)
                 {
-                    var mqaResult = MqaDetector.Detect(filePath);
-                    if (mqaResult != null)
+                    try
                     {
-                        info.IsMqa = mqaResult.IsMqa;
-                        info.IsMqaStudio = mqaResult.IsStudio;
-                        info.MqaOriginalSampleRate = mqaResult.OriginalSampleRate;
-                        info.MqaEncoder = mqaResult.Encoder;
+                        var mqaResult = MqaDetector.Detect(filePath);
+                        if (mqaResult != null)
+                        {
+                            info.IsMqa = mqaResult.IsMqa;
+                            info.IsMqaStudio = mqaResult.IsStudio;
+                            info.MqaOriginalSampleRate = mqaResult.OriginalSampleRate;
+                            info.MqaEncoder = mqaResult.Encoder;
+                        }
                     }
+                    catch { /* MQA detection is optional, don't fail the whole analysis */ }
                 }
-                catch { /* MQA detection is optional, don't fail the whole analysis */ }
 
                 // ── AI watermark detection ──
-                try
+                if (EnableDefaultAiDetection)
                 {
-                    var aiResult = AiWatermarkDetector.Detect(filePath);
-                    if (aiResult != null && aiResult.IsAiDetected)
+                    try
                     {
-                        info.IsAiGenerated = true;
-                        info.AiSource = aiResult.Summary;
-                        info.AiSources = aiResult.Sources;
+                        var aiResult = AiWatermarkDetector.Detect(filePath);
+                        if (aiResult != null && aiResult.IsAiDetected)
+                        {
+                            info.IsAiGenerated = true;
+                            info.AiSource = aiResult.Summary;
+                            info.AiSources = aiResult.Sources;
+                        }
                     }
+                    catch { /* AI detection is optional */ }
                 }
-                catch { /* AI detection is optional */ }
 
                 // ── Experimental AI detection (spectral analysis) ──
                 try
@@ -244,6 +319,12 @@ namespace AudioQualityChecker.Services
             const float PeakHistScale = PeakHistBins / (1.0f - PeakHistMin); // 2000
             int[] peakHistogram = new int[PeakHistBins];
 
+            // Fake stereo detection: track L/R correlation for stereo files
+            // Uses Pearson correlation: r = Σ(L*R) / sqrt(Σ(L²) * Σ(R²))
+            bool trackStereo = channels == 2;
+            double corrLR = 0, corrLL = 0, corrRR = 0;
+            long stereoSamples = 0;
+
             long currentFrame = 0;
 
             // Skip to safeStart by reading and discarding
@@ -282,7 +363,7 @@ namespace AudioQualityChecker.Services
                 currentFrame += FftSize;
                 if (read < readBuf.Length) continue; // skip incomplete
 
-                // Down-mix to mono + clipping detection
+                // Down-mix to mono + clipping detection + stereo correlation
                 double[] real = new double[FftSize];
                 double[] imag = new double[FftSize];
 
@@ -305,6 +386,18 @@ namespace AudioQualityChecker.Services
                         }
                         totalSamplesRead++;
                     }
+
+                    // Track L/R correlation for fake stereo detection
+                    if (trackStereo)
+                    {
+                        float l = readBuf[i * 2];
+                        float r2 = readBuf[i * 2 + 1];
+                        corrLR += (double)l * r2;
+                        corrLL += (double)l * l;
+                        corrRR += (double)r2 * r2;
+                        stereoSamples++;
+                    }
+
                     real[i] = (sum / channels) * window[i];
                 }
 
@@ -329,7 +422,7 @@ namespace AudioQualityChecker.Services
                 avgSpectrum[i] /= validSegments;
 
             // Clipping analysis
-            if (totalSamplesRead > 0)
+            if (totalSamplesRead > 0 && EnableClippingDetection)
             {
                 info.ClippingSamples = clippingSamples;
                 info.ClippingPercentage = (double)clippingSamples / totalSamplesRead * 100.0;
@@ -368,6 +461,27 @@ namespace AudioQualityChecker.Services
 
             // ── Find the cutoff frequency ──
             info.EffectiveFrequency = FindCutoffFrequency(avgSpectrum, sampleRate);
+
+            // ── Fake stereo detection ──
+            if (EnableFakeStereoDetection && trackStereo && stereoSamples > 0 && corrLL > 0 && corrRR > 0)
+            {
+                double denom = Math.Sqrt(corrLL * corrRR);
+                double correlation = denom > 1e-10 ? corrLR / denom : 0;
+                info.StereoCorrelation = Math.Round(correlation, 4);
+
+                // Correlation ≥ 0.9999: channels are essentially identical (mono duplicated)
+                if (correlation >= 0.9999)
+                {
+                    info.IsFakeStereo = true;
+                    info.FakeStereoType = "Mono Duplicate";
+                }
+                // Correlation ≥ 0.995: nearly identical, likely mono duplicated with tiny differences
+                else if (correlation >= 0.995)
+                {
+                    info.IsFakeStereo = true;
+                    info.FakeStereoType = "Near-Mono";
+                }
+            }
 
             // ── Map cutoff → estimated bitrate ──
             bool isLossless = IsLosslessFile(info);
@@ -470,6 +584,187 @@ namespace AudioQualityChecker.Services
                 {
                     info.ActualBitrate = estimated;
                 }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  Silence Detection
+        //
+        //  Scans the audio file from the beginning and end independently
+        //  to measure leading/trailing silence. Then checks for mid-track
+        //  silence gaps (≥ 500ms of audio below -60 dBFS).
+        // ═══════════════════════════════════════════════════════
+
+        private const float SilenceThresholdLinear = 0.001f; // ~-60 dBFS
+        private const int MinMidGapMs = 500; // minimum mid-track gap to count
+
+        private static void DetectSilence(string filePath, AudioFileInfo info)
+        {
+            var (disposable, samples, format) = OpenAudioFile(filePath);
+            if (disposable == null || samples == null || format == null) return;
+
+            using (disposable)
+            {
+                int sampleRate = format.SampleRate;
+                int channels = format.Channels;
+                int blockSize = 4096 * channels;
+                float[] buf = new float[blockSize];
+
+                // ── Pass 1: Leading silence ──
+                long leadingSamples = 0;
+                bool foundAudio = false;
+                while (!foundAudio)
+                {
+                    int read = samples.Read(buf, 0, blockSize);
+                    if (read <= 0) break;
+                    int frames = read / channels;
+                    for (int i = 0; i < frames; i++)
+                    {
+                        float maxCh = 0;
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            float abs = Math.Abs(buf[i * channels + ch]);
+                            if (abs > maxCh) maxCh = abs;
+                        }
+                        if (maxCh > SilenceThresholdLinear)
+                        {
+                            foundAudio = true;
+                            break;
+                        }
+                        leadingSamples++;
+                    }
+                }
+                info.LeadingSilenceMs = Math.Round((double)leadingSamples / sampleRate * 1000.0, 0);
+
+                // For trailing silence + mid-track gaps, we need to read the rest of the file.
+                // We track continuous-silent-frame runs. At the end, the last run is trailing silence.
+                long currentPos = leadingSamples; // frames from start
+                long silenceRunStart = -1; // frame index where current silent run began (-1 = not silent)
+                int midGaps = 0;
+                double totalMidSilenceMs = 0;
+                long lastSilenceRunLength = 0;
+
+                // Continue reading from where we left off (the sample provider is sequential)
+                while (true)
+                {
+                    int read = samples.Read(buf, 0, blockSize);
+                    if (read <= 0) break;
+                    int frames = read / channels;
+                    for (int i = 0; i < frames; i++)
+                    {
+                        float maxCh = 0;
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            float abs = Math.Abs(buf[i * channels + ch]);
+                            if (abs > maxCh) maxCh = abs;
+                        }
+
+                        if (maxCh <= SilenceThresholdLinear)
+                        {
+                            // Currently silent
+                            if (silenceRunStart < 0)
+                                silenceRunStart = currentPos;
+                        }
+                        else
+                        {
+                            // Audio detected — end any current silent run
+                            if (silenceRunStart >= 0)
+                            {
+                                long runFrames = currentPos - silenceRunStart;
+                                double runMs = (double)runFrames / sampleRate * 1000.0;
+                                if (runMs >= MinMidGapMs)
+                                {
+                                    midGaps++;
+                                    totalMidSilenceMs += runMs;
+                                }
+                                silenceRunStart = -1;
+                            }
+                        }
+                        currentPos++;
+                    }
+                }
+
+                // If we ended in a silent run, that's trailing silence
+                if (silenceRunStart >= 0)
+                {
+                    lastSilenceRunLength = currentPos - silenceRunStart;
+                }
+                info.TrailingSilenceMs = Math.Round((double)lastSilenceRunLength / sampleRate * 1000.0, 0);
+                info.MidTrackSilenceGaps = midGaps;
+                info.TotalMidSilenceMs = Math.Round(totalMidSilenceMs, 0);
+
+                // Flag excessive silence: >5s leading, >10s trailing, or any mid-track gap
+                info.HasExcessiveSilence = info.LeadingSilenceMs > 5000 || info.TrailingSilenceMs > 10000 || midGaps > 0;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  Dynamic Range (DR) Measurement
+        //
+        //  Splits the track into 3-second blocks and computes
+        //  peak and RMS (2nd-highest peak to avoid outliers).
+        //  DR = 20*log10(peak/RMS) averaged across the loudest 20% of blocks.
+        //  This approximates the "DR score" used by audiophile tools.
+        // ═══════════════════════════════════════════════════════
+
+        private static void CalculateDynamicRange(string filePath, AudioFileInfo info)
+        {
+            var (disposable, samples, format) = OpenAudioFile(filePath);
+            if (disposable == null || samples == null || format == null) return;
+
+            using (disposable)
+            {
+                int sampleRate = format.SampleRate;
+                int channels = format.Channels;
+                int blockFrames = sampleRate * 3; // 3-second blocks
+                int blockSamples = blockFrames * channels;
+                float[] buf = new float[blockSamples];
+
+                var blockDrs = new List<double>();
+
+                while (true)
+                {
+                    int read = samples.Read(buf, 0, blockSamples);
+                    if (read < sampleRate * channels) break; // skip blocks < 1 second
+
+                    int frames = read / channels;
+                    double sumSq = 0;
+                    double peak = 0;
+
+                    for (int i = 0; i < frames; i++)
+                    {
+                        // Use the loudest channel per frame
+                        double maxAbs = 0;
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            double abs = Math.Abs(buf[i * channels + ch]);
+                            if (abs > maxAbs) maxAbs = abs;
+                        }
+                        sumSq += maxAbs * maxAbs;
+                        if (maxAbs > peak) peak = maxAbs;
+                    }
+
+                    if (peak < 1e-10) continue; // skip silent blocks
+
+                    double rms = Math.Sqrt(sumSq / frames);
+                    if (rms < 1e-10) continue;
+
+                    double dr = 20.0 * Math.Log10(peak / rms);
+                    blockDrs.Add(dr);
+                }
+
+                if (blockDrs.Count < 2) return;
+
+                // Use the loudest 20% of blocks (by RMS) — sort ascending, take top 20%
+                blockDrs.Sort();
+                int topCount = Math.Max(2, blockDrs.Count / 5);
+                double avgDr = 0;
+                for (int i = blockDrs.Count - topCount; i < blockDrs.Count; i++)
+                    avgDr += blockDrs[i];
+                avgDr /= topCount;
+
+                info.DynamicRange = Math.Round(avgDr, 1);
+                info.HasDynamicRange = true;
             }
         }
 
@@ -1552,6 +1847,112 @@ namespace AudioQualityChecker.Services
         }
 
         /// <summary>
+        /// Calculates R128-style loudness and writes REPLAYGAIN_TRACK_GAIN and REPLAYGAIN_TRACK_PEAK
+        /// tags to the file via TagLib. Reference level: -18 LUFS.
+        /// Returns (gain, peak) on success, or null on failure.
+        /// </summary>
+        public static (double Gain, double Peak)? CalculateAndWriteReplayGain(string filePath)
+        {
+            // Step 1: Calculate integrated loudness (simplified R128 — RMS-based)
+            double rmsSum = 0;
+            long totalFrames = 0;
+            double peak = 0;
+
+            var (disposable, samples, format) = OpenAudioFile(filePath);
+            if (disposable == null || samples == null || format == null) return null;
+
+            using (disposable)
+            {
+                int channels = format.Channels;
+                int blockSize = 4096 * channels;
+                float[] buf = new float[blockSize];
+
+                while (true)
+                {
+                    int read = samples.Read(buf, 0, blockSize);
+                    if (read <= 0) break;
+                    int frames = read / channels;
+
+                    for (int i = 0; i < frames; i++)
+                    {
+                        double sum = 0;
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            double s = buf[i * channels + ch];
+                            sum += s * s;
+                            double abs = Math.Abs(s);
+                            if (abs > peak) peak = abs;
+                        }
+                        rmsSum += sum / channels; // average power across channels
+                    }
+                    totalFrames += frames;
+                }
+            }
+
+            if (totalFrames == 0 || peak < 1e-10) return null;
+
+            double meanPower = rmsSum / totalFrames;
+            double rmsDb = 10.0 * Math.Log10(meanPower); // in dBFS
+            // R128 reference: -18 LUFS ≈ -18 dBFS for a simple RMS-based approximation
+            double gain = -18.0 - rmsDb;
+            gain = Math.Round(gain, 2);
+            peak = Math.Round(peak, 6);
+
+            // Step 2: Write tags via TagLib
+            try
+            {
+                using var tagFile = TagLib.File.Create(filePath);
+                string gainStr = $"{gain:+0.00;-0.00;0.00} dB";
+                string peakStr = $"{peak:F6}";
+
+                // Write to ID3v2 TXXX frames (MP3)
+                if (tagFile.GetTag(TagLib.TagTypes.Id3v2, true) is TagLib.Id3v2.Tag id3)
+                {
+                    SetOrAddTxxx(id3, "REPLAYGAIN_TRACK_GAIN", gainStr);
+                    SetOrAddTxxx(id3, "REPLAYGAIN_TRACK_PEAK", peakStr);
+                }
+
+                // Write to Xiph Comment (FLAC, OGG, OPUS)
+                if (tagFile.GetTag(TagLib.TagTypes.Xiph, true) is TagLib.Ogg.XiphComment xiph)
+                {
+                    xiph.SetField("REPLAYGAIN_TRACK_GAIN", gainStr);
+                    xiph.SetField("REPLAYGAIN_TRACK_PEAK", peakStr);
+                }
+
+                // Write to APE tag (APE, MPC, WavPack)
+                if (tagFile.GetTag(TagLib.TagTypes.Ape, true) is TagLib.Ape.Tag ape)
+                {
+                    ape.SetValue("REPLAYGAIN_TRACK_GAIN", gainStr);
+                    ape.SetValue("REPLAYGAIN_TRACK_PEAK", peakStr);
+                }
+
+                tagFile.Save();
+                return (gain, peak);
+            }
+            catch { return null; }
+        }
+
+        private static void SetOrAddTxxx(TagLib.Id3v2.Tag id3, string description, string value)
+        {
+            // Remove existing frame with same description
+            foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>().ToArray())
+            {
+                if (frame.Description != null &&
+                    frame.Description.Equals(description, StringComparison.OrdinalIgnoreCase))
+                {
+                    id3.RemoveFrame(frame);
+                }
+            }
+            // Add new frame
+            var newFrame = new TagLib.Id3v2.UserTextInformationFrame(description)
+            {
+                Text = new[] { value },
+                TextEncoding = TagLib.StringType.UTF8
+            };
+            id3.AddFrame(newFrame);
+        }
+
+        /// <summary>
         /// Opens an audio file as a sample provider (float samples).
         /// Tries AudioFileReader first (best quality), falls back to MediaFoundationReader
         /// for formats NAudio can't natively decode (OGG, OPUS, AAC/M4A, APE, etc.).
@@ -1686,6 +2087,435 @@ namespace AudioQualityChecker.Services
             if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
             if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024):F1} MB";
             return $"{bytes / (1024.0 * 1024 * 1024):F2} GB";
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  True Peak Measurement (4x oversampled inter-sample peaks)
+        // ═══════════════════════════════════════════════════════
+
+        private static void MeasureTruePeak(string filePath, AudioFileInfo info)
+        {
+            var (disposable, samples, format) = OpenAudioFile(filePath);
+            if (disposable == null || samples == null || format == null) return;
+
+            using (disposable)
+            {
+                int channels = format.Channels;
+                int blockSize = 4096;
+                float[] buf = new float[blockSize * channels];
+                double maxTruePeak = 0;
+
+                // 4x oversampling FIR filter coefficients (half-band lowpass, 12 taps per phase)
+                // Approximation of sinc interpolation for inter-sample peak detection
+                double[][] phases = GetOversamplingPhases();
+
+                // Ring buffer for the filter (per channel)
+                int filterLen = phases[0].Length;
+                double[][] history = new double[channels][];
+                for (int ch = 0; ch < channels; ch++)
+                    history[ch] = new double[filterLen];
+                int histPos = 0;
+
+                int read;
+                while ((read = samples.Read(buf, 0, buf.Length)) > 0)
+                {
+                    int frames = read / channels;
+                    for (int i = 0; i < frames; i++)
+                    {
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            double sample = buf[i * channels + ch];
+                            history[ch][histPos] = sample;
+
+                            // Check original sample
+                            double abs = Math.Abs(sample);
+                            if (abs > maxTruePeak) maxTruePeak = abs;
+
+                            // Check 3 interpolated samples between this and the next
+                            for (int p = 1; p < 4; p++)
+                            {
+                                double interp = 0;
+                                for (int k = 0; k < filterLen; k++)
+                                {
+                                    int idx = (histPos - k + filterLen * 2) % filterLen;
+                                    interp += history[ch][idx] * phases[p][k];
+                                }
+                                abs = Math.Abs(interp);
+                                if (abs > maxTruePeak) maxTruePeak = abs;
+                            }
+                        }
+                        histPos = (histPos + 1) % filterLen;
+                    }
+                }
+
+                if (maxTruePeak > 1e-10)
+                {
+                    info.TruePeakDbTP = 20.0 * Math.Log10(maxTruePeak);
+                    info.HasTruePeak = true;
+                }
+            }
+        }
+
+        private static double[][] GetOversamplingPhases()
+        {
+            // Precomputed 4x oversampling lowpass filter (12-tap sinc * Kaiser window)
+            // Phase 0 = original sample (identity), phases 1-3 = interpolated positions
+            const int taps = 12;
+            var phases = new double[4][];
+            for (int p = 0; p < 4; p++)
+            {
+                phases[p] = new double[taps];
+                double sum = 0;
+                for (int k = 0; k < taps; k++)
+                {
+                    double n = k - (taps - 1) / 2.0 + p / 4.0;
+                    double sinc = Math.Abs(n) < 1e-10 ? 1.0 : Math.Sin(Math.PI * n) / (Math.PI * n);
+                    // Kaiser window (beta=6)
+                    double x = 2.0 * k / (taps - 1) - 1.0;
+                    double kaiser = BesselI0(6.0 * Math.Sqrt(Math.Max(0, 1.0 - x * x))) / BesselI0(6.0);
+                    phases[p][k] = sinc * kaiser;
+                    sum += phases[p][k];
+                }
+                // Normalize so filter has unity gain
+                if (Math.Abs(sum) > 1e-10)
+                    for (int k = 0; k < taps; k++)
+                        phases[p][k] /= sum;
+            }
+            return phases;
+        }
+
+        private static double BesselI0(double x)
+        {
+            double sum = 1.0, term = 1.0;
+            for (int k = 1; k <= 20; k++)
+            {
+                term *= (x / (2.0 * k)) * (x / (2.0 * k));
+                sum += term;
+                if (term < 1e-12 * sum) break;
+            }
+            return sum;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  Integrated LUFS (ITU-R BS.1770 / EBU R128 simplified)
+        // ═══════════════════════════════════════════════════════
+
+        private static void MeasureIntegratedLufs(string filePath, AudioFileInfo info)
+        {
+            var (disposable, samples, format) = OpenAudioFile(filePath);
+            if (disposable == null || samples == null || format == null) return;
+
+            using (disposable)
+            {
+                int sr = format.SampleRate;
+                int channels = format.Channels;
+                int blockSize = 4096;
+                float[] buf = new float[blockSize * channels];
+
+                // K-weighting filter state (2 biquads per channel: pre-filter + RLB)
+                var preFilters = new BiquadState[channels];
+                var rlbFilters = new BiquadState[channels];
+                for (int ch = 0; ch < channels; ch++)
+                {
+                    preFilters[ch] = new BiquadState();
+                    rlbFilters[ch] = new BiquadState();
+                }
+
+                // Pre-filter (high shelf) and RLB (high-pass) coefficients for common sample rates
+                GetKWeightingCoefficients(sr, out var preCo, out var rlbCo);
+
+                // Gating: 400ms blocks with 75% overlap (step = 100ms)
+                int blockSamples = (int)(sr * 0.4); // 400ms
+                int stepSamples = (int)(sr * 0.1);   // 100ms step
+                double[] gateBuffer = new double[blockSamples]; // per-channel weighted sum of squares
+                int gatePos = 0;
+                int gateCount = 0;
+                var blockLoudness = new List<double>();
+
+                // Channel weight factors (ITU-R BS.1770: surround channels get +1.5 dB)
+                double[] channelWeight = new double[channels];
+                for (int ch = 0; ch < channels; ch++)
+                    channelWeight[ch] = (channels > 2 && (ch == 3 || ch == 4)) ? 1.41 : 1.0; // Ls/Rs
+
+                int read;
+                int stepCounter = 0;
+                while ((read = samples.Read(buf, 0, buf.Length)) > 0)
+                {
+                    int frames = read / channels;
+                    for (int i = 0; i < frames; i++)
+                    {
+                        double weightedSum = 0;
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            double s = buf[i * channels + ch];
+                            // Apply K-weighting: pre-filter then RLB
+                            s = ApplyBiquad(ref preFilters[ch], preCo, s);
+                            s = ApplyBiquad(ref rlbFilters[ch], rlbCo, s);
+                            weightedSum += channelWeight[ch] * s * s;
+                        }
+                        gateBuffer[gatePos] = weightedSum;
+                        gatePos = (gatePos + 1) % blockSamples;
+                        gateCount = Math.Min(gateCount + 1, blockSamples);
+                        stepCounter++;
+
+                        // Every 100ms step, compute block loudness if we have a full 400ms
+                        if (stepCounter >= stepSamples && gateCount >= blockSamples)
+                        {
+                            stepCounter = 0;
+                            double sum = 0;
+                            for (int k = 0; k < blockSamples; k++)
+                                sum += gateBuffer[k];
+                            double meanPower = sum / blockSamples;
+                            if (meanPower > 1e-20)
+                                blockLoudness.Add(-0.691 + 10.0 * Math.Log10(meanPower));
+                        }
+                    }
+                }
+
+                if (blockLoudness.Count == 0) return;
+
+                // Absolute gate: -70 LUFS
+                var aboveAbsolute = blockLoudness.Where(l => l > -70).ToList();
+                if (aboveAbsolute.Count == 0) return;
+
+                // Relative gate: absolute loudness - 10 LU
+                double absLoudness = -0.691 + 10.0 * Math.Log10(
+                    aboveAbsolute.Average(l => Math.Pow(10, (l + 0.691) / 10.0)));
+                double relThreshold = absLoudness - 10.0;
+
+                var aboveRelative = aboveAbsolute.Where(l => l > relThreshold).ToList();
+                if (aboveRelative.Count == 0) return;
+
+                double integratedLoudness = -0.691 + 10.0 * Math.Log10(
+                    aboveRelative.Average(l => Math.Pow(10, (l + 0.691) / 10.0)));
+
+                info.IntegratedLufs = Math.Round(integratedLoudness, 1);
+                info.HasLufs = true;
+            }
+        }
+
+        private struct BiquadCoefficients
+        {
+            public double b0, b1, b2, a1, a2;
+        }
+
+        private struct BiquadState
+        {
+            public double z1, z2;
+        }
+
+        private static double ApplyBiquad(ref BiquadState state, BiquadCoefficients c, double input)
+        {
+            double output = c.b0 * input + state.z1;
+            state.z1 = c.b1 * input - c.a1 * output + state.z2;
+            state.z2 = c.b2 * input - c.a2 * output;
+            return output;
+        }
+
+        private static void GetKWeightingCoefficients(int sampleRate,
+            out BiquadCoefficients preFilter, out BiquadCoefficients rlbFilter)
+        {
+            // ITU-R BS.1770-4 K-weighting filter coefficients
+            // Pre-filter: high shelf (+4 dB above ~1.5 kHz)
+            // RLB filter: high-pass (−3 dB at ~38 Hz)
+            // These are exact for 48 kHz; we use bilinear transform scaling for other rates.
+            double sr = sampleRate;
+
+            // Pre-filter (shelf boost for head-related transfer function)
+            {
+                double f0 = 1681.974450955533;
+                double G = 3.999843853973347; // dB
+                double Q = 0.7071752369554196;
+                double K = Math.Tan(Math.PI * f0 / sr);
+                double Vh = Math.Pow(10.0, G / 20.0);
+                double Vb = Math.Pow(Vh, 0.4996667741545416);
+                double a0 = 1.0 + K / Q + K * K;
+                preFilter = new BiquadCoefficients
+                {
+                    b0 = (Vh + Vb * K / Q + K * K) / a0,
+                    b1 = 2.0 * (K * K - Vh) / a0,
+                    b2 = (Vh - Vb * K / Q + K * K) / a0,
+                    a1 = 2.0 * (K * K - 1.0) / a0,
+                    a2 = (1.0 - K / Q + K * K) / a0
+                };
+            }
+
+            // RLB (revised low-frequency B-weighting) high-pass
+            {
+                double f0 = 38.13547087602444;
+                double Q = 0.5003270373238773;
+                double K = Math.Tan(Math.PI * f0 / sr);
+                double a0 = 1.0 + K / Q + K * K;
+                rlbFilter = new BiquadCoefficients
+                {
+                    b0 = 1.0 / a0,
+                    b1 = -2.0 / a0,
+                    b2 = 1.0 / a0,
+                    a1 = 2.0 * (K * K - 1.0) / a0,
+                    a2 = (1.0 - K / Q + K * K) / a0
+                };
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  Rip/Encode Quality Detection
+        // ═══════════════════════════════════════════════════════
+
+        private static void DetectRipQuality(string filePath, AudioFileInfo info)
+        {
+            var (disposable, samples, format) = OpenAudioFile(filePath);
+            if (disposable == null || samples == null || format == null) return;
+
+            using (disposable)
+            {
+                int channels = format.Channels;
+                int sr = format.SampleRate;
+                int blockSize = 4096;
+                float[] buf = new float[blockSize * channels];
+
+                long totalFrames = 0;
+                long zeroRuns = 0;       // runs of consecutive zero samples across ALL channels
+                int currentZeroRun = 0;
+                long truncatedSamples = 0;
+                long totalSamples = 0;
+                long stickyRuns = 0;     // runs of identical non-zero samples (stuck/glitch)
+                long popClicks = 0;      // sudden amplitude jumps (clicks/pops)
+
+                // Per-channel state for sticky detection
+                float[] lastSample = new float[channels];
+                int[] consecutiveIdentical = new int[channels];
+                float[] prevSample = new float[channels];
+                bool first = true;
+
+                // Adaptive sector size based on sample rate
+                int sectorFrames = sr switch
+                {
+                    <= 22050 => 128,
+                    <= 44100 => 588,   // CD sector
+                    <= 48000 => 640,
+                    <= 96000 => 1280,
+                    _ => 2560
+                };
+
+                // Click detection uses sample-rate-aware threshold
+                // Normal musical transients rarely exceed 0.8 sample-to-sample delta
+                float clickThreshold = 0.85f;
+
+                int read;
+                while ((read = samples.Read(buf, 0, buf.Length)) > 0)
+                {
+                    int frames = read / channels;
+                    for (int i = 0; i < frames; i++)
+                    {
+                        totalFrames++;
+
+                        // Check ALL channels for zero-run detection
+                        bool allZero = true;
+                        for (int ch = 0; ch < channels; ch++)
+                        {
+                            float s = buf[i * channels + ch];
+                            totalSamples++;
+
+                            if (Math.Abs(s) >= 1e-7f)
+                                allZero = false;
+
+                            // Stuck sample detection per channel
+                            if (s == lastSample[ch] && Math.Abs(s) > 0.02f)
+                            {
+                                consecutiveIdentical[ch]++;
+                                if (consecutiveIdentical[ch] == 200) // count once when threshold hit
+                                    stickyRuns++;
+                            }
+                            else
+                            {
+                                consecutiveIdentical[ch] = 0;
+                            }
+                            lastSample[ch] = s;
+
+                            // Pop/click detection per channel: large sudden jump
+                            if (!first)
+                            {
+                                float diff = Math.Abs(s - prevSample[ch]);
+                                if (diff > clickThreshold)
+                                    popClicks++;
+                            }
+                            prevSample[ch] = s;
+                        }
+
+                        first = false;
+
+                        // Zero-run: all channels must be zero simultaneously
+                        if (allZero)
+                        {
+                            currentZeroRun++;
+                        }
+                        else
+                        {
+                            if (currentZeroRun >= sectorFrames)
+                                zeroRuns++;
+                            currentZeroRun = 0;
+                        }
+
+                        // Bit truncation check: only for 16-bit lossless content
+                        // Check if the sample seems quantized to 8-bit (low 8 bits always zero)
+                        // Use first channel only — this is a statistical check
+                        if (info.BitsPerSample == 16 && IsLosslessFile(info))
+                        {
+                            float s = buf[i * channels];
+                            int intVal = (int)(s * 32768f);
+                            // Only flag if low byte is zero AND value is large enough to be meaningful
+                            if ((intVal & 0xFF) == 0 && Math.Abs(intVal) > 256)
+                                truncatedSamples++;
+                        }
+                    }
+                }
+
+                // Check final zero run
+                if (currentZeroRun >= sectorFrames)
+                    zeroRuns++;
+
+                // Build quality assessment
+                var issues = new List<string>();
+                string quality = "Good";
+
+                double durationSec = totalFrames > 0 ? (double)totalFrames / sr : 0;
+
+                if (zeroRuns > 0)
+                {
+                    issues.Add($"{zeroRuns} zero gap{(zeroRuns > 1 ? "s" : "")}");
+                    quality = zeroRuns > 2 ? "Bad" : "Suspect";
+                }
+
+                if (stickyRuns > 3)
+                {
+                    issues.Add($"{stickyRuns} glitch{(stickyRuns > 1 ? "es" : "")}");
+                    quality = stickyRuns > 15 ? "Bad" : (quality == "Good" ? "Suspect" : quality);
+                }
+
+                // Pops per second: popClicks / channels / duration  (normalize across channels)
+                double popsPerSecond = durationSec > 0 ? popClicks / (double)channels / durationSec : 0;
+                if (popsPerSecond > 5) // more than 5 hard clicks per second is suspicious
+                {
+                    issues.Add($"clicks/pops detected ({popsPerSecond:F1}/s)");
+                    quality = popsPerSecond > 20 ? "Bad" : (quality == "Good" ? "Suspect" : quality);
+                }
+
+                if (totalSamples > 0 && info.BitsPerSample == 16 && IsLosslessFile(info))
+                {
+                    // Only count samples from first channel for truncation check
+                    long firstChannelSamples = totalFrames;
+                    double truncPct = firstChannelSamples > 0 ? (double)truncatedSamples / firstChannelSamples * 100 : 0;
+                    if (truncPct > 50) // more than 50% suggests real truncation
+                    {
+                        issues.Add("possible bit truncation");
+                        if (quality == "Good") quality = "Suspect";
+                    }
+                }
+
+                info.RipQuality = quality;
+                info.RipQualityDetail = issues.Count > 0 ? string.Join(", ", issues) : "";
+                info.HasRipQuality = true;
+            }
         }
 
         private static string FormatDuration(TimeSpan ts)

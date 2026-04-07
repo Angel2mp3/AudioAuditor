@@ -18,6 +18,7 @@ namespace AudioQualityChecker.Services
         private int _readOffset;
         private long _position;
         private readonly long _totalBytes;
+        private readonly object _lock = new();
 
         public OpusFileReader(string filePath)
         {
@@ -62,24 +63,34 @@ namespace AudioQualityChecker.Services
 
         public override long Position
         {
-            get => _position;
+            get { lock (_lock) return _position; }
             set
             {
-                _position = Math.Clamp(value, 0, _totalBytes);
-                _readOffset = (int)_position;
+                lock (_lock)
+                {
+                    _position = Math.Clamp(value, 0, _totalBytes);
+                    // Snap to block alignment (8 bytes for stereo float32)
+                    // to prevent misaligned reads producing garbage floats
+                    int blockAlign = WaveFormat.BlockAlign;
+                    _position = (_position / blockAlign) * blockAlign;
+                    _readOffset = (int)_position;
+                }
             }
         }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            int available = _pcmData.Length - _readOffset;
-            int toCopy = Math.Min(count, available);
-            if (toCopy <= 0) return 0;
+            lock (_lock)
+            {
+                int available = _pcmData.Length - _readOffset;
+                int toCopy = Math.Min(count, available);
+                if (toCopy <= 0) return 0;
 
-            Buffer.BlockCopy(_pcmData, _readOffset, buffer, offset, toCopy);
-            _readOffset += toCopy;
-            _position += toCopy;
-            return toCopy;
+                Buffer.BlockCopy(_pcmData, _readOffset, buffer, offset, toCopy);
+                _readOffset += toCopy;
+                _position += toCopy;
+                return toCopy;
+            }
         }
 
         protected override void Dispose(bool disposing)
@@ -98,6 +109,7 @@ namespace AudioQualityChecker.Services
         private readonly WaveFormat _waveFormat;
         private readonly byte[] _pcmData;
         private long _position;
+        private readonly object _lock = new();
 
         public DsdToPcmReader(string filePath)
         {
@@ -205,19 +217,30 @@ namespace AudioQualityChecker.Services
 
         public override long Position
         {
-            get => _position;
-            set => _position = Math.Clamp(value, 0, _pcmData.Length);
+            get { lock (_lock) return _position; }
+            set
+            {
+                lock (_lock)
+                {
+                    _position = Math.Clamp(value, 0, _pcmData.Length);
+                    int blockAlign = WaveFormat.BlockAlign;
+                    _position = (_position / blockAlign) * blockAlign;
+                }
+            }
         }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            int available = _pcmData.Length - (int)_position;
-            int toCopy = Math.Min(count, available);
-            if (toCopy <= 0) return 0;
+            lock (_lock)
+            {
+                int available = _pcmData.Length - (int)_position;
+                int toCopy = Math.Min(count, available);
+                if (toCopy <= 0) return 0;
 
-            Buffer.BlockCopy(_pcmData, (int)_position, buffer, offset, toCopy);
-            _position += toCopy;
-            return toCopy;
+                Buffer.BlockCopy(_pcmData, (int)_position, buffer, offset, toCopy);
+                _position += toCopy;
+                return toCopy;
+            }
         }
     }
 }

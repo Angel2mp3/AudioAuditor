@@ -12,10 +12,10 @@ namespace AudioQualityChecker.Services
         private readonly ISampleProvider _source;
         private volatile bool _enabled;
 
-        // Crossfeed parameters — balanced for natural speaker-like imaging
-        private const float CrossfeedAmount = 0.30f;  // Moderate bleed to opposite channel
-        private const float WideningAmount = 0.35f;    // Noticeable stereo widening
-        private const float OutputGain = 0.82f;        // Compensate for summed signals
+        // Crossfeed parameters — subtle and natural for speaker-like imaging
+        private const float CrossfeedAmount = 0.15f;   // Gentle bleed to opposite channel
+        private const float WideningAmount = 0.25f;     // Moderate stereo widening
+        private const float OutputGain = 0.95f;         // Minimal level reduction
 
         // Simple delay line for HRTF-like interaural time difference (ITD)
         private readonly float[] _delayBufferL;
@@ -32,8 +32,8 @@ namespace AudioQualityChecker.Services
         private readonly float[] _reflectionBufferL;
         private readonly float[] _reflectionBufferR;
         private int _reflectionWritePos;
-        private readonly int _reflectionDelaySamples; // ~15ms delay
-        private const float ReflectionGain = 0.10f;   // Subtle room cue
+        private readonly int _reflectionDelaySamples; // ~10ms delay
+        private const float ReflectionGain = 0.04f;    // Very subtle room cue
 
         public SpatialAudioProcessor(ISampleProvider source)
         {
@@ -41,19 +41,19 @@ namespace AudioQualityChecker.Services
 
             int sampleRate = source.WaveFormat.SampleRate;
 
-            // ITD delay: ~0.5ms (interaural time difference — more realistic)
-            _delaySamples = Math.Max(1, (int)(sampleRate * 0.0005));
+            // ITD delay: ~0.3ms (interaural time difference)
+            _delaySamples = Math.Max(1, (int)(sampleRate * 0.0003));
             _delayBufferL = new float[_delaySamples + 1];
             _delayBufferR = new float[_delaySamples + 1];
 
-            // Low-pass for crossfeed: approximate head shadow ~3.5kHz
-            double cutoffHz = 3500.0;
+            // Low-pass for crossfeed: head shadow ~7kHz (preserves presence/air)
+            double cutoffHz = 7000.0;
             double rc = 1.0 / (2.0 * Math.PI * cutoffHz);
             double dt = 1.0 / sampleRate;
             _lpCoeff = (float)(dt / (rc + dt));
 
-            // Early reflection delay: ~15ms
-            _reflectionDelaySamples = Math.Max(1, (int)(sampleRate * 0.015));
+            // Early reflection delay: ~10ms
+            _reflectionDelaySamples = Math.Max(1, (int)(sampleRate * 0.010));
             _reflectionBufferL = new float[_reflectionDelaySamples + 1];
             _reflectionBufferR = new float[_reflectionDelaySamples + 1];
         }
@@ -64,6 +64,22 @@ namespace AudioQualityChecker.Services
         {
             get => _enabled;
             set => _enabled = value;
+        }
+
+        /// <summary>
+        /// Clears all delay buffers and low-pass state. Call on seek to prevent
+        /// stale audio data from mixing with the new position's samples.
+        /// </summary>
+        public void ResetBuffers()
+        {
+            Array.Clear(_delayBufferL);
+            Array.Clear(_delayBufferR);
+            Array.Clear(_reflectionBufferL);
+            Array.Clear(_reflectionBufferR);
+            _delayWritePos = 0;
+            _reflectionWritePos = 0;
+            _lpStateL = 0f;
+            _lpStateR = 0f;
         }
 
         public int Read(float[] buffer, int offset, int count)

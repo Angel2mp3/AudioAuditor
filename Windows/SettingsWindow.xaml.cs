@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -17,6 +18,8 @@ namespace AudioQualityChecker
         private string _realApiSecret = "";
         private bool _discordIdVisible = false;
         private string _realDiscordAppId = "";
+        private bool _acoustIdKeyVisible = false;
+        private string _realAcoustIdKey = "";
 
         /// <summary>When true, MainWindow should show the SH Labs privacy overlay after Settings closes.</summary>
         public bool RequestPrivacyOnClose { get; private set; }
@@ -37,6 +40,8 @@ namespace AudioQualityChecker
             foreach (var pt in ThemeManager.AvailablePlaybarThemes)
                 PlaybarCombo.Items.Add(pt);
             PlaybarCombo.SelectedItem = ThemeManager.CurrentPlaybarTheme;
+
+
 
             // Populate visualizer theme combo
             foreach (var vt in ThemeManager.AvailableVisualizerThemes)
@@ -108,6 +113,11 @@ namespace AudioQualityChecker
 
             // Hide API keys by default (use dot masking)
             ApplyApiKeyVisibility();
+
+            // AcoustID
+            _realAcoustIdKey = ThemeManager.AcoustIdApiKey;
+            AcoustIdKeyBox.Text = ThemeManager.AcoustIdApiKey;
+            ApplyAcoustIdKeyVisibility();
 
             // Export format
             var formats = new[] { "CSV (.csv)", "Text (.txt)", "PDF (.pdf)", "Excel (.xlsx)", "Word (.docx)" };
@@ -192,6 +202,40 @@ namespace AudioQualityChecker
             // Auto-update check
             ChkCheckForUpdates.IsChecked = ThemeManager.CheckForUpdates;
 
+            // Column visibility checkboxes — checked = visible (not hidden)
+            var hidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(ThemeManager.HiddenColumns))
+                foreach (var h in ThemeManager.HiddenColumns.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                    hidden.Add(h.Trim());
+
+            ColStatusCb.IsChecked = !hidden.Contains("Status");
+            ColTitleCb.IsChecked = !hidden.Contains("Title");
+            ColArtistCb.IsChecked = !hidden.Contains("Artist");
+            ColFilenameCb.IsChecked = !hidden.Contains("Filename");
+            ColPathCb.IsChecked = !hidden.Contains("Path");
+            ColSampleRateCb.IsChecked = !hidden.Contains("Sample Rate");
+            ColBitsCb.IsChecked = !hidden.Contains("Bits");
+            ColChCb.IsChecked = !hidden.Contains("Ch");
+            ColDurationCb.IsChecked = !hidden.Contains("Duration");
+            ColSizeCb.IsChecked = !hidden.Contains("Size");
+            ColBitrateCb.IsChecked = !hidden.Contains("Bitrate");
+            ColActualBRCb.IsChecked = !hidden.Contains("Actual BR");
+            ColFormatCb.IsChecked = !hidden.Contains("Format");
+            ColMaxFreqCb.IsChecked = !hidden.Contains("Max Freq");
+            ColClippingCb.IsChecked = !hidden.Contains("Clipping");
+            ColBpmCb.IsChecked = !hidden.Contains("BPM");
+            ColReplayGainCb.IsChecked = !hidden.Contains("Replay Gain");
+            ColDRCb.IsChecked = !hidden.Contains("DR");
+            ColMqaCb.IsChecked = !hidden.Contains("MQA");
+            ColAiCb.IsChecked = !hidden.Contains("AI");
+            ColStereoCb.IsChecked = !hidden.Contains("Fake Stereo");
+            ColSilenceCb.IsChecked = !hidden.Contains("Silence");
+            ColDateModifiedCb.IsChecked = !hidden.Contains("Date Modified");
+            ColDateCreatedCb.IsChecked = !hidden.Contains("Date Created");
+            ColTruePeakCb.IsChecked = !hidden.Contains("True Peak");
+            ColLufsCb.IsChecked = !hidden.Contains("LUFS");
+            ColRipQualityCb.IsChecked = !hidden.Contains("Rip Quality");
+
             _initializing = false;
         }
 
@@ -230,6 +274,8 @@ namespace AudioQualityChecker
                 ThemeManager.SavePlayOptions();
             }
         }
+
+
 
         private void VisualizerThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -369,6 +415,50 @@ namespace AudioQualityChecker
             }
         }
 
+        private void ColumnVisibility_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+
+            // Build comma-separated list of hidden column headers
+            var hidden = new List<string>();
+            void Check(CheckBox cb, string header) { if (cb.IsChecked != true) hidden.Add(header); }
+
+            Check(ColStatusCb, "Status");
+            Check(ColTitleCb, "Title");
+            Check(ColArtistCb, "Artist");
+            Check(ColFilenameCb, "Filename");
+            Check(ColPathCb, "Path");
+            Check(ColSampleRateCb, "Sample Rate");
+            Check(ColBitsCb, "Bits");
+            Check(ColChCb, "Ch");
+            Check(ColDurationCb, "Duration");
+            Check(ColSizeCb, "Size");
+            Check(ColBitrateCb, "Bitrate");
+            Check(ColActualBRCb, "Actual BR");
+            Check(ColFormatCb, "Format");
+            Check(ColMaxFreqCb, "Max Freq");
+            Check(ColClippingCb, "Clipping");
+            Check(ColBpmCb, "BPM");
+            Check(ColReplayGainCb, "Replay Gain");
+            Check(ColDRCb, "DR");
+            Check(ColMqaCb, "MQA");
+            Check(ColAiCb, "AI");
+            Check(ColStereoCb, "Fake Stereo");
+            Check(ColSilenceCb, "Silence");
+            Check(ColDateModifiedCb, "Date Modified");
+            Check(ColDateCreatedCb, "Date Created");
+            Check(ColTruePeakCb, "True Peak");
+            Check(ColLufsCb, "LUFS");
+            Check(ColRipQualityCb, "Rip Quality");
+
+            ThemeManager.HiddenColumns = string.Join(",", hidden);
+            ThemeManager.SavePlayOptions();
+
+            // Apply to MainWindow immediately if it's open
+            if (Owner is MainWindow mw)
+                mw.ApplyColumnVisibility();
+        }
+
         private void Close_Click(object sender, RoutedEventArgs e)
         {
             // Auto-hide API keys when closing
@@ -411,13 +501,6 @@ namespace AudioQualityChecker
         {
             // Close Settings and show the privacy notice on MainWindow
             RequestPrivacyOnClose = true;
-            Close();
-        }
-
-        private void ShowAiSetup_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
-        {
-            // Close Settings and show the AI config overlay on MainWindow
-            RequestAiConfigOnClose = true;
             Close();
         }
 
@@ -610,11 +693,36 @@ namespace AudioQualityChecker
             }
         }
 
+        private void AcoustIdKey_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (_acoustIdKeyVisible)
+            {
+                _realAcoustIdKey = AcoustIdKeyBox.Text.Trim();
+                ThemeManager.AcoustIdApiKey = _realAcoustIdKey;
+            }
+            else
+            {
+                // Don't save dots
+                return;
+            }
+            ThemeManager.SavePlayOptions();
+        }
+
         private void LastFmCreateApiKey_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 Process.Start(new ProcessStartInfo("https://www.last.fm/api/account/create") { UseShellExecute = true });
+            }
+            catch { }
+        }
+
+        private void AcoustIdCreateApiKey_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("https://acoustid.org/new-application") { UseShellExecute = true });
             }
             catch { }
         }
@@ -758,6 +866,43 @@ namespace AudioQualityChecker
                 LastFmApiKeyBox.IsReadOnly = true;
                 LastFmApiSecretBox.IsReadOnly = true;
                 EyeSlash.Visibility = Visibility.Visible;
+                _initializing = false;
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        //  AcoustID API Key Visibility Toggle
+        // ═══════════════════════════════════════════
+
+        private void ToggleAcoustIdVisibility_Click(object sender, RoutedEventArgs e)
+        {
+            if (_acoustIdKeyVisible)
+            {
+                _realAcoustIdKey = AcoustIdKeyBox.Text.Trim();
+                ThemeManager.AcoustIdApiKey = _realAcoustIdKey;
+                ThemeManager.SavePlayOptions();
+            }
+            _acoustIdKeyVisible = !_acoustIdKeyVisible;
+            ApplyAcoustIdKeyVisibility();
+        }
+
+        private void ApplyAcoustIdKeyVisibility()
+        {
+            if (_acoustIdKeyVisible)
+            {
+                _initializing = true;
+                AcoustIdKeyBox.Text = _realAcoustIdKey;
+                AcoustIdKeyBox.IsReadOnly = false;
+                AcoustIdEyeSlash.Visibility = Visibility.Collapsed;
+                _initializing = false;
+            }
+            else
+            {
+                _initializing = true;
+                string dots = _realAcoustIdKey.Length > 0 ? new string('●', Math.Max(_realAcoustIdKey.Length, 32)) : "";
+                AcoustIdKeyBox.Text = dots;
+                AcoustIdKeyBox.IsReadOnly = true;
+                AcoustIdEyeSlash.Visibility = Visibility.Visible;
                 _initializing = false;
             }
         }

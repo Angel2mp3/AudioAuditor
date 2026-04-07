@@ -723,7 +723,7 @@
                       x:Name="FileGrid"
                       AutoGenerateColumns="False"
                       IsReadOnly="True"
-                      SelectionMode="Single"
+                      SelectionMode="Extended"
                       SelectionChanged="FileGrid_SelectionChanged"
                       MouseDoubleClick="FileGrid_MouseDoubleClick"
                       PreviewMouseWheel="FileGrid_PreviewMouseWheel"
@@ -745,11 +745,11 @@
                       SelectionUnit="FullRow"
                       VirtualizingPanel.IsVirtualizing="True"
                       VirtualizingPanel.VirtualizationMode="Recycling"
-                      VirtualizingPanel.ScrollUnit="Pixel"
+                      VirtualizingPanel.ScrollUnit="Item"
                       VirtualizingPanel.CacheLength="2,2"
                       VirtualizingPanel.CacheLengthUnit="Page"
                       EnableRowVirtualization="True"
-                      EnableColumnVirtualization="True">
+                      EnableColumnVirtualization="False">
 
                 <!-- Folder group headers -->
                 <DataGrid.GroupStyle>
@@ -851,6 +851,12 @@
                         <MenuItem Header="Add to Queue" Click="AddToQueue_Click"/>
                         <Separator/>
                         <MenuItem Header="Edit Metadata..." Click="EditMetadata_Click"/>
+                        <MenuItem Header="Strip Metadata..." Click="StripMetadata_Click"/>
+                        <MenuItem Header="Batch Rename..." Click="BatchRename_Click"/>
+                        <MenuItem Header="Compare Waveforms" Click="CompareWaveforms_Click"/>
+                        <MenuItem Header="Find Duplicates..." Click="FindDuplicates_Click"/>
+                        <MenuItem Header="Write Replay Gain" Click="WriteReplayGain_Click"/>
+                        <MenuItem Header="Identify with AcoustID" Click="AcoustIdIdentify_Click"/>
                         <MenuItem Header="Save Spectrogram..." Click="SaveSpectrogram_Click"/>
                         <MenuItem Header="View Album Cover" Click="ViewAlbumCover_Click"/>
                         <Separator/>
@@ -946,6 +952,15 @@
 
                     <DataGridTextColumn Header="BPM" Binding="{Binding BpmDisplay}" Width="65"/>
                     <DataGridTextColumn Header="Replay Gain" Binding="{Binding ReplayGainDisplay}" Width="105"/>
+                    <DataGridTextColumn Header="DR" Binding="{Binding DynamicRangeDisplay}" Width="65" SortMemberPath="DynamicRange">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
 
                     <!-- MQA Detection -->
                     <DataGridTemplateColumn Header="MQA" Width="120" SortMemberPath="IsMqa">
@@ -961,17 +976,94 @@
                     </DataGridTemplateColumn>
 
                     <!-- AI Detection -->
-                    <DataGridTemplateColumn Header="AI" Width="120" SortMemberPath="IsAiGenerated">
+                    <DataGridTemplateColumn Header="AI" Width="120" SortMemberPath="IsAnyAiDetected">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding AiDisplay}"
-                                           Foreground="{Binding IsAiGenerated, Converter={StaticResource AiToColor}}"
+                                           Foreground="{Binding IsAnyAiDetected, Converter={StaticResource AiToColor}}"
                                            FontWeight="SemiBold" FontSize="11" FontFamily="Segoe UI"
                                            HorizontalAlignment="Center"
-                                           ToolTip="{Binding AiSource}"/>
+                                           ToolTip="{Binding AiDisplay}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
+
+                    <!-- Fake Stereo Detection -->
+                    <DataGridTextColumn Header="Fake Stereo" Width="120" Binding="{Binding FakeStereoDisplay}" SortMemberPath="IsFakeStereo">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
+                    <!-- Silence -->
+                    <DataGridTextColumn Header="Silence" Width="150" Binding="{Binding SilenceDisplay}" SortMemberPath="HasExcessiveSilence">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
+                    <!-- Date Modified -->
+                    <DataGridTextColumn Header="Date Modified" Width="130" Binding="{Binding DateModifiedDisplay}" SortMemberPath="DateModified">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
+                    <!-- Date Created -->
+                    <DataGridTextColumn Header="Date Created" Width="130" Binding="{Binding DateCreatedDisplay}" SortMemberPath="DateCreated">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
+                    <!-- True Peak -->
+                    <DataGridTextColumn Header="True Peak" Width="100" Binding="{Binding TruePeakDisplay}" SortMemberPath="TruePeakDbTP">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
+                    <!-- LUFS -->
+                    <DataGridTextColumn Header="LUFS" Width="100" Binding="{Binding LufsDisplay}" SortMemberPath="IntegratedLufs">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+
+                    <!-- Rip Quality -->
+                    <DataGridTextColumn Header="Rip Quality (Experimental)" Width="200" Binding="{Binding RipQualityDisplay}" SortMemberPath="RipQuality" Visibility="Collapsed">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="HorizontalAlignment" Value="Center"/>
+                                <Setter Property="FontSize" Value="11"/>
+                                <Setter Property="FontFamily" Value="Segoe UI"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
                 </DataGrid.Columns>
             </DataGrid>
 
@@ -1437,68 +1529,212 @@
         </Border>
     </Grid>
 
-    <!-- ═══ AI Detection Config Overlay (first-run / new-feature popup) ═══ -->
-    <Grid x:Name="AiConfigOverlay" Visibility="Collapsed">
-        <Border Background="#AA000000" MouseLeftButtonDown="AiConfigBackdrop_Click"/>
+    <!-- ═══ Feature Configuration Overlay (first-run / version update) ═══ -->
+    <Grid x:Name="FeatureConfigOverlay" Visibility="Collapsed">
+        <Border Background="#AA000000" MouseLeftButtonDown="FeatureConfigBackdrop_Click"/>
         <Border HorizontalAlignment="Center" VerticalAlignment="Center"
                 Background="{DynamicResource PanelBg}"
                 BorderBrush="{DynamicResource AccentColor}"
                 BorderThickness="1" CornerRadius="10"
-                Padding="32,28" MaxWidth="520" MinWidth="400">
+                Padding="32,28,32,20" MaxWidth="560" MinWidth="420"
+                MaxHeight="700">
             <Border.Effect>
                 <DropShadowEffect ShadowDepth="0" BlurRadius="30" Opacity="0.5" Color="Black"/>
             </Border.Effect>
-            <StackPanel>
-                <Image Source="/Resources/icon.png" Width="32" Height="32" HorizontalAlignment="Center" Margin="0,0,0,12" RenderOptions.BitmapScalingMode="HighQuality"/>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-                <TextBlock Text="AI Detection Setup" FontSize="18" FontWeight="Bold"
+                <Image Grid.Row="0" Source="/Resources/icon.png" Width="32" Height="32" HorizontalAlignment="Center" Margin="0,0,0,12" RenderOptions.BitmapScalingMode="HighQuality"/>
+
+                <TextBlock Grid.Row="1" Text="Welcome to AudioAuditor" FontSize="18" FontWeight="Bold"
                            FontFamily="Segoe UI" HorizontalAlignment="Center"
-                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,12"/>
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,6"/>
 
-                <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
+                <TextBlock Grid.Row="2" x:Name="FeatureConfigSubtitle" TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
-                           LineHeight="20" Margin="0,0,0,18">
-                    AudioAuditor now has three AI detection options. You can enable one or more. The SH Labs API provides the most accurate results but is limited to 15 scans per day and 100 per month — when the limit is reached, it will automatically fall back to your other selected options. You can change these anytime in Settings.
+                           LineHeight="20" Margin="0,0,0,16">
+                    Configure which analysis features are enabled. You can change these anytime in Settings.
                 </TextBlock>
 
-                <!-- Default (watermark) detector -->
-                <CheckBox x:Name="AiConfigChkDefault" IsChecked="True" Margin="0,6" Cursor="Hand">
-                    <StackPanel Orientation="Vertical" Margin="4,0,0,0">
-                        <TextBlock Text="Default AI Detection" FontSize="13" FontWeight="SemiBold"
-                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
-                        <TextBlock Text="Scans metadata, watermarks, and known AI markers. Unlimited, fast, no network needed."
-                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
-                                   TextWrapping="Wrap" Margin="0,2,0,0"/>
-                    </StackPanel>
-                </CheckBox>
+                <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" Margin="0,0,0,16">
+                    <ScrollViewer.Resources>
+                        <!-- Theme-aware CheckBox style -->
+                        <Style TargetType="CheckBox">
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="CheckBox">
+                                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                                            <Border x:Name="CheckBorder" Width="18" Height="18"
+                                                    CornerRadius="3" BorderThickness="1.5"
+                                                    BorderBrush="{DynamicResource AccentColor}"
+                                                    Background="Transparent"
+                                                    VerticalAlignment="Top" Margin="0,2,0,0">
+                                                <TextBlock x:Name="CheckMark" Text="✓" FontSize="12" FontWeight="Bold"
+                                                           Foreground="White" HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center" Margin="0,-1,0,0"
+                                                           Visibility="Collapsed"/>
+                                            </Border>
+                                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Top"/>
+                                        </StackPanel>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="CheckBorder" Property="Background" Value="{DynamicResource AccentColor}"/>
+                                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="CheckBorder" Property="Opacity" Value="0.85"/>
+                                            </Trigger>
+                                            <Trigger Property="IsEnabled" Value="False">
+                                                <Setter TargetName="CheckBorder" Property="Opacity" Value="0.5"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ScrollViewer.Resources>
+                    <StackPanel>
+                        <!-- Silence Detection -->
+                        <CheckBox x:Name="FcChkSilence" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Silence Detection" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Detects leading, trailing, and mid-track silence gaps."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
 
-                <!-- Experimental spectral detector -->
-                <CheckBox x:Name="AiConfigChkExperimental" IsChecked="False" Margin="0,6" Cursor="Hand">
-                    <StackPanel Orientation="Vertical" Margin="4,0,0,0">
-                        <TextBlock Text="Experimental Spectral Detection" FontSize="13" FontWeight="SemiBold"
-                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
-                        <TextBlock Text="Analyzes spectral patterns for AI artifacts. Unlimited, local-only, but may produce false positives."
-                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
-                                   TextWrapping="Wrap" Margin="0,2,0,0"/>
-                    </StackPanel>
-                </CheckBox>
+                        <!-- Fake Stereo Detection -->
+                        <CheckBox x:Name="FcChkFakeStereo" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Fake Stereo Detection" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Detects mono-duplicated or artificially widened stereo files."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
 
-                <!-- SH Labs API detector -->
-                <CheckBox x:Name="AiConfigChkSHLabs" IsChecked="False" Margin="0,6" Cursor="Hand">
-                    <StackPanel Orientation="Vertical" Margin="4,0,0,0">
-                        <TextBlock Text="SH Labs AI Audio Detection (API)" FontSize="13" FontWeight="SemiBold"
-                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
-                        <TextBlock Text="AI audio detection via SH Labs. Can sometimes be more accurate than the other options but limited to 15 scans/day and 100/month. When the limit is reached, your other selected options will be used instead."
-                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
-                                   TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        <!-- Dynamic Range -->
+                        <CheckBox x:Name="FcChkDR" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Dynamic Range (DR Score)" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Measures dynamic range to detect over-compressed or loudness-war masters."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- True Peak -->
+                        <CheckBox x:Name="FcChkTruePeak" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="True Peak (dBTP)" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Measures inter-sample peaks that can cause distortion on playback."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- Integrated LUFS -->
+                        <CheckBox x:Name="FcChkLufs" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Integrated LUFS Loudness" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="EBU R128 loudness measurement — the industry standard for loudness normalization."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- Rip Quality -->
+                        <CheckBox x:Name="FcChkRipQuality" IsChecked="False" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Rip/Encode Quality Check (Experimental)" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Detects bad rips: zero gaps, clicks/pops, glitches, bit truncation."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- Clipping Detection -->
+                        <CheckBox x:Name="FcChkClipping" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Clipping Detection" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Detects samples at or near maximum level (clipping and scaled clipping)."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- MQA Detection -->
+                        <CheckBox x:Name="FcChkMqa" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="MQA Detection" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Identifies MQA-encoded audio and original sample rates."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <Border Height="1" Background="{DynamicResource BorderColor}" Margin="0,10"/>
+
+                        <!-- AI Detection: Default -->
+                        <CheckBox x:Name="FcChkDefaultAi" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Default AI Detection" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Scans watermarks and metadata markers for AI-generated audio."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- AI Detection: Experimental Spectral -->
+                        <CheckBox x:Name="FcChkExperimentalAi" IsChecked="False" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="Experimental Spectral AI Detection" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Analyzes spectral patterns for AI artifacts. May produce false positives."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- AI Detection: SH Labs -->
+                        <CheckBox x:Name="FcChkSHLabs" IsChecked="False" Margin="0,5" Cursor="Hand"
+                                  Checked="FcChkSHLabs_Checked">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="⚠️ " FontSize="12.5" VerticalAlignment="Center"/>
+                                    <TextBlock Text="SH Labs AI Detection (API)" FontSize="12.5" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                </StackPanel>
+                                <TextBlock Text="Cloud-based AI detection — requires network. Limited to 15 scans/day, 100/month."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
                     </StackPanel>
-                </CheckBox>
+                </ScrollViewer>
 
                 <!-- Save button -->
-                <Button Click="AiConfigSave_Click" Cursor="Hand" HorizontalAlignment="Center" Margin="0,20,0,12">
+                <Button Grid.Row="4" Click="FeatureConfigSave_Click" Cursor="Hand" HorizontalAlignment="Center" Margin="0,0,0,8">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="aiSaveBd" Background="{DynamicResource AccentColor}"
+                            <Border x:Name="fcSaveBd" Background="{DynamicResource AccentColor}"
                                     CornerRadius="6" Padding="28,10">
                                 <TextBlock Text="Save &amp; Continue" FontSize="14" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="White"
@@ -1506,17 +1742,17 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="aiSaveBd" Property="Opacity" Value="0.85"/>
+                                    <Setter TargetName="fcSaveBd" Property="Opacity" Value="0.85"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
 
-                <TextBlock Text="You can change these anytime in Settings → AI Detection"
-                           FontSize="11" FontFamily="Segoe UI" HorizontalAlignment="Center"
-                           Foreground="{DynamicResource TextSecondary}" Opacity="0.7"/>
-            </StackPanel>
+                <TextBlock Grid.Row="5" Text="You can change these anytime in Settings. Disabled features will hide their columns and skip during analysis."
+                           FontSize="10.5" FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondary}" Opacity="0.7" TextWrapping="Wrap"/>
+            </Grid>
         </Border>
     </Grid>
 

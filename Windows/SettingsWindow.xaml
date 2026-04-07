@@ -302,6 +302,8 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="16"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="16"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Header with drag + close -->
@@ -946,6 +948,68 @@
                                Foreground="{DynamicResource TextMuted}" FontSize="11"
                                FontFamily="Segoe UI" VerticalAlignment="Center"/>
                 </StackPanel>
+
+                <!-- AcoustID -->
+                <TextBlock Text="AcoustID Fingerprinting" FontWeight="SemiBold" FontSize="12"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}" Margin="0,16,0,4"/>
+                <TextBlock Foreground="{DynamicResource TextMuted}" FontSize="11"
+                           FontFamily="Segoe UI" TextWrapping="Wrap" Margin="0,0,0,4"
+                           Text="Identify unknown tracks via audio fingerprint."/>
+
+                <Button Style="{StaticResource SmallButton}" Click="AcoustIdCreateApiKey_Click"
+                        HorizontalAlignment="Left" Margin="0,0,0,10">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Get a Free API Key" FontSize="11" FontFamily="Segoe UI"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Grid Margin="0,0,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="70"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="API Key:"
+                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <TextBox Grid.Column="1" x:Name="AcoustIdKeyBox"
+                             FontSize="12" FontFamily="Consolas"
+                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource Border}" Padding="6,4"
+                             TextChanged="AcoustIdKey_Changed"/>
+                    <!-- Eye toggle for AcoustID key -->
+                    <Button Grid.Column="2" x:Name="BtnToggleAcoustIdVisibility"
+                            Click="ToggleAcoustIdVisibility_Click"
+                            VerticalAlignment="Center" Margin="6,0,0,0"
+                            Cursor="Hand" ToolTip="Show/Hide API key"
+                            Background="Transparent" BorderBrush="Transparent"
+                            Padding="4,2">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Background"
+                                                Value="{DynamicResource ButtonHover}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                        <Canvas Width="20" Height="16">
+                            <Path x:Name="AcoustIdEyeIcon"
+                                  Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                            <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                     Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                            <Line x:Name="AcoustIdEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                        </Canvas>
+                    </Button>
+                </Grid>
             </StackPanel>
 
             <!-- Note -->
@@ -1028,11 +1092,6 @@
                 <DockPanel Margin="0,0,0,8">
                     <TextBlock Text="AI Detection" FontSize="14" FontWeight="SemiBold"
                                FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
-                    <TextBlock Text="Show AI Setup" FontSize="11" FontFamily="Segoe UI"
-                               Foreground="{DynamicResource AccentColor}" Cursor="Hand"
-                               VerticalAlignment="Center" HorizontalAlignment="Right"
-                               MouseLeftButtonDown="ShowAiSetup_Click"
-                               TextDecorations="Underline" Margin="0,1,0,0"/>
                 </DockPanel>
 
                 <!-- Default (watermark) detector — always available -->
@@ -1063,7 +1122,7 @@
                                ToolTip="View SH Labs privacy information"
                                MouseLeftButtonDown="SHLabsPrivacyIcon_Click"/>
                 </StackPanel>
-                <TextBlock Text="AI audio detection via SH Labs. Can sometimes be more accurate than the other options but limited to 15 scans/day and 100/month. When the limit is reached, your other selected detection methods will be used instead."
+                <TextBlock Text="AI audio detection via SH Labs. Can be better at detecting certain types of AI audio compared to the other options, but limited to 15 scans/day and 100/month. ⚠ Enabling this will significantly slow down scanning as each file must be uploaded for analysis. When the limit is reached, your other selected detection methods will be used instead."
                            Foreground="{DynamicResource TextDim}" FontSize="11"
                            FontFamily="Segoe UI" Margin="22,2,0,4" TextWrapping="Wrap"/>
                 <TextBlock x:Name="SHLabsQuotaText" Text=""
@@ -1092,15 +1151,81 @@
                            FontFamily="Segoe UI" Margin="22,3,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
+            <!-- Columns & Features Section -->
+            <StackPanel Grid.Row="20">
+                <TextBlock Text="Columns &amp; Features" FontSize="14" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                           Margin="0,0,0,8"/>
+                <TextBlock Text="Toggle which columns and analysis features are visible. Hidden columns won't appear in the results table. Right-click any column header to hide it for the current session."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                <WrapPanel Orientation="Horizontal">
+                    <CheckBox x:Name="ColStatusCb" Content="Status" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColTitleCb" Content="Title" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColArtistCb" Content="Artist" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColFilenameCb" Content="Filename" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColPathCb" Content="Path" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColSampleRateCb" Content="Sample Rate" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColBitsCb" Content="Bits" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColChCb" Content="Ch" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColDurationCb" Content="Duration" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColSizeCb" Content="Size" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColBitrateCb" Content="Bitrate" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColActualBRCb" Content="Actual BR" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColFormatCb" Content="Format" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColMaxFreqCb" Content="Max Freq" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColClippingCb" Content="Clipping" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColBpmCb" Content="BPM" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColReplayGainCb" Content="Replay Gain" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColDRCb" Content="DR" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColMqaCb" Content="MQA" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColAiCb" Content="AI" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColStereoCb" Content="Fake Stereo" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColSilenceCb" Content="Silence" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColDateModifiedCb" Content="Date Modified" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColDateCreatedCb" Content="Date Created" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColTruePeakCb" Content="True Peak" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColLufsCb" Content="LUFS" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                    <CheckBox x:Name="ColRipQualityCb" Content="Rip Quality" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                </WrapPanel>
+            </StackPanel>
+
             <!-- Attribution -->
-            <Grid Grid.Row="20" Margin="0,8,0,4">
+            <Grid Grid.Row="22" Margin="0,8,0,4">
                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI">
                     <Run Text="Made with " Foreground="{DynamicResource TextMuted}"/><Run Text="&#x2764;" Foreground="#E25555" FontSize="13"/><Run Text=" by " Foreground="{DynamicResource TextMuted}"/><Hyperlink x:Name="AuthorLink" NavigateUri="https://github.com/Angel2mp3" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{DynamicResource AccentColor}" TextDecorations="None">Angel</Hyperlink>
                 </TextBlock>
             </Grid>
 
             <!-- Support button + Close -->
-            <Grid Grid.Row="22" Margin="0,8,0,4">
+            <Grid Grid.Row="24" Margin="0,8,0,4">
                 <Button Click="SupportDonate_Click" Cursor="Hand"
                         HorizontalAlignment="Center">
                     <Button.Template>

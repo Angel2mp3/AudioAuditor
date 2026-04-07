@@ -49,6 +49,9 @@ namespace AudioQualityChecker
         private readonly DispatcherTimer _playerTimer;
         private bool _isSeeking;
 
+        // SMTC (media session for FluentFlyout/Windows media overlay)
+        private SmtcService? _smtc;
+
         // Search
         private string _searchText = "";
         private AudioStatus? _statusFilter = null;
@@ -132,12 +135,31 @@ namespace AudioQualityChecker
             ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz"
         };
 
+        private static readonly HashSet<string> PlaylistExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".m3u", ".m3u8", ".pls"
+        };
+
         public MainWindow()
         {
             InitializeComponent();
 
             // Restore saved column layout (order + widths)
             RestoreColumnLayout();
+            ApplyColumnVisibility();
+
+            // Column header right-click menu (created in code to avoid WPF style setter event bug)
+            var headerMenu = new ContextMenu();
+            var hideItem = new MenuItem { Header = "Hide Column" };
+            hideItem.Click += HideColumn_Click;
+            var showAllItem = new MenuItem { Header = "Show All Columns" };
+            showAllItem.Click += ShowAllColumns_Click;
+            headerMenu.Items.Add(hideItem);
+            headerMenu.Items.Add(showAllItem);
+            var headerStyle = FileGrid.ColumnHeaderStyle ?? new Style(typeof(DataGridColumnHeader));
+            var newStyle = new Style(typeof(DataGridColumnHeader), headerStyle);
+            newStyle.Setters.Add(new Setter(DataGridColumnHeader.ContextMenuProperty, headerMenu));
+            FileGrid.ColumnHeaderStyle = newStyle;
 
             // Set up filtered view
             _filteredView = CollectionViewSource.GetDefaultView(_files);
@@ -205,16 +227,40 @@ namespace AudioQualityChecker
             // Initialize footer support link visibility
             InitializeFooterSupport();
 
-            // Show AI config popup for first-time or upgrading users
+            // AI config is now always dismissed (popup removed in v1.4.5)
             if (!ThemeManager.AiConfigDismissed)
             {
-                Dispatcher.InvokeAsync(() =>
+                ThemeManager.AiConfigDismissed = true;
+                ThemeManager.SetRegistryFlag("AiConfigDismissed", true);
+                ThemeManager.SavePlayOptions();
+            }
+
+            // Sync feature toggle flags from persisted settings → AudioAnalyzer
+            AudioAnalyzer.EnableSilenceDetection = ThemeManager.SilenceDetectionEnabled;
+            AudioAnalyzer.EnableFakeStereoDetection = ThemeManager.FakeStereoDetectionEnabled;
+            AudioAnalyzer.EnableDynamicRange = ThemeManager.DynamicRangeEnabled;
+            AudioAnalyzer.EnableTruePeak = ThemeManager.TruePeakEnabled;
+            AudioAnalyzer.EnableLufs = ThemeManager.LufsEnabled;
+            AudioAnalyzer.EnableClippingDetection = ThemeManager.ClippingDetectionEnabled;
+            AudioAnalyzer.EnableMqaDetection = ThemeManager.MqaDetectionEnabled;
+            AudioAnalyzer.EnableDefaultAiDetection = ThemeManager.DefaultAiDetectionEnabled;
+            AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
+            AudioAnalyzer.EnableRipQuality = ThemeManager.RipQualityEnabled;
+
+            // Feature config popup — shown once per app version on first install or update
+            {
+                string currentVersion = System.Reflection.Assembly.GetExecutingAssembly()
+                    .GetName().Version is { } cv ? $"{cv.Major}.{cv.Minor}.{cv.Build}" : "0.0.0";
+                if (ThemeManager.FeatureConfigVersion != currentVersion)
                 {
-                    AiConfigChkDefault.IsChecked = true;
-                    AiConfigChkExperimental.IsChecked = ThemeManager.ExperimentalAiDetection;
-                    AiConfigChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
-                    ShowAiConfigOverlay();
-                }, DispatcherPriority.Loaded);
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        FcChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
+                        FcChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
+                        FcChkRipQuality.IsChecked = ThemeManager.RipQualityEnabled;
+                        ShowFeatureConfigOverlay();
+                    }, DispatcherPriority.Loaded);
+                }
             }
 
             // Silent update check on startup
@@ -250,6 +296,14 @@ namespace AudioQualityChecker
             var hwnd = new WindowInteropHelper(this).Handle;
             var source = HwndSource.FromHwnd(hwnd);
             source?.AddHook(WndProc);
+
+            // Initialize SMTC for media overlay integration (FluentFlyout, etc.)
+            _smtc = new SmtcService();
+            _smtc.Initialize(hwnd);
+            _smtc.PlayRequested += (_, _) => Dispatcher.Invoke(() => { if (_player.IsPaused) _player.Resume(); });
+            _smtc.PauseRequested += (_, _) => Dispatcher.Invoke(() => { if (_player.IsPlaying) _player.Pause(); });
+            _smtc.NextRequested += (_, _) => Dispatcher.Invoke(() => NextTrack_Click(this, new RoutedEventArgs()));
+            _smtc.PreviousRequested += (_, _) => Dispatcher.Invoke(() => PrevTrack_Click(this, new RoutedEventArgs()));
         }
 
         private const int WM_MOUSEHWHEEL = 0x020E;
@@ -301,6 +355,7 @@ namespace AudioQualityChecker
             _player.Dispose();
             _discord.Dispose();
             _lastFm.Dispose();
+            _smtc?.Dispose();
             base.OnClosed(e);
         }
 
@@ -359,6 +414,82 @@ namespace AudioQualityChecker
                 }
             }
             catch { }
+        }
+
+        // ═══════════════════════════════════════════
+        //  Column Visibility
+        // ═══════════════════════════════════════════
+
+        private readonly HashSet<string> _sessionHiddenColumns = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Applies column visibility based on persistent HiddenColumns setting + session overrides.
+        /// </summary>
+        public void ApplyColumnVisibility()
+        {
+            var hidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Add persistent hidden columns
+            if (!string.IsNullOrEmpty(ThemeManager.HiddenColumns))
+            {
+                foreach (var h in ThemeManager.HiddenColumns.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                    hidden.Add(h.Trim());
+            }
+
+            // Add session hidden columns
+            foreach (var h in _sessionHiddenColumns)
+                hidden.Add(h);
+
+            foreach (var col in FileGrid.Columns)
+            {
+                string header = col.Header?.ToString() ?? "";
+
+                // Feature-disabled columns should always be hidden
+                if (header.StartsWith("Rip Quality") && !ThemeManager.RipQualityEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "DR" && !ThemeManager.DynamicRangeEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "True Peak" && !ThemeManager.TruePeakEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "LUFS" && !ThemeManager.LufsEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header.StartsWith("Clipping") && !ThemeManager.ClippingDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "MQA" && !ThemeManager.MqaDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "AI" && !ThemeManager.DefaultAiDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "Silence" && !ThemeManager.SilenceDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "Fake Stereo" && !ThemeManager.FakeStereoDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+
+                // Check if user has hidden this column (handle "Rip Quality" matching "Rip Quality (Experimental)")
+                bool isHidden = hidden.Contains(header);
+                if (!isHidden && header.StartsWith("Rip Quality"))
+                    isHidden = hidden.Contains("Rip Quality");
+
+                col.Visibility = isHidden ? Visibility.Collapsed : Visibility.Visible;
+            }
+        }
+
+        private void HideColumnForSession(string header)
+        {
+            _sessionHiddenColumns.Add(header);
+            ApplyColumnVisibility();
+        }
+
+        private void ShowAllColumns()
+        {
+            _sessionHiddenColumns.Clear();
+            ApplyColumnVisibility();
+        }
+
+        private void HideColumn_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem mi && mi.Parent is ContextMenu cm &&
+                cm.PlacementTarget is DataGridColumnHeader header)
+            {
+                string headerText = header.Content?.ToString() ?? "";
+                if (!string.IsNullOrEmpty(headerText))
+                    HideColumnForSession(headerText);
+            }
+        }
+
+        private void ShowAllColumns_Click(object sender, RoutedEventArgs e)
+        {
+            ShowAllColumns();
         }
 
         // ═══════════════════════════════════════════
@@ -453,13 +584,16 @@ namespace AudioQualityChecker
             var dialog = new OpenFileDialog
             {
                 Title = "Select Audio Files",
-                Filter = "Audio Files|*.mp3;*.flac;*.wav;*.ogg;*.aac;*.m4a;*.wma;*.aiff;*.aif;*.ape;*.wv;*.opus;*.dsf;*.dff|Archives|*.zip;*.rar;*.7z;*.tar;*.gz;*.tgz|All Files|*.*",
+                Filter = "Audio Files|*.mp3;*.flac;*.wav;*.ogg;*.aac;*.m4a;*.wma;*.aiff;*.aif;*.ape;*.wv;*.opus;*.dsf;*.dff;*.cue|Playlists|*.m3u;*.m3u8;*.pls|Archives|*.zip;*.rar;*.7z;*.tar;*.gz;*.tgz|All Files|*.*",
                 Multiselect = true
             };
 
             if (dialog.ShowDialog() == true)
             {
-                var files = ExtractAudioFromArchives(dialog.FileNames);
+                var allPaths = new List<string>(dialog.FileNames);
+                // Expand playlists into audio file paths
+                var expanded = ExpandPlaylists(allPaths);
+                var files = ExtractAudioFromArchives(expanded);
                 if (files.Count > 0)
                     _ = AnalyzeAndAddFiles(files.ToArray());
             }
@@ -481,7 +615,8 @@ namespace AudioQualityChecker
                     allFiles.AddRange(
                         Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories)
                             .Where(f => SupportedExtensions.Contains(IOPath.GetExtension(f))
-                                     || ArchiveExtensions.Contains(IOPath.GetExtension(f))));
+                                     || ArchiveExtensions.Contains(IOPath.GetExtension(f))
+                                     || IOPath.GetExtension(f).Equals(".cue", StringComparison.OrdinalIgnoreCase)));
                 }
 
                 if (allFiles.Count == 0)
@@ -534,6 +669,80 @@ namespace AudioQualityChecker
 
         /// <summary>
         /// Extracts audio files from ZIP archives to a temp directory.
+        /// <summary>
+        /// Expands playlist files (.m3u, .m3u8, .pls) into their audio file entries.
+        /// Non-playlist files are passed through unchanged.
+        /// </summary>
+        private List<string> ExpandPlaylists(IEnumerable<string> paths)
+        {
+            var result = new List<string>();
+            foreach (var path in paths)
+            {
+                string ext = IOPath.GetExtension(path);
+                if (PlaylistExtensions.Contains(ext) && File.Exists(path))
+                {
+                    try
+                    {
+                        var playlistDir = IOPath.GetDirectoryName(path) ?? "";
+                        var lines = File.ReadAllLines(path);
+
+                        if (ext.Equals(".pls", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // PLS format: File1=path, File2=path, ...
+                            foreach (var line in lines)
+                            {
+                                if (line.StartsWith("File", StringComparison.OrdinalIgnoreCase) && line.Contains('='))
+                                {
+                                    var filePath = line[(line.IndexOf('=') + 1)..].Trim();
+                                    var resolved = ResolvePath(filePath, playlistDir);
+                                    if (resolved != null) result.Add(resolved);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // M3U/M3U8: each non-comment, non-empty line is a path
+                            foreach (var line in lines)
+                            {
+                                var trimmed = line.Trim();
+                                if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#'))
+                                    continue;
+                                var resolved = ResolvePath(trimmed, playlistDir);
+                                if (resolved != null) result.Add(resolved);
+                            }
+                        }
+                    }
+                    catch { /* skip unreadable playlist */ }
+                }
+                else
+                {
+                    result.Add(path);
+                }
+            }
+            return result;
+
+            static string? ResolvePath(string entry, string baseDir)
+            {
+                // Skip URLs (http://, https://)
+                if (entry.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                    entry.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                // Try as absolute path first
+                if (IOPath.IsPathRooted(entry) && File.Exists(entry))
+                    return entry;
+
+                // Try relative to playlist directory
+                var combined = IOPath.Combine(baseDir, entry);
+                if (File.Exists(combined))
+                    return IOPath.GetFullPath(combined);
+
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Extracts audio files from archives (.zip, .rar, .7z, etc.).
         /// Returns the list of extracted audio file paths plus any non-archive audio paths unchanged.
         /// </summary>
         private List<string> ExtractAudioFromArchives(IEnumerable<string> paths)
@@ -577,6 +786,11 @@ namespace AudioQualityChecker
                 {
                     result.Add(path);
                 }
+                else if (ext.Equals(".cue", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+                {
+                    // Cue files are passed through — expanded later in AnalyzeAndAddFiles
+                    result.Add(path);
+                }
             }
             return result;
         }
@@ -594,6 +808,26 @@ namespace AudioQualityChecker
             var newPaths = filePaths.Where(p => !existing.Contains(p)).ToArray();
 
             if (newPaths.Length == 0) return;
+
+            // ── Expand .cue files into virtual tracks ──
+            var cueFiles = newPaths.Where(p => IOPath.GetExtension(p).Equals(".cue", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var regularFiles = newPaths.Where(p => !IOPath.GetExtension(p).Equals(".cue", StringComparison.OrdinalIgnoreCase)).ToList();
+            var cueEntries = new List<(string audioPath, Services.CueSheet sheet)>();
+
+            foreach (var cuePath in cueFiles)
+            {
+                var sheet = Services.CueSheetParser.Parse(cuePath);
+                if (sheet != null && !string.IsNullOrEmpty(sheet.AudioFilePath))
+                {
+                    if (!existing.Contains(sheet.AudioFilePath) &&
+                        !regularFiles.Contains(sheet.AudioFilePath, StringComparer.OrdinalIgnoreCase))
+                        regularFiles.Add(sheet.AudioFilePath);
+                    cueEntries.Add((sheet.AudioFilePath, sheet));
+                }
+            }
+
+            newPaths = regularFiles.ToArray();
+            if (newPaths.Length == 0 && cueEntries.Count == 0) return;
 
             // ── SH Labs pre-flight: decide which files will use the API ──
             HashSet<string>? shLabsTargets = null;
@@ -742,6 +976,56 @@ namespace AudioQualityChecker
             });
 
             try { await Task.WhenAll(tasks); } catch (OperationCanceledException) { }
+
+            // ── Create virtual tracks from cue sheets ──
+            foreach (var (audioPath, sheet) in cueEntries)
+            {
+                // Find the analyzed parent file
+                var parent = _files.FirstOrDefault(f => f.FilePath.Equals(audioPath, StringComparison.OrdinalIgnoreCase));
+                if (parent == null) continue;
+
+                foreach (var track in sheet.Tracks)
+                {
+                    var endTime = track.EndTime > TimeSpan.Zero ? track.EndTime : TimeSpan.FromSeconds(parent.DurationSeconds);
+                    var duration = endTime - track.StartTime;
+                    if (duration.TotalSeconds <= 0) continue;
+
+                    string trackId = $"{audioPath}#CUE{track.TrackNumber}";
+                    if (existing.Contains(trackId)) continue;
+
+                    var virtual_ = new AudioFileInfo
+                    {
+                        FilePath = trackId,
+                        FileName = $"[{track.TrackNumber:D2}] {(string.IsNullOrEmpty(track.Title) ? IOPath.GetFileNameWithoutExtension(audioPath) : track.Title)}",
+                        FolderPath = parent.FolderPath,
+                        Title = track.Title,
+                        Artist = !string.IsNullOrEmpty(track.Performer) ? track.Performer : parent.Artist,
+                        Extension = parent.Extension,
+                        SampleRate = parent.SampleRate,
+                        BitsPerSample = parent.BitsPerSample,
+                        Channels = parent.Channels,
+                        ReportedBitrate = parent.ReportedBitrate,
+                        ActualBitrate = parent.ActualBitrate,
+                        EffectiveFrequency = parent.EffectiveFrequency,
+                        Duration = duration.TotalHours >= 1
+                            ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
+                            : $"{duration.Minutes}:{duration.Seconds:D2}",
+                        DurationSeconds = duration.TotalSeconds,
+                        FileSize = parent.FileSize,
+                        FileSizeBytes = parent.FileSizeBytes,
+                        DateModified = parent.DateModified,
+                        DateCreated = parent.DateCreated,
+                        Status = parent.Status,
+                        IsCueVirtualTrack = true,
+                        CueSheetPath = sheet.AudioFilePath,
+                        CueTrackNumber = track.TrackNumber,
+                        CueStartTime = track.StartTime,
+                        CueEndTime = endTime,
+                    };
+                    _files.Add(virtual_);
+                }
+            }
+
             _isAnalyzing = false;
             AnalysisProgressPanel.Visibility = Visibility.Collapsed;
             AnalysisEtaText.Text = "";
@@ -862,51 +1146,110 @@ namespace AudioQualityChecker
         }
 
         // ═══════════════════════════════════════════
-        //  AI Detection Config Overlay
+        //  Feature Configuration Overlay
         // ═══════════════════════════════════════════
 
-        private void ShowAiConfigOverlay()
+        private void ShowFeatureConfigOverlay()
         {
-            AiConfigOverlay.Visibility = Visibility.Visible;
+            // Load saved toggle states into checkboxes
+            FcChkSilence.IsChecked = ThemeManager.SilenceDetectionEnabled;
+            FcChkFakeStereo.IsChecked = ThemeManager.FakeStereoDetectionEnabled;
+            FcChkDR.IsChecked = ThemeManager.DynamicRangeEnabled;
+            FcChkTruePeak.IsChecked = ThemeManager.TruePeakEnabled;
+            FcChkLufs.IsChecked = ThemeManager.LufsEnabled;
+            FcChkClipping.IsChecked = ThemeManager.ClippingDetectionEnabled;
+            FcChkMqa.IsChecked = ThemeManager.MqaDetectionEnabled;
+            FcChkRipQuality.IsChecked = ThemeManager.RipQualityEnabled;
+            FcChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
+            FcChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
+            FcChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
+
+            FeatureConfigOverlay.Visibility = Visibility.Visible;
             MainContent.Effect = new System.Windows.Media.Effects.BlurEffect { Radius = 6 };
         }
 
-        private void HideAiConfigOverlay()
+        private void HideFeatureConfigOverlay()
         {
-            AiConfigOverlay.Visibility = Visibility.Collapsed;
+            FeatureConfigOverlay.Visibility = Visibility.Collapsed;
             MainContent.Effect = null;
         }
 
-        private void AiConfigSave_Click(object sender, RoutedEventArgs e)
+        private void FeatureConfigSave_Click(object sender, RoutedEventArgs e)
         {
-            // Persist choices
-            ThemeManager.ExperimentalAiDetection = AiConfigChkExperimental.IsChecked == true;
+            // Persist core feature toggles
+            ThemeManager.SilenceDetectionEnabled = FcChkSilence.IsChecked == true;
+            AudioAnalyzer.EnableSilenceDetection = ThemeManager.SilenceDetectionEnabled;
+
+            ThemeManager.FakeStereoDetectionEnabled = FcChkFakeStereo.IsChecked == true;
+            AudioAnalyzer.EnableFakeStereoDetection = ThemeManager.FakeStereoDetectionEnabled;
+
+            ThemeManager.DynamicRangeEnabled = FcChkDR.IsChecked == true;
+            AudioAnalyzer.EnableDynamicRange = ThemeManager.DynamicRangeEnabled;
+
+            ThemeManager.TruePeakEnabled = FcChkTruePeak.IsChecked == true;
+            AudioAnalyzer.EnableTruePeak = ThemeManager.TruePeakEnabled;
+
+            ThemeManager.LufsEnabled = FcChkLufs.IsChecked == true;
+            AudioAnalyzer.EnableLufs = ThemeManager.LufsEnabled;
+
+            ThemeManager.ClippingDetectionEnabled = FcChkClipping.IsChecked == true;
+            AudioAnalyzer.EnableClippingDetection = ThemeManager.ClippingDetectionEnabled;
+
+            ThemeManager.MqaDetectionEnabled = FcChkMqa.IsChecked == true;
+            AudioAnalyzer.EnableMqaDetection = ThemeManager.MqaDetectionEnabled;
+
+            // AI detection choices
+            ThemeManager.DefaultAiDetectionEnabled = FcChkDefaultAi.IsChecked == true;
+            AudioAnalyzer.EnableDefaultAiDetection = ThemeManager.DefaultAiDetectionEnabled;
+
+            ThemeManager.ExperimentalAiDetection = FcChkExperimentalAi.IsChecked == true;
             AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
 
-            bool wantsSHLabs = AiConfigChkSHLabs.IsChecked == true;
+            // Persist Rip Quality opt-in
+            ThemeManager.RipQualityEnabled = FcChkRipQuality.IsChecked == true;
+            AudioAnalyzer.EnableRipQuality = ThemeManager.RipQualityEnabled;
 
-            // If SH Labs was just enabled and privacy not yet accepted, show privacy notice first
+            bool wantsSHLabs = FcChkSHLabs.IsChecked == true;
+
+            // Mark this version as configured
+            string currentVersion = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "0.0.0";
+            ThemeManager.FeatureConfigVersion = currentVersion;
+            ThemeManager.SavePlayOptions();
+
+            // Show/hide columns based on user choices
+            ApplyColumnVisibility();
+
+            HideFeatureConfigOverlay();
+
+            // If SH Labs was just enabled and privacy not yet accepted, show privacy notice
             if (wantsSHLabs && !ThemeManager.SHLabsPrivacyAccepted)
             {
-                ThemeManager.AiConfigDismissed = true;
-                ThemeManager.SetRegistryFlag("AiConfigDismissed", true);
-                ThemeManager.SavePlayOptions();
-                HideAiConfigOverlay();
                 ShowSHLabsPrivacyOverlay();
                 return;
             }
 
             ThemeManager.SHLabsAiDetection = wantsSHLabs;
-            ThemeManager.AiConfigDismissed = true;
-            ThemeManager.SetRegistryFlag("AiConfigDismissed", true);
             ThemeManager.SavePlayOptions();
-            HideAiConfigOverlay();
         }
 
-        private void AiConfigBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        private void FeatureConfigBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             // Clicking outside does nothing — user must press Save
         }
+
+        private void FcChkSHLabs_Checked(object sender, RoutedEventArgs e)
+        {
+            // When user checks SH Labs on the feature config screen, show privacy notice
+            // if they haven't already accepted it. If they decline, uncheck the box.
+            if (!ThemeManager.SHLabsPrivacyAccepted)
+            {
+                _shLabsPrivacyFromFeatureConfig = true;
+                ShowSHLabsPrivacyOverlay();
+            }
+        }
+
+        private bool _shLabsPrivacyFromFeatureConfig;
 
         // ═══════════════════════════════════════════
         //  SH Labs Privacy Notice Overlay
@@ -921,7 +1264,9 @@ namespace AudioQualityChecker
         private void HideSHLabsPrivacyOverlay()
         {
             SHLabsPrivacyOverlay.Visibility = Visibility.Collapsed;
-            MainContent.Effect = null;
+            // Only clear blur if feature config overlay is NOT still showing
+            if (FeatureConfigOverlay.Visibility != Visibility.Visible)
+                MainContent.Effect = null;
         }
 
         private void SHLabsPrivacyAccept_Click(object sender, RoutedEventArgs e)
@@ -930,6 +1275,7 @@ namespace AudioQualityChecker
             ThemeManager.SHLabsAiDetection = true;
             ThemeManager.SavePlayOptions();
             HideSHLabsPrivacyOverlay();
+            _shLabsPrivacyFromFeatureConfig = false;
         }
 
         private void SHLabsPrivacyDecline_Click(object sender, RoutedEventArgs e)
@@ -938,6 +1284,12 @@ namespace AudioQualityChecker
             ThemeManager.SHLabsAiDetection = false;
             ThemeManager.SavePlayOptions();
             HideSHLabsPrivacyOverlay();
+            // If triggered from the feature config checkbox, uncheck it
+            if (_shLabsPrivacyFromFeatureConfig)
+            {
+                FcChkSHLabs.IsChecked = false;
+                _shLabsPrivacyFromFeatureConfig = false;
+            }
         }
 
         private void SHLabsPrivacyBackdrop_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -1247,10 +1599,14 @@ namespace AudioQualityChecker
 
                 UpdatePlayerUI();
 
-                // Discord: show paused
-                var file = FileGrid.SelectedItem as AudioFileInfo;
-                _discord.UpdatePresence(file?.Artist, file?.Title, file?.FileName,
+                // Discord: show paused — use the actual playing file, not the grid selection
+                var discordFile = _player.CurrentFile != null
+                    ? _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                _discord.UpdatePresence(discordFile?.Artist, discordFile?.Title, discordFile?.FileName,
                     _player.TotalDuration, _player.CurrentPosition, true);
+
+                _smtc?.UpdatePlaybackState(false, true);
             }
             else if (_player.IsPaused)
             {
@@ -1265,10 +1621,14 @@ namespace AudioQualityChecker
                 _playerTimer.Start();
                 UpdatePlayerUI();
 
-                // Discord: show playing again
-                var file = FileGrid.SelectedItem as AudioFileInfo;
-                _discord.UpdatePresence(file?.Artist, file?.Title, file?.FileName,
+                // Discord: show playing again — use the actual playing file, not the grid selection
+                var discordFile = _player.CurrentFile != null
+                    ? _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                _discord.UpdatePresence(discordFile?.Artist, discordFile?.Title, discordFile?.FileName,
                     _player.TotalDuration, _player.CurrentPosition, false);
+
+                _smtc?.UpdatePlaybackState(true, false);
             }
             else if (FileGrid.SelectedItem is AudioFileInfo file2)
             {
@@ -1284,6 +1644,7 @@ namespace AudioQualityChecker
             WaveformCanvas.Children.Clear();
             UpdatePlayerUI();
             _discord.ClearPresence();
+            _smtc?.UpdatePlaybackState(false, false);
             _lastFm.TrackStopped();
         }
 
@@ -1641,6 +2002,10 @@ namespace AudioQualityChecker
 
                 // Last.fm now playing
                 _lastFm.TrackStarted(file.Artist, file.Title, _player.TotalDuration.TotalSeconds);
+
+                // SMTC media session (FluentFlyout / Windows media overlay)
+                _smtc?.UpdateNowPlayingFromTags(file.FilePath);
+                _smtc?.UpdatePlaybackState(true, false);
             }
             catch (Exception ex)
             {
@@ -1727,8 +2092,10 @@ namespace AudioQualityChecker
             // Discord Rich Presence — service handles its own throttling
             if (_discord.IsEnabled)
             {
-                var file = FileGrid.SelectedItem as AudioFileInfo;
-                _discord.UpdatePresence(file?.Artist, file?.Title, file?.FileName,
+                var discordFile = _player.CurrentFile != null
+                    ? _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                _discord.UpdatePresence(discordFile?.Artist, discordFile?.Title, discordFile?.FileName,
                     _player.TotalDuration, _player.CurrentPosition, false);
             }
         }
@@ -1892,10 +2259,14 @@ namespace AudioQualityChecker
                     audioFiles.AddRange(
                         Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories)
                                  .Where(f => SupportedExtensions.Contains(IOPath.GetExtension(f))
-                                          || ArchiveExtensions.Contains(IOPath.GetExtension(f))));
+                                          || ArchiveExtensions.Contains(IOPath.GetExtension(f))
+                                          || PlaylistExtensions.Contains(IOPath.GetExtension(f))
+                                          || IOPath.GetExtension(f).Equals(".cue", StringComparison.OrdinalIgnoreCase)));
                 }
                 else if (File.Exists(path) && (SupportedExtensions.Contains(IOPath.GetExtension(path))
-                                            || ArchiveExtensions.Contains(IOPath.GetExtension(path))))
+                                            || ArchiveExtensions.Contains(IOPath.GetExtension(path))
+                                            || PlaylistExtensions.Contains(IOPath.GetExtension(path))
+                                            || IOPath.GetExtension(path).Equals(".cue", StringComparison.OrdinalIgnoreCase)))
                 {
                     audioFiles.Add(path);
                 }
@@ -1903,7 +2274,8 @@ namespace AudioQualityChecker
 
             if (audioFiles.Count > 0)
             {
-                var expanded = ExtractAudioFromArchives(audioFiles);
+                var playlistExpanded = ExpandPlaylists(audioFiles);
+                var expanded = ExtractAudioFromArchives(playlistExpanded);
                 if (expanded.Count > 0)
                     _ = AnalyzeAndAddFiles(expanded.ToArray());
             }
@@ -1992,6 +2364,192 @@ namespace AudioQualityChecker
                 // Refresh the DataGrid row
                 _filteredView?.Refresh();
             }
+        }
+
+        private void StripMetadata_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0) return;
+
+            var stripper = new MetadataStripWindow(selected, this);
+            stripper.ShowDialog();
+
+            if (stripper.MetadataChanged)
+                _filteredView?.Refresh();
+        }
+
+        private void BatchRename_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0) return;
+
+            var renamer = new BatchRenameWindow(selected, (file, newPath) =>
+            {
+                file.FilePath = newPath;
+                file.FileName = IOPath.GetFileName(newPath);
+            });
+            renamer.Owner = this;
+            renamer.ShowDialog();
+            _filteredView?.Refresh();
+        }
+
+        private void CompareWaveforms_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count != 2)
+            {
+                ErrorDialog.Show("Select Two Files", "Select exactly two files to compare their waveforms.", this);
+                return;
+            }
+
+            var win = new WaveformCompareWindow(selected[0].FilePath, selected[1].FilePath);
+            win.Owner = this;
+            win.Show();
+        }
+
+        private void FindDuplicates_Click(object sender, RoutedEventArgs e)
+        {
+            if (_files.Count < 2) return;
+            var win = new DuplicateDetectionWindow(_files.ToList());
+            win.Owner = this;
+            win.Show();
+        }
+
+        private async void AcoustIdIdentify_Click(object sender, RoutedEventArgs e)
+        {
+            if (FileGrid.SelectedItem is not AudioFileInfo file) return;
+
+            // For cue virtual tracks, use the actual audio file referenced by the cue sheet
+            string actualPath = file.FilePath;
+            if (file.IsCueVirtualTrack && !string.IsNullOrEmpty(file.CueSheetPath))
+            {
+                // CueSheetPath is the .cue text file — fpcalc needs the real audio file
+                // The audio file is usually next to the cue sheet with the same name or referenced inside it
+                actualPath = file.FilePath;
+            }
+            if (!File.Exists(actualPath))
+            {
+                ErrorDialog.Show("File Not Found", "The audio file could not be found.", this);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(ThemeManager.AcoustIdApiKey))
+            {
+                ErrorDialog.Show("AcoustID Not Configured",
+                    "Enter your AcoustID API key in Settings → Integrations.\n\nGet a free key at https://acoustid.org/new-application", this);
+                return;
+            }
+
+            if (AcoustIdService.FindFpcalc() == null)
+            {
+                StatusText.Text = "Downloading fpcalc...";
+                var fpcalc = await AcoustIdService.EnsureFpcalcAsync();
+                if (fpcalc == null)
+                {
+                    ErrorDialog.Show("fpcalc Not Found",
+                        "AcoustID requires fpcalc.exe (Chromaprint).\n\nAutomatic download failed. Download it manually from https://acoustid.org/chromaprint and place it next to AudioAuditor.exe or in your PATH.", this);
+                    StatusText.Text = "";
+                    return;
+                }
+            }
+
+            StatusText.Text = "Fingerprinting with AcoustID...";
+            try
+            {
+                // Step 1: Generate fingerprint
+                var fp = await AcoustIdService.GetFingerprint(actualPath);
+                if (fp == null)
+                {
+                    StatusText.Text = "AcoustID: Fingerprinting failed — fpcalc could not process this file.";
+                    return;
+                }
+
+                // Step 2: Look up fingerprint
+                StatusText.Text = $"AcoustID: Fingerprint OK ({fp.Value.duration}s), searching database...";
+                var results = await AcoustIdService.Lookup(fp.Value.fingerprint, fp.Value.duration, ThemeManager.AcoustIdApiKey);
+                if (results.Count == 0)
+                {
+                    StatusText.Text = $"AcoustID: No matches in database (fingerprint {fp.Value.duration}s). Track may not be cataloged.";
+                    return;
+                }
+
+                var best = results[0];
+                string msg = $"Title: {best.Title}\nArtist: {best.Artist}";
+                if (!string.IsNullOrEmpty(best.Album)) msg += $"\nAlbum: {best.Album}";
+                if (best.Year.HasValue) msg += $"\nYear: {best.Year}";
+                if (best.TrackNumber.HasValue) msg += $"\nTrack: {best.TrackNumber}";
+                msg += $"\nConfidence: {best.Score:P0}";
+                msg += "\n\nWrite this metadata to the file?";
+
+                var write = MessageBox.Show(msg, "AcoustID Result", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (write == MessageBoxResult.Yes && !file.IsCueVirtualTrack)
+                {
+                    try
+                    {
+                        using var tagFile = TagLib.File.Create(file.FilePath);
+                        if (!string.IsNullOrEmpty(best.Title)) tagFile.Tag.Title = best.Title;
+                        if (!string.IsNullOrEmpty(best.Artist)) tagFile.Tag.Performers = new[] { best.Artist };
+                        if (!string.IsNullOrEmpty(best.Album)) tagFile.Tag.Album = best.Album;
+                        if (best.Year.HasValue) tagFile.Tag.Year = (uint)best.Year.Value;
+                        if (best.TrackNumber.HasValue) tagFile.Tag.Track = (uint)best.TrackNumber.Value;
+                        tagFile.Save();
+
+                        file.Title = best.Title;
+                        file.Artist = best.Artist;
+                        _filteredView?.Refresh();
+                        StatusText.Text = "AcoustID: Metadata written.";
+                    }
+                    catch (Exception ex)
+                    {
+                        ErrorDialog.Show("Write Failed", $"Could not write metadata: {ex.Message}", this);
+                    }
+                }
+                else
+                {
+                    StatusText.Text = $"AcoustID: {best.Title} — {best.Artist} ({best.Score:P0})";
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"AcoustID error: {ex.Message}";
+            }
+        }
+
+        private async void WriteReplayGain_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0) return;
+
+            int written = 0;
+            int failed = 0;
+
+            await Task.Run(() =>
+            {
+                foreach (var file in selected)
+                {
+                    var result = AudioAnalyzer.CalculateAndWriteReplayGain(file.FilePath);
+                    if (result.HasValue)
+                    {
+                        var gain = result.Value.Gain;
+                        Dispatcher.Invoke(() =>
+                        {
+                            file.ReplayGain = gain;
+                            file.HasReplayGain = true;
+                        });
+                        written++;
+                    }
+                    else
+                    {
+                        failed++;
+                    }
+                }
+            });
+
+            _filteredView?.Refresh();
+
+            string msg = $"Replay Gain written to {written} file{(written != 1 ? "s" : "")}";
+            if (failed > 0) msg += $" ({failed} failed)";
+            MessageBox.Show(msg, "Replay Gain", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         // ═══════════════════════════════════════════
@@ -2230,55 +2788,59 @@ namespace AudioQualityChecker
             var settingsWindow = new SettingsWindow { Owner = this };
             settingsWindow.ShowDialog();
 
-            // If Settings requested the SH Labs privacy overlay, show it now (on top)
-            if (settingsWindow.RequestPrivacyOnClose)
-                ShowSHLabsPrivacyOverlay();
+            bool showPrivacy = settingsWindow.RequestPrivacyOnClose;
 
-            // If Settings requested the AI config overlay, show it now
-            if (settingsWindow.RequestAiConfigOnClose)
+            // Refresh all UI state after settings change — wrap entirely to prevent crash
+            try
             {
-                ThemeManager.AiConfigDismissed = false;
-                AiConfigChkExperimental.IsChecked = ThemeManager.ExperimentalAiDetection;
-                AiConfigChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
-                ShowAiConfigOverlay();
+                UpdateServiceButtonLabels();
+                ApplyThemeTitleBar();
+                UpdateShuffleUI();
+                _eqSliderTemplateCache = null;
+                InitializeEqualizerSliders();
+                ChkEqEnabled.IsChecked = ThemeManager.EqualizerEnabled;
+
+                // Sync Discord RPC state
+                if (ThemeManager.DiscordRpcEnabled && !string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
+                {
+                    if (!_discord.IsEnabled)
+                        _discord.Enable();
+                    else
+                        _discord.Enable();
+                }
+                else if (_discord.IsEnabled)
+                    _discord.Disable();
+
+                // Sync spatial audio state
+                var spatial = _player.CurrentSpatialAudio;
+                if (spatial != null) spatial.Enabled = ThemeManager.SpatialAudioEnabled;
+
+                // Sync normalization on currently playing track
+                if (_player.IsPlaying || _player.IsPaused)
+                    _player.SetNormalization(ThemeManager.AudioNormalization);
+
+                // Sync Last.fm state
+                if (!string.IsNullOrEmpty(ThemeManager.LastFmSessionKey))
+                    _lastFm.Configure(ThemeManager.LastFmApiKey, ThemeManager.LastFmApiSecret, ThemeManager.LastFmSessionKey);
+
+                UpdateLastFmStatusIndicator();
+                ApplyColumnVisibility();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Settings_Click refresh] {ex}");
             }
 
-            // Refresh service button labels after settings change
-            UpdateServiceButtonLabels();
-            // Refresh title bar color after theme change
-            ApplyThemeTitleBar();
-            // Refresh shuffle icon color for new theme
-            UpdateShuffleUI();
-            // Re-theme equalizer sliders
-            _eqSliderTemplateCache = null;
-            InitializeEqualizerSliders();
-            ChkEqEnabled.IsChecked = ThemeManager.EqualizerEnabled;
-
-            // Sync Discord RPC state
-            if (ThemeManager.DiscordRpcEnabled && !string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
+            // Show SH Labs privacy overlay AFTER all refresh is done — defer to next
+            // UI cycle so the SettingsWindow is fully closed and focus is restored.
+            if (showPrivacy)
             {
-                if (!_discord.IsEnabled)
-                    _discord.Enable();
-                else
-                    _discord.Enable(); // Re-enable to pick up any client ID change
+                Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+                {
+                    try { ShowSHLabsPrivacyOverlay(); }
+                    catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[SHLabs overlay] {ex}"); }
+                });
             }
-            else if (_discord.IsEnabled)
-                _discord.Disable();
-
-            // Sync spatial audio state
-            var spatial = _player.CurrentSpatialAudio;
-            if (spatial != null) spatial.Enabled = ThemeManager.SpatialAudioEnabled;
-
-            // Sync normalization on currently playing track
-            if (_player.IsPlaying || _player.IsPaused)
-                _player.SetNormalization(ThemeManager.AudioNormalization);
-
-            // Sync Last.fm state
-            if (!string.IsNullOrEmpty(ThemeManager.LastFmSessionKey))
-                _lastFm.Configure(ThemeManager.LastFmApiKey, ThemeManager.LastFmApiSecret, ThemeManager.LastFmSessionKey);
-
-            // Update Last.fm status indicator
-            UpdateLastFmStatusIndicator();
         }
 
         // ═══════════════════════════════════════════
@@ -3143,16 +3705,18 @@ namespace AudioQualityChecker
             // Fade envelope: gentle taper at edges (3% on each side)
             double fadeRegion = 0.03;
 
-            // Update animated waveform data
+            // Update animated waveform data — Waves animation (flowing undulation)
             for (int i = 0; i < points; i++)
             {
                 double t = (double)i / points;
-                // Add time-varying oscillation to the base wave
-                double anim = _waveformBaseData[i]
-                    + 0.15 * Math.Sin(4 * Math.PI * t + elapsed * animSpeed * 2.5)
-                    + 0.1 * Math.Sin(7 * Math.PI * t - elapsed * animSpeed * 1.8)
-                    + 0.08 * Math.Sin(12 * Math.PI * t + elapsed * animSpeed * 3.2);
-                _waveformData[i] = Math.Clamp((anim + 1.33) / 2.66, 0.25, 0.95);
+                // Start with normalized base shape (0..1 range)
+                double baseVal = Math.Clamp((_waveformBaseData[i] + 1.33) / 2.66, 0.25, 0.95);
+
+                // Multiple traveling waves create a flowing undulation
+                double wave = 0.08 * Math.Sin(4 * Math.PI * t + elapsed * animSpeed * 2.0)
+                            + 0.06 * Math.Sin(7 * Math.PI * t - elapsed * animSpeed * 1.5)
+                            + 0.04 * Math.Sin(13 * Math.PI * t + elapsed * animSpeed * 3.0);
+                _waveformData[i] = Math.Clamp(baseVal + wave, 0.15, 0.98);
             }
 
             WaveformCanvas.Children.Clear();

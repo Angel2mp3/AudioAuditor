@@ -16,6 +16,7 @@ namespace AudioQualityChecker.Services
         private readonly WaveFormat _waveFormat;
         private readonly byte[] _pcmData;
         private long _position;
+        private readonly object _seekLock = new();
 
         /// <summary>Original FLAC bits per sample (8/16/24/32) for analysis accuracy.</summary>
         public int NativeBitsPerSample { get; private set; }
@@ -111,18 +112,29 @@ namespace AudioQualityChecker.Services
 
         public override long Position
         {
-            get => _position;
-            set => _position = Math.Clamp(value, 0, _pcmData.Length);
+            get { lock (_seekLock) return _position; }
+            set
+            {
+                lock (_seekLock)
+                {
+                    _position = Math.Clamp(value, 0, _pcmData.Length);
+                    int blockAlign = WaveFormat.BlockAlign;
+                    _position = (_position / blockAlign) * blockAlign;
+                }
+            }
         }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            int available = _pcmData.Length - (int)_position;
-            int toCopy = Math.Min(count, available);
-            if (toCopy <= 0) return 0;
-            Buffer.BlockCopy(_pcmData, (int)_position, buffer, offset, toCopy);
-            _position += toCopy;
-            return toCopy;
+            lock (_seekLock)
+            {
+                int available = _pcmData.Length - (int)_position;
+                int toCopy = Math.Min(count, available);
+                if (toCopy <= 0) return 0;
+                Buffer.BlockCopy(_pcmData, (int)_position, buffer, offset, toCopy);
+                _position += toCopy;
+                return toCopy;
+            }
         }
 
         // ═══════════════════════════════════════════════════════
