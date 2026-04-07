@@ -128,7 +128,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Duplicate Detection** — Scan your library for duplicates by metadata match (artist + title) and file fingerprint (size + duration)
 - **Playlist Import** — Import `.m3u`, `.m3u8`, and `.pls` playlist files; resolves relative and absolute paths
 - **Cue Sheet Support** — Import `.cue` files; parses track boundaries and adds virtual entries with full analysis
-- **Metadata Strip Tool** — Remove all metadata tags from selected audio files (ID3, Vorbis, APE, MP4)
+- **Metadata Strip Tool** — Remove all metadata tags from selected audio files (ID3, Vorbis, APE, MP4).
 
 ### Music Service Integration
 - **6 fully configurable slots** — Each toolbar button can be set to any service: Spotify, YouTube Music, Tidal, Qobuz, Amazon Music, Apple Music, Deezer, SoundCloud, Bandcamp, Last.fm, or a fully custom search URL with custom icon
