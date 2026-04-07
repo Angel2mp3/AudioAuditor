@@ -39,6 +39,15 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 <img width="1547" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/7f3a0792-70a2-46b5-af11-386c2fc32a5b" />
 
+<p align="center">
+  <a href="https://audioauditor.org/#code">
+    <img src="https://img.shields.io/badge/Explore_the_Codebase-Interactive_Code_Tour-4f50c6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Interactive Code Tour"/>
+  </a>
+</p>
+
+> **[🗺️ Interactive Code Tour →](https://audioauditor.org/#code)**
+> Explore all 23 source files across 6 architectural layers in an interactive graph — click any node to see what it does, or take the guided tour.
+
 
 
 ## Features

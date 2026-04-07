@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.5.1
+
+### Improvements
+
+- **Major Analysis Speed Boost** — Spectral analysis, BPM detection, and optimizer detection now use direct seeking (WaveStream.Position) instead of reading-and-discarding to skip through audio files. For a typical 5-minute FLAC, this eliminates ~90% of wasted sample decoding
+- **FFT Twiddle Factor Cache** — Pre-computes and caches cos/sin values per FFT size instead of recalculating ~15M trig calls per file. Speeds up all FFT-based analysis (spectral, BPM, optimizer)
+- **Re-entrant File Adding** — Adding files while a scan is already in progress now works seamlessly instead of showing an "analysis in progress" error. New files join the existing scan with shared progress tracking
+- **Clear All Stops Scanning** — Clicking "Clear All" now immediately cancels any in-progress analysis, resets all batch tracking state, and collapses the progress bar
+- **Version Info in Settings** — Settings now displays the current app version and the latest version available on GitHub
+
+### New Features
+
+- **BPM Detection Toggle** — BPM detection can now be disabled to speed up analysis when BPM data isn't needed
+
+---
+
 ## v1.5.0
 
 ### New Features

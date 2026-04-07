@@ -1689,6 +1689,17 @@
                             </StackPanel>
                         </CheckBox>
 
+                        <!-- BPM Detection -->
+                        <CheckBox x:Name="FcChkBpm" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <StackPanel Orientation="Vertical" Margin="4,0,0,0">
+                                <TextBlock Text="BPM Detection" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="Detects tempo (BPM) for files without existing BPM tags. Can be slow for large libraries."
+                                           FontSize="11" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           TextWrapping="Wrap" Margin="0,1,0,0"/>
+                            </StackPanel>
+                        </CheckBox>
+
                         <Border Height="1" Background="{DynamicResource BorderColor}" Margin="0,10"/>
 
                         <!-- AI Detection: Default -->
