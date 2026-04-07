@@ -45,6 +45,7 @@ Proxy/
 *.vspscc
 *.vssscc
 *.sln.docstates
+*.code-workspace
 
 
 # IDE / VS files
