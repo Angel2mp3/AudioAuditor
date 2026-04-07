@@ -13,12 +13,10 @@
   <img src="https://img.shields.io/badge/Platform-Windows-blue?style=plastic&logo=windows" alt="Windows"/>
   <img src="https://img.shields.io/badge/UI-WPF-0078D4?style=plastic" alt="WPF"/>
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=plastic" alt="License"/>
-</p>
-<p align="center">
+  <br/>
   <a href="https://ko-fi.com/angelsoftware">
     <img src="https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=plastic&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
-  &nbsp;
   <a href="https://audioauditor.org">
     <img src="https://img.shields.io/badge/Website-audioauditor.org-7c5cff?style=plastic&logo=googlechrome&logoColor=white" alt="Website"/>
   </a>
@@ -34,10 +32,15 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
-<img width="1547" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/2c4f27df-1ba0-4479-a89d-362502d80d6d" />
+## Screenshots
 
-<img width="1547" height="867" alt="amethyst-theme" src="https://github.com/user-attachments/assets/bf064074-c27c-4e58-afb9-74a7dd9842dc" />
+<p align="center">
+  <img width="1547" height="867" alt="Blurple theme" src="https://github.com/user-attachments/assets/2c4f27df-1ba0-4479-a89d-362502d80d6d" />
+  <br/>
+  <img width="1547" height="867" alt="Amethyst theme" src="https://github.com/user-attachments/assets/bf064074-c27c-4e58-afb9-74a7dd9842dc" />
+</p>
 
+---
 
 ## Features
 
@@ -59,18 +62,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Improved Bitrate Analysis** — Avoids simplistic "320 kbps" labeling for files with steep lowpass filters using a band-energy-drop method; lossless formats (FLAC/WAV/AIFF/APE/WV) report their actual file data rate instead of a lossy-equivalent estimate
 - **Custom FLAC Decoder** — Managed FLAC decoder handles files that NAudio cannot decode natively, ensuring full analysis and playback coverage
 - **Full Metadata Editor** - Full menu for editing, adding, or removing metadata in an audiofile including search buttons to auto search for the metadata for you
-- **Update Checker** - Optionally silently checks for updates in the background each time the program starts
----
-
-<p align="center">
-  Explore all 23 source files across 6 architectural layers in an interactive graph — click any node to see what it does, or take the guided tour.
-  <a href="https://audioauditor.org/#code">
-    <img src="https://img.shields.io/badge/Explore_the_Codebase-Interactive_Code_Tour-4f50c6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Interactive Code Tour"/>
-  </a>
-</p>
-<img width="1441" height="812" alt="image" src="https://github.com/user-attachments/assets/7a34623f-b58e-4f6a-926b-2185a2ddbf30" />
-
----
+- **Update Checker** — Optionally silently checks for updates in the background each time the program starts
 
 ### Supported Formats
 
@@ -128,7 +120,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Duplicate Detection** — Scan your library for duplicates by metadata match (artist + title) and file fingerprint (size + duration)
 - **Playlist Import** — Import `.m3u`, `.m3u8`, and `.pls` playlist files; resolves relative and absolute paths
 - **Cue Sheet Support** — Import `.cue` files; parses track boundaries and adds virtual entries with full analysis
-- **Metadata Strip Tool** — Remove all metadata tags from selected audio files (ID3, Vorbis, APE, MP4).
+- **Metadata Strip Tool** — Remove all metadata tags from selected audio files (ID3, Vorbis, APE, M4A).
 
 ### Music Service Integration
 - **6 fully configurable slots** — Each toolbar button can be set to any service: Spotify, YouTube Music, Tidal, Qobuz, Amazon Music, Apple Music, Deezer, SoundCloud, Bandcamp, Last.fm, or a fully custom search URL with custom icon
@@ -140,7 +132,7 @@ AudioAuditor's AI detection tries its best to use **verifiable evidence** - Howe
 
 | Method | What It Checks |
 |--------|---------------|
-| **Metadata Tags** | ID3v2, Vorbis, APE, MP4 tags for AI service markers (TXXX frames, comments, encoder fields, free-form atoms) |
+| **Metadata Tags** | ID3v2, Vorbis, APE, M4A tags for AI service markers (TXXX frames, comments, encoder fields, free-form atoms) |
 | **Raw Byte Patterns** | First 128KB, middle 32KB, and last 128KB of the file for embedded identifiers |
 | **C2PA / Content Credentials** | JUMBF box markers, claim manifests, and provenance data |
 | **AI Watermarks** | AudioSeal, SynthID, and WavMark watermark identifiers |
@@ -328,8 +320,8 @@ Stored settings include: theme names, boolean flags, service slot names, custom 
 ```
 AudioAuditor/
 ├── App.xaml / App.xaml.cs               # Application entry point & theme initialization
-├── AudioQualityChecker.csproj           # Main WPF project file
 ├── Audio Quality Checker.sln            # Solution file
+├── CHANGELOG.md                         # Version history and release notes
 ├── Windows/
 │   ├── MainWindow.xaml / .xaml.cs       # Main UI — toolbar, DataGrid, player, waveform, visualizer
 │   ├── SettingsWindow.xaml / .xaml.cs   # Settings dialog — themes, options, integrations, performance
@@ -350,7 +342,7 @@ AudioAuditor/
 │   ├── AudioAnalyzer.cs                 # FFT spectral analysis, quality detection, BPM, replay gain
 │   ├── AudioFormatReaders.cs            # Custom format readers for APE, WavPack, DSD, Opus, and ALAC
 │   ├── AudioPlayer.cs                   # NAudio playback engine with crossfade, normalization, EQ & spatial pipeline
-│   ├── CueSheetParser.cs               # .cue file parser — tracks, indices, timing, relative path resolution
+│   ├── CueSheetParser.cs                # .cue file parser — tracks, indices, timing, relative path resolution
 │   ├── DiscordRichPresenceService.cs    # Discord RPC integration
 │   ├── Equalizer.cs                     # 10-band parametric EQ (ISampleProvider) with BiQuad filters
 │   ├── ExperimentalAiDetector.cs        # Experimental AI detection — spectral/temporal neural watermark analysis
@@ -363,7 +355,7 @@ AudioAuditor/
 │   ├── SpatialAudioProcessor.cs         # Spatial audio — crossfeed, HRTF ITD, head shadow, reflections
 │   ├── SpectrogramGenerator.cs          # Bitmap spectrogram generation with log-frequency scaling
 │   ├── ThemeManager.cs                  # Theme engine, settings persistence, playbar colors
-│   └── UpdateChecker.cs                # GitHub release update checker
+│   └── UpdateChecker.cs                 # GitHub release update checker
 ├── Resources/
 │   ├── icon.png / app.ico               # App icon
 │   ├── Spotify.png                      # Service logos
@@ -376,9 +368,22 @@ AudioAuditor/
 │   ├── Soundcloud.png
 │   └── last.fm.png
 └── AudioAuditorCLI/
-    ├── AudioAuditorCLI.csproj           # CLI project file (standalone console app)
     └── Program.cs                       # CLI entry point — analyze, export, metadata, info commands
 ```
+
+---
+
+## Interactive Code Tour
+
+Explore all 23 source files across 6 architectural layers in an interactive graph — click any node to see what it does, or take the guided tour.
+
+<p align="center">
+  <a href="https://audioauditor.org/#code">
+    <img src="https://img.shields.io/badge/Explore_the_Codebase-Interactive_Code_Tour-4f50c6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Interactive Code Tour"/>
+  </a>
+  <br/><br/>
+  <img width="1441" height="812" alt="Interactive code tour" src="https://github.com/user-attachments/assets/7a34623f-b58e-4f6a-926b-2185a2ddbf30" />
+</p>
 
 ---
 
@@ -427,7 +432,7 @@ If you'd like to contribute, feel free to open an issue or submit a pull request
 | [**NAudio**](https://github.com/naudio/naudio) by Mark Heath | MIT | Audio playback, waveform reading, sample provider pipeline, FFT analysis, crossfade mixing, and all audio I/O |
 | [**NAudio.Vorbis**](https://github.com/naudio/Vorbis) by Andrew Ward | MIT | OGG Vorbis audio file decoding and playback support |
 | [**Concentus & Concentus.OggFile**](https://github.com/lostromb/concentus) by Logan Stromberg | MIT/BSD | Pure managed Opus audio decoding for .opus file support |
-| [**TagLibSharp**](https://github.com/mono/taglib-sharp) by Mono Project | LGPL-2.1 | Reading and writing audio metadata tags across all supported formats (ID3v2, Xiph Comment, APEv2, MP4 atoms) |
+| [**TagLibSharp**](https://github.com/mono/taglib-sharp) by Mono Project | LGPL-2.1 | Reading and writing audio metadata tags across all supported formats (ID3v2, Xiph Comment, APEv2, M4A atoms) |
 | [**ClosedXML**](https://github.com/ClosedXML/ClosedXML) by ClosedXML Contributors | MIT | Excel workbook generation with styled cells, headers, and auto-fit columns |
 | [**discord-rpc-csharp**](https://github.com/Lachee/discord-rpc-csharp) by Lachee | MIT | Discord Rich Presence client for showing playback status |
 
@@ -458,13 +463,9 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 > **Trademark & Brand Notice:**
 > The AudioAuditor name, logo, website ([audioauditor.org](https://audioauditor.org)), domain, and all associated brand assets are **not** covered by the Apache 2.0 license and are not part of the open-source grant. They remain the exclusive property of the project owner. You may **not** use the name, logo, or brand assets without explicit written permission.
-
+i
 ---
 
 <p align="center">
   <sub>Built with ❤️ by Angel for audiophiles who care about quality</sub>
 </p>
-
-
-
-
