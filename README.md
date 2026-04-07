@@ -39,17 +39,6 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 <img width="1547" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/7f3a0792-70a2-46b5-af11-386c2fc32a5b" />
 
-<p align="center">
-  <a href="https://audioauditor.org/#code">
-    <img src="https://img.shields.io/badge/Explore_the_Codebase-Interactive_Code_Tour-4f50c6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Interactive Code Tour"/>
-  </a>
-</p>
-
-> **[🗺️ Interactive Code Tour →](https://audioauditor.org/#code)**
-> Explore all 23 source files across 6 architectural layers in an interactive graph — click any node to see what it does, or take the guided tour.
-
-
-
 ## Features
 
 ### Core Analysis
@@ -71,6 +60,17 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Custom FLAC Decoder** — Managed FLAC decoder handles files that NAudio cannot decode natively, ensuring full analysis and playback coverage
 - **Full Metadata Editor** - Full menu for editing, adding, or removing metadata in an audiofile including search buttons to auto search for the metadata for you
 - **Update Checker** - Optionally silently checks for updates in the background each time the program starts
+---
+
+<p align="center">
+  Explore all 23 source files across 6 architectural layers in an interactive graph — click any node to see what it does, or take the guided tour.
+  <a href="https://audioauditor.org/#code">
+    <img src="https://img.shields.io/badge/Explore_the_Codebase-Interactive_Code_Tour-4f50c6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Interactive Code Tour"/>
+  </a>
+</p>
+<img width="1441" height="812" alt="image" src="https://github.com/user-attachments/assets/7a34623f-b58e-4f6a-926b-2185a2ddbf30" />
+
+---
 
 ### Supported Formats
 
