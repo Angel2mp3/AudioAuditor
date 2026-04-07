@@ -21,10 +21,9 @@ artifacts/
 archive/
 *.exe
 *.pdb
-!*.csproj
-*.csproj
-.csproj
 *_wpftmp.csproj
+Experimental-Builds/
+experimental-builds/
 
 # NuGet
 packages/
@@ -46,6 +45,7 @@ Proxy/
 *.vspscc
 *.vssscc
 *.sln.docstates
+
 
 # IDE / VS files
 .vs/
@@ -85,11 +85,13 @@ to-do.txt
 # Windows shortcuts (embed local paths)
 *.lnk
 
-# Tooling / generated
+# Tooling
 .understand-anything/
 .claude/
+AGENTS.md
+angents.md
 
-# SH Labs secrets (contains HMAC shared secret — never commit)
+# SH Labs secrets 
 Services/SHLabsSecrets.cs
 
 # Node / Wrangler

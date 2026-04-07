@@ -19,6 +19,7 @@ namespace AudioQualityChecker.Services
 
         public static readonly List<string> AvailableThemes = new() { "Dark", "Ocean", "Light", "Amethyst", "Dreamsicle", "Goldenrod", "Emerald", "Blurple", "Crimson", "Brown" };
         public static readonly List<string> AvailablePlaybarThemes = new() { "Blue Fire", "Neon Pulse", "Sunset Glow", "Purple Haze", "Minimal", "Golden Wave", "Emerald Wave", "Blurple Wave", "Crimson Wave", "Brown Wave", "Rainbow Bars" };
+
         public static readonly List<string> AvailableMusicServices = new()
         {
             "Spotify", "YouTube Music", "Tidal", "Qobuz", "Amazon Music",
@@ -115,6 +116,9 @@ namespace AudioQualityChecker.Services
         public static bool DiscordRpcEnabled { get; set; }
         public static string DiscordRpcClientId { get; set; } = "";
         public static string DiscordRpcDisplayMode { get; set; } = "TrackDetails"; // TrackDetails, FileName
+
+        // AcoustID fingerprinting
+        public static string AcoustIdApiKey { get; set; } = "";
         public static bool DiscordRpcShowElapsed { get; set; } = true;
 
         // Last.fm Scrobbling
@@ -133,6 +137,19 @@ namespace AudioQualityChecker.Services
         // Experimental AI Detection (spectral analysis — opt-in, higher false positives)
         public static bool ExperimentalAiDetection { get; set; }
 
+        // Rip/Encode Quality Check (experimental — opt-in)
+        public static bool RipQualityEnabled { get; set; }
+
+        // Feature toggles for core analysis (all default to true)
+        public static bool SilenceDetectionEnabled { get; set; } = true;
+        public static bool FakeStereoDetectionEnabled { get; set; } = true;
+        public static bool DynamicRangeEnabled { get; set; } = true;
+        public static bool TruePeakEnabled { get; set; } = true;
+        public static bool LufsEnabled { get; set; } = true;
+        public static bool ClippingDetectionEnabled { get; set; } = true;
+        public static bool MqaDetectionEnabled { get; set; } = true;
+        public static bool DefaultAiDetectionEnabled { get; set; } = true;
+
         // SH Labs AI Detection (API-based — opt-in, uses rate-limited proxy)
         public static bool SHLabsAiDetection { get; set; }
 
@@ -144,6 +161,10 @@ namespace AudioQualityChecker.Services
 
         // AI Detection config popup dismissed — shown once to new/upgrading users
         public static bool AiConfigDismissed { get; set; }
+
+        // Feature config popup version — tracks which version's popup has been shown.
+        // Compared against app version; shown once per major version update.
+        public static string FeatureConfigVersion { get; set; } = "";
 
         // Visualizer full-volume mode: renders visualizer as if volume is at 100%
         public static bool VisualizerFullVolume { get; set; }
@@ -181,6 +202,9 @@ namespace AudioQualityChecker.Services
 
         // DataGrid column layout — serialized as Header:DisplayIndex:Width;...
         public static string ColumnLayout { get; set; } = "";
+
+        // Hidden columns — comma-separated column headers that are permanently hidden
+        public static string HiddenColumns { get; set; } = "";
 
         // Performance — max parallel analysis threads (0 = auto)
         // Auto: half of logical processors, clamped 1–16
@@ -317,6 +341,7 @@ namespace AudioQualityChecker.Services
                         case "LastFmSessionKey": LastFmSessionKey = sp[1]; break;
                         case "LastFmUsername": LastFmUsername = sp[1]; break;
                         case "DiscordRpcClientId": DiscordRpcClientId = sp[1]; break;
+                        case "AcoustIdApiKey": AcoustIdApiKey = sp[1]; break;
                     }
                 }
             }
@@ -577,12 +602,23 @@ namespace AudioQualityChecker.Services
                     $"ExportFormat={ExportFormat}",
                     $"SpatialAudio={SpatialAudioEnabled}",
                     $"ExperimentalAiDetection={ExperimentalAiDetection}",
+                    $"RipQualityEnabled={RipQualityEnabled}",
+                    $"SilenceDetectionEnabled={SilenceDetectionEnabled}",
+                    $"FakeStereoDetectionEnabled={FakeStereoDetectionEnabled}",
+                    $"DynamicRangeEnabled={DynamicRangeEnabled}",
+                    $"TruePeakEnabled={TruePeakEnabled}",
+                    $"LufsEnabled={LufsEnabled}",
+                    $"ClippingDetectionEnabled={ClippingDetectionEnabled}",
+                    $"MqaDetectionEnabled={MqaDetectionEnabled}",
+                    $"DefaultAiDetectionEnabled={DefaultAiDetectionEnabled}",
                     $"SHLabsAiDetection={SHLabsAiDetection}",
                     $"SHLabsPrivacyAccepted={SHLabsPrivacyAccepted}",
                     $"SHLabsCustomApiKey={SHLabsCustomApiKey}",
                     $"AiConfigDismissed={AiConfigDismissed}",
+                    $"FeatureConfigVersion={FeatureConfigVersion}",
                     $"VisualizerFullVolume={VisualizerFullVolume}",
                     $"ColumnLayout={ColumnLayout}",
+                    $"HiddenColumns={HiddenColumns}",
                     $"MaxConcurrency={_maxConcurrency}",
                     $"MaxMemoryMB={_maxMemoryMB}",
                     $"DonationDismissed={DonationDismissed}",
@@ -606,7 +642,8 @@ namespace AudioQualityChecker.Services
                     $"LastFmApiSecret={LastFmApiSecret}",
                     $"LastFmSessionKey={LastFmSessionKey}",
                     $"LastFmUsername={LastFmUsername}",
-                    $"DiscordRpcClientId={DiscordRpcClientId}"
+                    $"DiscordRpcClientId={DiscordRpcClientId}",
+                    $"AcoustIdApiKey={AcoustIdApiKey}"
                 };
                 File.WriteAllLines(SensitiveFile, sensitiveLines);
             }
@@ -647,6 +684,7 @@ namespace AudioQualityChecker.Services
                                 _currentPlaybarTheme = val;
                             }
                             break;
+
                         case "Service1": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[0] = val; break;
                         case "Service2": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[1] = val; break;
                         case "Service3": if (AvailableMusicServices.Contains(val)) MusicServiceSlots[2] = val; break;
@@ -708,12 +746,23 @@ namespace AudioQualityChecker.Services
                             break;
                         case "SpatialAudio": SpatialAudioEnabled = bool.TryParse(val, out var bsa) && bsa; break;
                         case "ExperimentalAiDetection": ExperimentalAiDetection = bool.TryParse(val, out var bea) && bea; AudioAnalyzer.EnableExperimentalAi = ExperimentalAiDetection; break;
+                        case "RipQualityEnabled": RipQualityEnabled = bool.TryParse(val, out var brq) && brq; AudioAnalyzer.EnableRipQuality = RipQualityEnabled; break;
+                        case "SilenceDetectionEnabled": SilenceDetectionEnabled = !(bool.TryParse(val, out var bSilDet) && !bSilDet); AudioAnalyzer.EnableSilenceDetection = SilenceDetectionEnabled; break;
+                        case "FakeStereoDetectionEnabled": FakeStereoDetectionEnabled = !(bool.TryParse(val, out var bFsDet) && !bFsDet); AudioAnalyzer.EnableFakeStereoDetection = FakeStereoDetectionEnabled; break;
+                        case "DynamicRangeEnabled": DynamicRangeEnabled = !(bool.TryParse(val, out var bDrEn) && !bDrEn); AudioAnalyzer.EnableDynamicRange = DynamicRangeEnabled; break;
+                        case "TruePeakEnabled": TruePeakEnabled = !(bool.TryParse(val, out var bTpEn) && !bTpEn); AudioAnalyzer.EnableTruePeak = TruePeakEnabled; break;
+                        case "LufsEnabled": LufsEnabled = !(bool.TryParse(val, out var bLuEn) && !bLuEn); AudioAnalyzer.EnableLufs = LufsEnabled; break;
+                        case "ClippingDetectionEnabled": ClippingDetectionEnabled = !(bool.TryParse(val, out var bClEn) && !bClEn); AudioAnalyzer.EnableClippingDetection = ClippingDetectionEnabled; break;
+                        case "MqaDetectionEnabled": MqaDetectionEnabled = !(bool.TryParse(val, out var bMqEn) && !bMqEn); AudioAnalyzer.EnableMqaDetection = MqaDetectionEnabled; break;
+                        case "DefaultAiDetectionEnabled": DefaultAiDetectionEnabled = !(bool.TryParse(val, out var bDaEn) && !bDaEn); AudioAnalyzer.EnableDefaultAiDetection = DefaultAiDetectionEnabled; break;
                         case "SHLabsAiDetection": SHLabsAiDetection = bool.TryParse(val, out var bsh) && bsh; break;
                         case "SHLabsPrivacyAccepted": SHLabsPrivacyAccepted = bool.TryParse(val, out var bsp) && bsp; break;
                         case "SHLabsCustomApiKey": SHLabsCustomApiKey = val; break;
                         case "AiConfigDismissed": AiConfigDismissed = bool.TryParse(val, out var bac) && bac; break;
+                        case "FeatureConfigVersion": FeatureConfigVersion = val; break;
                         case "VisualizerFullVolume": VisualizerFullVolume = bool.TryParse(val, out var bvfv) && bvfv; break;
                         case "ColumnLayout": ColumnLayout = val; break;
+                        case "HiddenColumns": HiddenColumns = val; break;
                         case "MaxConcurrency":
                             if (int.TryParse(val, out var mc) && mc >= 0 && mc <= 32)
                                 _maxConcurrency = mc;

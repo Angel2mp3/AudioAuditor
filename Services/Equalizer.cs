@@ -106,6 +106,18 @@ namespace AudioQualityChecker.Services
             }
         }
 
+        /// <summary>
+        /// Clears internal BiQuad filter state (previous sample memory) without
+        /// changing gain settings. Call this on seek to prevent transient spikes
+        /// caused by stale filter history meeting unrelated new samples.
+        /// </summary>
+        public void ResetFilterState()
+        {
+            for (int ch = 0; ch < _channels; ch++)
+                for (int b = 0; b < _bands.Length; b++)
+                    _filters[ch, b] = CreateFilter(b, _bands[b].Gain);
+        }
+
         public int Read(float[] buffer, int offset, int count)
         {
             int read = _source.Read(buffer, offset, count);
@@ -123,6 +135,13 @@ namespace AudioQualityChecker.Services
                     // Skip bands with zero gain to save CPU
                     if (_bands[b].Gain == 0f) continue;
                     sample = _filters[ch, b].Transform(sample);
+
+                    // Guard against filter instability (NaN/Infinity from stale state after seek)
+                    if (float.IsNaN(sample) || float.IsInfinity(sample))
+                    {
+                        sample = 0f;
+                        _filters[ch, b] = CreateFilter(b, _bands[b].Gain);
+                    }
                 }
 
                 // Soft clip using tanh for smooth, musical limiting

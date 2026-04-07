@@ -1,0 +1,249 @@
+<Window x:Class="AudioQualityChecker.MetadataStripWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        Height="520" Width="420"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBg}"
+        Foreground="{DynamicResource TextPrimary}"
+        AllowsTransparency="True">
+
+    <Window.Resources>
+        <Style x:Key="FieldCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Border x:Name="CheckBorder" Width="18" Height="18"
+                                    CornerRadius="3" BorderThickness="1.5"
+                                    BorderBrush="{DynamicResource AccentColor}"
+                                    Background="Transparent"
+                                    VerticalAlignment="Center" Margin="0,0,8,0">
+                                <TextBlock x:Name="CheckMark" Text="✓" FontSize="12" FontWeight="Bold"
+                                           Foreground="White" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Margin="0,-1,0,0"
+                                           Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckBorder" Property="Background" Value="{DynamicResource AccentColor}"/>
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CheckBorder" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="SmallButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ButtonBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background"
+                                        Value="{DynamicResource ButtonHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush"
+                                        Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource SmallButton}">
+            <Setter Property="Background" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource SmallButton}">
+            <Setter Property="Background" Value="#44FF4444"/>
+            <Setter Property="Foreground" Value="#FFFF6666"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{DynamicResource PanelBg}"
+            BorderBrush="{DynamicResource BorderColor}" BorderThickness="1" CornerRadius="6">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="8"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" MouseLeftButtonDown="Header_MouseDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="16"
+                               Foreground="#FFFF6666" Margin="0,0,8,0"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Text="Strip Metadata"
+                               FontSize="18" FontWeight="Bold" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextPrimary}"/>
+                </StackPanel>
+                <Button Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Click="Close_Click" Cursor="Hand"
+                        Background="Transparent" BorderBrush="Transparent"
+                        Foreground="{DynamicResource TextMuted}" Padding="6,4">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="6,4">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#44FF4444"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+
+            <!-- File count -->
+            <TextBlock Grid.Row="2" x:Name="FileCountLabel" FontSize="12" FontFamily="Segoe UI"
+                       Foreground="{DynamicResource TextMuted}"/>
+
+            <!-- Field checkboxes -->
+            <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer.Resources>
+                    <Style TargetType="ScrollBar">
+                        <Setter Property="Background" Value="{DynamicResource ScrollBg}"/>
+                        <Setter Property="Width" Value="10"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ScrollBar">
+                                    <Grid>
+                                        <Border Background="{DynamicResource ScrollBg}" CornerRadius="4"/>
+                                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                            <Track.DecreaseRepeatButton>
+                                                <RepeatButton OverridesDefaultStyle="True" Background="Transparent"
+                                                              Focusable="False" IsTabStop="False"
+                                                              Command="ScrollBar.PageUpCommand">
+                                                    <RepeatButton.Template>
+                                                        <ControlTemplate TargetType="RepeatButton">
+                                                            <Border Background="Transparent"/>
+                                                        </ControlTemplate>
+                                                    </RepeatButton.Template>
+                                                </RepeatButton>
+                                            </Track.DecreaseRepeatButton>
+                                            <Track.Thumb>
+                                                <Thumb OverridesDefaultStyle="True" IsTabStop="False">
+                                                    <Thumb.Template>
+                                                        <ControlTemplate TargetType="Thumb">
+                                                            <Border x:Name="thumbBd"
+                                                                    Background="{DynamicResource ScrollThumb}"
+                                                                    CornerRadius="4" Margin="2">
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="thumbBd" Property="Background"
+                                                                            Value="{DynamicResource ScrollThumbHover}"/>
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Thumb.Template>
+                                                </Thumb>
+                                            </Track.Thumb>
+                                            <Track.IncreaseRepeatButton>
+                                                <RepeatButton OverridesDefaultStyle="True" Background="Transparent"
+                                                              Focusable="False" IsTabStop="False"
+                                                              Command="ScrollBar.PageDownCommand">
+                                                    <RepeatButton.Template>
+                                                        <ControlTemplate TargetType="RepeatButton">
+                                                            <Border Background="Transparent"/>
+                                                        </ControlTemplate>
+                                                    </RepeatButton.Template>
+                                                </RepeatButton>
+                                            </Track.IncreaseRepeatButton>
+                                        </Track>
+                                    </Grid>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ScrollViewer.Resources>
+                <StackPanel>
+                    <TextBlock Text="Select fields to remove:" FontSize="12" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextSecondary}" FontWeight="SemiBold"
+                               Margin="0,0,0,10"/>
+
+                    <CheckBox x:Name="ChkTitle" Content="Title" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkArtist" Content="Artist (Performers)" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkAlbum" Content="Album" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkAlbumArtist" Content="Album Artist" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkYear" Content="Year" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkTrackNumber" Content="Track / Disc Number" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkGenre" Content="Genre" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkComposer" Content="Composer" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkConductor" Content="Conductor" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkComment" Content="Comment" Style="{StaticResource FieldCheckBox}" IsChecked="True"/>
+                    <CheckBox x:Name="ChkLyrics" Content="Lyrics" Style="{StaticResource FieldCheckBox}" IsChecked="True"/>
+                    <CheckBox x:Name="ChkCopyright" Content="Copyright" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkCover" Content="Album Cover Art" Style="{StaticResource FieldCheckBox}"/>
+                    <CheckBox x:Name="ChkReplayGain" Content="ReplayGain Tags" Style="{StaticResource FieldCheckBox}"/>
+
+                    <Separator Margin="0,8"/>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button Content="Select All" Style="{StaticResource SmallButton}"
+                                Click="SelectAll_Click" Margin="0,0,8,0"/>
+                        <Button Content="Select None" Style="{StaticResource SmallButton}"
+                                Click="SelectNone_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Status -->
+            <TextBlock Grid.Row="6" x:Name="StatusText" FontSize="11" FontFamily="Segoe UI"
+                       Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"/>
+
+            <!-- Footer buttons -->
+            <Grid Grid.Row="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="1" Content="Cancel" Style="{StaticResource SmallButton}"
+                        Click="Close_Click" Padding="16,6"/>
+                <Button Grid.Column="3" Content="Strip Selected Fields" Style="{StaticResource DangerButton}"
+                        Click="StripFields_Click" Padding="16,6"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

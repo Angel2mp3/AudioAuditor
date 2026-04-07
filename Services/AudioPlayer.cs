@@ -37,6 +37,14 @@ namespace AudioQualityChecker.Services
         public int VisualizerSampleRate { get; private set; } = 44100;
         public int VisualizerChannels { get; private set; } = 2;
 
+        // Post-seek safety: generation counter detects seeks that happen while
+        // _source.Read() is in progress (corrupting the decode buffer), then
+        // hard-mute + fade-in provides clean silence while the decoder stabilizes.
+        private int _seekGeneration;                       // incremented atomically by Seek()
+        private int _seekMuteBuffers;                      // read() calls to hard-mute after seek
+        private int _seekFadeSamplesRemaining;
+        private readonly int _seekFadeTotalSamples = 1764; // ~40ms at 44.1kHz
+
         // Equalizer
         private Equalizer? _equalizer;
         public Equalizer? CurrentEqualizer => _equalizer;
@@ -101,9 +109,90 @@ namespace AudioQualityChecker.Services
 
             public int Read(byte[] buffer, int offset, int count)
             {
+                // ── AUDIO SAFETY SYSTEM ──
+                // Prevents ear-damaging blasts when seeking by detecting corrupted
+                // decode buffers (seek changed reader position mid-Read) and forcing
+                // silence until the decoder stabilizes.
+                //
+                // The bug: Seek() on UI thread changes the reader position while the
+                // audio thread is inside _source.Read(). The decoder returns garbage —
+                // half old position, half new, producing valid [-1,1] floats that
+                // sound like deafening white static. Clamps can't catch this because
+                // the samples are individually valid; only the PATTERN is noise.
+                //
+                // Fix: generation counter detects ANY seek during Read(). If it fires,
+                // the entire buffer is zeroed. Mute period keeps silence while the
+                // decoder stabilizes post-seek. Fade-in smooths re-entry.
+
+                // Snapshot generation BEFORE reading from the pipeline
+                int genBefore = System.Threading.Volatile.Read(ref _player._seekGeneration);
+
                 int read = _source.Read(buffer, offset, count);
-                if (read > 0)
+                if (read <= 0) return read;
+
+                // CHECK 1: Did a seek happen DURING _source.Read()?
+                // If so, the buffer is corrupted — zero it entirely.
+                int genAfter = System.Threading.Volatile.Read(ref _player._seekGeneration);
+                if (genAfter != genBefore)
+                {
+                    Array.Clear(buffer, offset, read);
                     _player.CaptureVisualizerSamples(buffer, offset, read, _source.WaveFormat);
+                    return read;
+                }
+
+                // CHECK 2: Post-seek mute period — decoder needs several buffer
+                // fills to produce clean output after a position change.
+                int muteLeft = System.Threading.Volatile.Read(ref _player._seekMuteBuffers);
+                if (muteLeft > 0)
+                {
+                    Array.Clear(buffer, offset, read);
+                    System.Threading.Interlocked.Decrement(ref _player._seekMuteBuffers);
+                    _player.CaptureVisualizerSamples(buffer, offset, read, _source.WaveFormat);
+                    return read;
+                }
+
+                // CHECK 3: Per-sample hard limiter + post-mute fade-in (always active)
+                if (_source.WaveFormat.Encoding == WaveFormatEncoding.IeeeFloat
+                    && _source.WaveFormat.BitsPerSample == 32)
+                {
+                    int sampleCount = read / 4;
+                    int fadeRemaining = _player._seekFadeSamplesRemaining;
+                    int fadeTotal = _player._seekFadeTotalSamples;
+
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        int pos = offset + i * 4;
+                        float sample = BitConverter.ToSingle(buffer, pos);
+
+                        // Kill NaN / Infinity
+                        if (float.IsNaN(sample) || float.IsInfinity(sample))
+                            sample = 0f;
+
+                        // Hard clamp to [-1, 1]
+                        if (sample > 1f) sample = 1f;
+                        else if (sample < -1f) sample = -1f;
+
+                        // Post-mute fade-in ramp
+                        if (fadeRemaining > 0)
+                        {
+                            float gain = 1f - (float)fadeRemaining / fadeTotal;
+                            sample *= gain * gain; // quadratic curve
+                            fadeRemaining--;
+                        }
+
+                        BitConverter.TryWriteBytes(buffer.AsSpan(pos, 4), sample);
+                    }
+
+                    _player._seekFadeSamplesRemaining = fadeRemaining;
+
+                    // FINAL CHECK: if a seek happened during the limiter loop, nuke it
+                    if (System.Threading.Volatile.Read(ref _player._seekGeneration) != genAfter)
+                    {
+                        Array.Clear(buffer, offset, read);
+                    }
+                }
+
+                _player.CaptureVisualizerSamples(buffer, offset, read, _source.WaveFormat);
                 return read;
             }
         }
@@ -973,6 +1062,26 @@ namespace AudioQualityChecker.Services
 
         public void Seek(double positionSeconds)
         {
+            // ── NUCLEAR SAFETY: mute the WaveOut device at the Windows audio level ──
+            // This is the absolute last line of defense. Even if every other safety
+            // mechanism fails, no sound can physically reach the speakers while the
+            // device volume is 0.
+            if (_waveOut != null) _waveOut.Volume = 0f;
+
+            // Increment generation counter so the audio thread knows the current
+            // buffer (if one is being filled right now) is tainted
+            System.Threading.Interlocked.Increment(ref _seekGeneration);
+
+            // Hard-mute for 6 buffer fills while decoder stabilizes
+            System.Threading.Interlocked.Exchange(ref _seekMuteBuffers, 6);
+
+            // Reset DSP processor state
+            _equalizer?.ResetFilterState();
+            _spatialAudio?.ResetBuffers();
+
+            // Arm post-mute fade-in
+            _seekFadeSamplesRemaining = _seekFadeTotalSamples;
+
             if (_reader != null)
             {
                 var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _reader.TotalTime.TotalSeconds));
@@ -988,6 +1097,11 @@ namespace AudioQualityChecker.Services
                 var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _waveStreamReader.TotalTime.TotalSeconds));
                 _waveStreamReader.CurrentTime = target;
             }
+
+            // Restore WaveOut device volume — the mute buffers + fade-in in Read()
+            // will keep actual audio silent until it's safe, but the device is now
+            // allowed to produce sound again for when the fade-in starts.
+            if (_waveOut != null) _waveOut.Volume = 1f;
         }
 
         public void SeekRelative(double offsetSeconds)
