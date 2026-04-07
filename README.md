@@ -5,23 +5,22 @@
 <h1 align="center">AudioAuditor</h1>
 
 <p align="center">
-  <b>Professional audio quality analysis &amp; verification for your music library</b>
+  <b>Audit Your Audio with Confidence</b>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/.NET-8.0-purple?style=flat-square&logo=dotnet" alt=".NET 8"/>
-  <img src="https://img.shields.io/badge/Platform-Windows-blue?style=flat-square&logo=windows" alt="Windows"/>
-  <img src="https://img.shields.io/badge/UI-WPF-0078D4?style=flat-square" alt="WPF"/>
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square" alt="License"/>
+  <img src="https://img.shields.io/badge/.NET-8.0-purple?style=plastic&logo=dotnet" alt=".NET 8"/>
+  <img src="https://img.shields.io/badge/Platform-Windows-blue?style=plastic&logo=windows" alt="Windows"/>
+  <img src="https://img.shields.io/badge/UI-WPF-0078D4?style=plastic" alt="WPF"/>
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=plastic" alt="License"/>
 </p>
-
 <p align="center">
   <a href="https://ko-fi.com/angelsoftware">
-    <img src="https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
+    <img src="https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=plastic&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
   &nbsp;
   <a href="https://audioauditor.org">
-    <img src="https://img.shields.io/badge/Website-audioauditor.org-7c5cff?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"/>
+    <img src="https://img.shields.io/badge/Website-audioauditor.org-7c5cff?style=plastic&logo=googlechrome&logoColor=white" alt="Website"/>
   </a>
 </p>
 
@@ -35,9 +34,10 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 
 ---
 
-<img width="1547" height="867" alt="amethyst-theme" src="https://github.com/user-attachments/assets/1b5b02aa-c9b6-4467-acfa-f61232bd3ddd" />
+<img width="1547" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/2c4f27df-1ba0-4479-a89d-362502d80d6d" />
 
-<img width="1547" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/7f3a0792-70a2-46b5-af11-386c2fc32a5b" />
+<img width="1547" height="867" alt="amethyst-theme" src="https://github.com/user-attachments/assets/bf064074-c27c-4e58-afb9-74a7dd9842dc" />
+
 
 ## Features
 
