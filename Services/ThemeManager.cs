@@ -149,6 +149,7 @@ namespace AudioQualityChecker.Services
         public static bool ClippingDetectionEnabled { get; set; } = true;
         public static bool MqaDetectionEnabled { get; set; } = true;
         public static bool DefaultAiDetectionEnabled { get; set; } = true;
+        public static bool BpmDetectionEnabled { get; set; } = true;
 
         // SH Labs AI Detection (API-based — opt-in, uses rate-limited proxy)
         public static bool SHLabsAiDetection { get; set; }
@@ -611,6 +612,7 @@ namespace AudioQualityChecker.Services
                     $"ClippingDetectionEnabled={ClippingDetectionEnabled}",
                     $"MqaDetectionEnabled={MqaDetectionEnabled}",
                     $"DefaultAiDetectionEnabled={DefaultAiDetectionEnabled}",
+                    $"BpmDetectionEnabled={BpmDetectionEnabled}",
                     $"SHLabsAiDetection={SHLabsAiDetection}",
                     $"SHLabsPrivacyAccepted={SHLabsPrivacyAccepted}",
                     $"SHLabsCustomApiKey={SHLabsCustomApiKey}",
@@ -755,6 +757,7 @@ namespace AudioQualityChecker.Services
                         case "ClippingDetectionEnabled": ClippingDetectionEnabled = !(bool.TryParse(val, out var bClEn) && !bClEn); AudioAnalyzer.EnableClippingDetection = ClippingDetectionEnabled; break;
                         case "MqaDetectionEnabled": MqaDetectionEnabled = !(bool.TryParse(val, out var bMqEn) && !bMqEn); AudioAnalyzer.EnableMqaDetection = MqaDetectionEnabled; break;
                         case "DefaultAiDetectionEnabled": DefaultAiDetectionEnabled = !(bool.TryParse(val, out var bDaEn) && !bDaEn); AudioAnalyzer.EnableDefaultAiDetection = DefaultAiDetectionEnabled; break;
+                        case "BpmDetectionEnabled": BpmDetectionEnabled = !(bool.TryParse(val, out var bBpmEn) && !bBpmEn); AudioAnalyzer.EnableBpmDetection = BpmDetectionEnabled; break;
                         case "SHLabsAiDetection": SHLabsAiDetection = bool.TryParse(val, out var bsh) && bsh; break;
                         case "SHLabsPrivacyAccepted": SHLabsPrivacyAccepted = bool.TryParse(val, out var bsp) && bsp; break;
                         case "SHLabsCustomApiKey": SHLabsCustomApiKey = val; break;

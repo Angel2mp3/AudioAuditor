@@ -44,6 +44,13 @@ namespace AudioQualityChecker
         // ETA tracking for progress bar
         private DateTime _analysisStartTime;
 
+        // Shared analysis state for re-entrant file additions
+        private int _analysisTotal;
+        private int _analysisCompleted;
+        private int _activeBatches;
+        private SemaphoreSlim? _analysisSemaphore;
+        private SemaphoreSlim? _shLabsSemaphore;
+
         // Audio player
         private readonly AudioPlayer _player = new();
         private readonly DispatcherTimer _playerTimer;
@@ -635,6 +642,11 @@ namespace AudioQualityChecker
         {
             // Cancel any in-progress analysis so pending files stop loading
             _analysisCts?.Cancel();
+            _isAnalyzing = false;
+            _activeBatches = 0;
+            _analysisTotal = 0;
+            _analysisCompleted = 0;
+            AnalysisProgressPanel.Visibility = Visibility.Collapsed;
 
             _player.Stop();
             _playerTimer.Stop();
@@ -797,11 +809,6 @@ namespace AudioQualityChecker
 
         private async Task AnalyzeAndAddFiles(string[] filePaths)
         {
-            if (_isAnalyzing)
-            {
-                ErrorDialog.Show("Busy", "Analysis already in progress. Please wait.", this);
-                return;
-            }
 
             // Deduplicate against already-loaded files
             var existing = new HashSet<string>(_files.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
@@ -869,24 +876,31 @@ namespace AudioQualityChecker
                 }
             }
 
-            _analysisCts?.Cancel();
-            _analysisCts = new CancellationTokenSource();
-            var ct = _analysisCts.Token;
+            bool isFirstBatch = !_isAnalyzing;
+            if (isFirstBatch)
+            {
+                _analysisCts?.Cancel();
+                _analysisCts = new CancellationTokenSource();
+                _analysisCompleted = 0;
+                _analysisTotal = 0;
+                _analysisStartTime = DateTime.UtcNow;
+                _analysisSemaphore = new SemaphoreSlim(ThemeManager.MaxConcurrency);
+                _shLabsSemaphore = new SemaphoreSlim(3);
+                _isAnalyzing = true;
+                AnalysisProgressPanel.Visibility = Visibility.Visible;
+                AnalysisProgress.Value = 0;
+                AnalysisEtaText.Text = "";
+            }
+            var ct = _analysisCts!.Token;
 
-            _isAnalyzing = true;
-            int total = newPaths.Length;
-            int completed = 0;
-            _analysisStartTime = DateTime.UtcNow;
+            Interlocked.Add(ref _analysisTotal, newPaths.Length);
+            int currentTotal = _analysisTotal;
+            AnalysisProgress.Maximum = currentTotal;
+            StatusText.Text = $"Analyzing {_analysisCompleted} / {currentTotal} files...";
 
-            AnalysisProgressPanel.Visibility = Visibility.Visible;
-            AnalysisProgress.Maximum = total;
-            AnalysisProgress.Value = 0;
-            AnalysisEtaText.Text = "";
-            StatusText.Text = $"Analyzing 0 / {total} files...";
-
-            int maxParallel = ThemeManager.MaxConcurrency;
-            var semaphore = new SemaphoreSlim(maxParallel);
-            var shLabsSemaphore = new SemaphoreSlim(3); // Limit concurrent SH Labs HTTP calls
+            Interlocked.Increment(ref _activeBatches);
+            var semaphore = _analysisSemaphore!;
+            var shLabsSemaphore = _shLabsSemaphore!;
 
             var tasks = newPaths.Select(async path =>
             {
@@ -912,7 +926,7 @@ namespace AudioQualityChecker
                 catch (OperationCanceledException) { return; }
                 catch
                 {
-                    Interlocked.Increment(ref completed);
+                    var errCount = Interlocked.Increment(ref _analysisCompleted);
                     if (!ct.IsCancellationRequested)
                     {
                         await Dispatcher.InvokeAsync(() =>
@@ -926,9 +940,11 @@ namespace AudioQualityChecker
                                 Status = AudioStatus.Corrupt,
                                 ErrorMessage = "Failed to open or analyze"
                             });
-                            AnalysisProgress.Value = completed;
-                            StatusText.Text = $"Analyzed {completed} / {total} files...";
-                            UpdateAnalysisEta(completed, total);
+                            int t = _analysisTotal;
+                            AnalysisProgress.Maximum = t;
+                            AnalysisProgress.Value = errCount;
+                            StatusText.Text = $"Analyzed {errCount} / {t} files...";
+                            UpdateAnalysisEta(errCount, t);
                         });
                     }
                     return;
@@ -967,10 +983,12 @@ namespace AudioQualityChecker
                     await Dispatcher.InvokeAsync(() =>
                     {
                         _files.Add(info);
-                        var count = Interlocked.Increment(ref completed);
-                        StatusText.Text = $"Analyzed {count} / {total} files...";
+                        var count = Interlocked.Increment(ref _analysisCompleted);
+                        int t = _analysisTotal;
+                        AnalysisProgress.Maximum = t;
+                        StatusText.Text = $"Analyzed {count} / {t} files...";
                         AnalysisProgress.Value = count;
-                        UpdateAnalysisEta(count, total);
+                        UpdateAnalysisEta(count, t);
                     });
                 }
             });
@@ -1026,12 +1044,15 @@ namespace AudioQualityChecker
                 }
             }
 
-            _isAnalyzing = false;
-            AnalysisProgressPanel.Visibility = Visibility.Collapsed;
-            AnalysisEtaText.Text = "";
+            if (Interlocked.Decrement(ref _activeBatches) == 0)
+            {
+                _isAnalyzing = false;
+                AnalysisProgressPanel.Visibility = Visibility.Collapsed;
+                AnalysisEtaText.Text = "";
 
-            UpdateStatusSummary();
-            ScheduleDonationPopup();
+                UpdateStatusSummary();
+                ScheduleDonationPopup();
+            }
         }
 
         private void UpdateAnalysisEta(int completed, int total)
@@ -1159,6 +1180,7 @@ namespace AudioQualityChecker
             FcChkLufs.IsChecked = ThemeManager.LufsEnabled;
             FcChkClipping.IsChecked = ThemeManager.ClippingDetectionEnabled;
             FcChkMqa.IsChecked = ThemeManager.MqaDetectionEnabled;
+            FcChkBpm.IsChecked = ThemeManager.BpmDetectionEnabled;
             FcChkRipQuality.IsChecked = ThemeManager.RipQualityEnabled;
             FcChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
             FcChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
@@ -1197,6 +1219,9 @@ namespace AudioQualityChecker
 
             ThemeManager.MqaDetectionEnabled = FcChkMqa.IsChecked == true;
             AudioAnalyzer.EnableMqaDetection = ThemeManager.MqaDetectionEnabled;
+
+            ThemeManager.BpmDetectionEnabled = FcChkBpm.IsChecked == true;
+            AudioAnalyzer.EnableBpmDetection = ThemeManager.BpmDetectionEnabled;
 
             // AI detection choices
             ThemeManager.DefaultAiDetectionEnabled = FcChkDefaultAi.IsChecked == true;

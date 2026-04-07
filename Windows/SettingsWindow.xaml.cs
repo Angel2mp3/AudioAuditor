@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -201,6 +202,15 @@ namespace AudioQualityChecker
 
             // Auto-update check
             ChkCheckForUpdates.IsChecked = ThemeManager.CheckForUpdates;
+
+            // Version info
+            string currentVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?";
+            CurrentVersionText.Text = $"Current version: {currentVersion}";
+            if (!string.IsNullOrEmpty(UpdateChecker.LatestVersion))
+                LatestVersionText.Text = $"Latest version: {UpdateChecker.LatestVersion}";
+            else
+                LatestVersionText.Text = "Latest version: checking...";
+            _ = LoadLatestVersionAsync(currentVersion);
 
             // Column visibility checkboxes — checked = visible (not hidden)
             var hidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -467,6 +477,27 @@ namespace AudioQualityChecker
             ApplyApiKeyVisibility();
             ApplyDiscordIdVisibility();
             Close();
+        }
+
+        private async Task LoadLatestVersionAsync(string currentVersion)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(UpdateChecker.LatestVersion))
+                    await UpdateChecker.CheckForUpdateAsync(currentVersion);
+
+                Dispatcher.Invoke(() =>
+                {
+                    if (!string.IsNullOrEmpty(UpdateChecker.LatestVersion))
+                        LatestVersionText.Text = $"Latest version: {UpdateChecker.LatestVersion}";
+                    else
+                        LatestVersionText.Text = "Latest version: unable to check";
+                });
+            }
+            catch
+            {
+                Dispatcher.Invoke(() => LatestVersionText.Text = "Latest version: unable to check");
+            }
         }
 
         private void ExperimentalAi_Changed(object sender, RoutedEventArgs e)

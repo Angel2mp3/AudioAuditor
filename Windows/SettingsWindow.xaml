@@ -304,6 +304,8 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="16"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="16"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Header with drag + close -->
@@ -1217,15 +1219,26 @@
                 </WrapPanel>
             </StackPanel>
 
+            <!-- Version Info -->
+            <StackPanel Grid.Row="22" Margin="0,0,0,0">
+                <TextBlock Text="Version" FontSize="14" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                           Margin="0,0,0,6"/>
+                <TextBlock x:Name="CurrentVersionText" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                <TextBlock x:Name="LatestVersionText" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,0"/>
+            </StackPanel>
+
             <!-- Attribution -->
-            <Grid Grid.Row="22" Margin="0,8,0,4">
+            <Grid Grid.Row="24" Margin="0,8,0,4">
                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI">
                     <Run Text="Made with " Foreground="{DynamicResource TextMuted}"/><Run Text="&#x2764;" Foreground="#E25555" FontSize="13"/><Run Text=" by " Foreground="{DynamicResource TextMuted}"/><Hyperlink x:Name="AuthorLink" NavigateUri="https://github.com/Angel2mp3" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{DynamicResource AccentColor}" TextDecorations="None">Angel</Hyperlink>
                 </TextBlock>
             </Grid>
 
             <!-- Support button + Close -->
-            <Grid Grid.Row="24" Margin="0,8,0,4">
+            <Grid Grid.Row="26" Margin="0,8,0,4">
                 <Button Click="SupportDonate_Click" Cursor="Hand"
                         HorizontalAlignment="Center">
                     <Button.Template>
