@@ -15,6 +15,15 @@
 - **NP Seek Bar** — Dedicated seek slider in the Now Playing panel with proper drag handling — no more position jumping while dragging
 - **Integrity Verification** — Built-in checks to verify the application hasn't been tampered with. If AudioAuditor detects modifications to its binaries, it warns users and directs them to the official download. This protects against malware-laced repackages that have been circulating online. Fork-friendly — only activates for builds using the AudioAuditor name
 
+### CLI
+
+- **Interactive Mode** — Launch the CLI with no arguments (or double-click the exe) to enter a persistent REPL session with colored prompts, built-in `cd`/`ls`/`clear` navigation, drag-and-drop path support, and auto-scan on pasted paths
+- **Full Analysis Parity** — CLI now supports every analysis feature from the GUI: True Peak (dBTP), integrated LUFS, Dynamic Range, Rip/Encode Quality, SH Labs AI detection, Fake Stereo, Silence Detection, Clipping, MQA, and BPM
+- **Analysis Toggle Flags** — Fine-grained control over which checks run: `--no-true-peak`, `--no-lufs`, `--no-dynamic-range`, `--no-clipping`, `--no-mqa`, `--no-silence`, `--no-fake-stereo`, `--no-bpm`, `--fast` (skips DR/TP/LUFS/rip), plus opt-in `--experimental-ai`, `--rip-quality`, `--shlabs`
+- **Expanded JSON Output** — `--json` now emits 20+ fields per file including `truePeakDbTP`, `lufsIntegrated`, `dynamicRange`, `ripQuality`, `fakeStereo`, `silenceDetected`, `clipping`, `mqaDetected`, `bpm`, `shLabsConfidence`, `shLabsAiProbability`, `cueSheet`, and more
+- **Detailed Info Upgrades** — `info` command output now includes True Peak, LUFS, Rip Quality, SH Labs AI analysis, and Cue Sheet sections
+- **Spectrogram Generation** — Generate spectrograms as PNG images for individual files or entire folders via cross-platform SkiaSharp rendering
+
 ### Improvements
 
 - **CLI Update Check** — The CLI now properly waits (up to 2 seconds) for the background update check to finish before exiting, so update notifications are no longer silently dropped on fast commands
