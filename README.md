@@ -24,6 +24,18 @@
 
 ---
 
+> **🛡️ SECURITY NOTICE — BEWARE OF FAKES**
+>
+> The **ONLY** official places to download AudioAuditor are:
+> - **Website:** [https://audioauditor.org/](https://audioauditor.org/)
+> - **GitHub:** [https://github.com/Angel2mp3/AudioAuditor](https://github.com/Angel2mp3/AudioAuditor)
+>
+> **Any other source claiming to distribute AudioAuditor is a FAKE and almost certainly contains malware.**
+> Do not download AudioAuditor from random websites, file-sharing links, or unofficial repositories.
+> If you obtained this software from anywhere other than the two links above, **delete it immediately** and download the genuine version.
+
+---
+
 ## Overview
 
 **AudioAuditor** is a feature-rich desktop application for Windows that analyzes your audio files to detect **fake lossless**, verify **true quality**, identify **clipping**, detect **MQA encoding**, detect **AI-generated audio**, estimate **effective frequency cutoffs**, and much more — all wrapped in a sleek, themeable interface with a built-in audio player, equalizer, spatial audio, spectrogram viewer, and real-time visualizer.
@@ -88,6 +100,17 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Spatial Audio** — Headphone-optimized soundstage widening using crossfeed, HRTF-like interaural time delay, head shadow simulation, and early reflections for a speaker-like experience
 - **10-band Parametric Equalizer** — 32 Hz to 16 kHz with ±12 dB per band, soft clipping protection, collapsible panel, and per-band reset
 - **Seek Safety Protection** — Multi-layered audio safety system prevents loud pops or static when seeking. Thread-safe audio readers, device-level volume muting during seek, corruption detection, automatic silence buffers, and a hard limiter ensure safe listening at all times
+
+### Now Playing Panel
+- **Immersive full-panel view** — Click the album cover or press the expand button on the playbar to open a two-column Now Playing panel: album art with color-matched glows on the left, synced lyrics on the right
+- **Album Color-Match Theming** — Dominant colors extracted from the album art are applied to the panel background, glows, and visualizer accent colors for a fully cohesive look
+- **Synced Lyrics** — Automatic time-synced lyrics from multiple sources: embedded tags, local `.lrc` files, LrcLib, Netease Music, and Musixmatch. Lyrics auto-scroll and highlight the current line; click any line to seek directly to that timestamp. Cycle through providers with the source button. Drag-and-drop `.lrc` files onto the panel to load them instantly
+- **Lyrics Translation (beta)** — Real-time translation into any supported language; auto-detects the source language or lets you set it manually
+- **Karaoke Mode (beta)** — Word-by-word highlighting that illuminates each word as it's sung with smooth color transitions
+- **Next Track / Artist Preview** — Displays the upcoming track or current artist below the album cover; click to toggle between the two
+- **Dedicated Seek Bar** — Full drag-and-seek slider inside the Now Playing panel with no position jumping while dragging
+- **Visualizer Placement** — Choose between a full-width visualizer bar above the playbar or a compact strip under the album cover
+- **Layout Customization** — Adjust album cover size and position, title and artist text size and position, lyrics panel size and position, and visualizer size and position via a live-preview popup. All layout preferences persist across sessions
 
 ### Spectrogram Viewer
 - Full-resolution spectrogram generation with logarithmic frequency scaling (20 Hz – Nyquist)

@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.6.0
+
+### New Features
+
+- **Now Playing Panel** — Full immersive Now Playing experience. Click the album cover or press the expand button on the playbar to open a two-column panel: left side shows the album cover with color-matched glows and the song title, right side displays synced lyrics. Background gradient is extracted from the album art for a cohesive look
+- **Lyrics System** — Automatic synced lyrics with multiple providers: embedded tags, local `.lrc` files, LrcLib, Netease Music, and Musixmatch. Cycle through providers with the source button. Lyrics auto-scroll and highlight the current line in sync with playback. Click any lyric line to seek to that timestamp. Drag-and-drop `.lrc` files directly onto the lyrics panel to load them
+- **Lyrics Translation (beta)** — Translate lyrics to any supported language in real-time. Auto-detects the source language or lets you set it manually
+- **Karaoke Mode (beta)** — Word-by-word lyric highlighting that illuminates each word as it's sung, with smooth color transitions
+- **Album Color-Match Theming** — Extracts dominant colors from the album cover and applies them to the NP panel background, glows, and visualizer accent colors for a fully themed experience
+- **Layout Customization** — Adjust album cover size and position, title size and position, artist/up-next position, lyrics size and position, and visualizer size and position via a popup with live-preview sliders. Position offsets move elements freely without clipping. All preferences persist across sessions
+- **Visualizer Placement Options** — Choose between full-width visualizer bar above the playbar or a compact visualizer strip under the album cover
+- **Next Track / Artist Preview** — Shows the upcoming track or current artist below the album cover. Click to toggle between artist and up-next display
+- **NP Seek Bar** — Dedicated seek slider in the Now Playing panel with proper drag handling — no more position jumping while dragging
+- **Integrity Verification** — Built-in checks to verify the application hasn't been tampered with. If AudioAuditor detects modifications to its binaries, it warns users and directs them to the official download. This protects against malware-laced repackages that have been circulating online. Fork-friendly — only activates for builds using the AudioAuditor name
+
+### Improvements
+
+- **CLI Update Check** — The CLI now properly waits (up to 2 seconds) for the background update check to finish before exiting, so update notifications are no longer silently dropped on fast commands
+- **CLI Version Fallback** — Fixed stale hardcoded fallback version string
+
+### Fixes
+
+- **Occlusion Check Timer Leak** — Fixed event handler leak where every window deactivation created a new timer tick handler without removing the old one, causing duplicate handlers to accumulate over time
+
+---
+
 ## v1.5.1
 
 ### Improvements

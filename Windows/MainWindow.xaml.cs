@@ -18,6 +18,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using IOPath = System.IO.Path;
@@ -55,6 +56,7 @@ namespace AudioQualityChecker
         private readonly AudioPlayer _player = new();
         private readonly DispatcherTimer _playerTimer;
         private bool _isSeeking;
+        private bool _npIsSeeking;  // drag guard for NP seek slider
 
         // SMTC (media session for FluentFlyout/Windows media overlay)
         private SmtcService? _smtc;
@@ -84,6 +86,71 @@ namespace AudioQualityChecker
         private readonly Random _shuffleRng = new();
         private readonly List<AudioFileInfo> _shuffleDeck = new(); // pre-shuffled playback order
         private int _shuffleDeckIndex; // current position in the deck
+
+        // Now Playing panel state
+        private DispatcherTimer? _npUpdateTimer;
+        private LyricsResult _npCurrentLyrics = LyricsResult.Empty;
+        private int _npCurrentLyricIndex = -1;
+        private readonly List<TextBlock> _npLyricTextBlocks = new();
+        private LyricService.LyricProvider _npLyricProvider = LyricService.LyricProvider.Auto;
+        private bool _npVisible;
+        private bool _npVisualizerEnabled;
+        private bool _npColorMatchEnabled;
+        private DateTime _lastTrackFinishedTime = DateTime.MinValue;
+        private string? _npLastTrackPath; // track which song is loaded in NP to detect changes
+        private int _npVisualizerStyle; // NP has its own style selection
+        private bool _mainVizWasActive; // remember main visualizer state when NP takes over
+
+        // Album colors for color-match theming (set in NpApplyGlow)
+        private System.Windows.Media.Color _npAlbumPrimary;
+        private System.Windows.Media.Color _npAlbumSecondary;
+        private System.Windows.Media.Color _npAlbumBackground;
+        private System.Windows.Media.Color _npVizColorPrimary;   // for visualizer tinting
+        private System.Windows.Media.Color _npVizColorSecondary; // for visualizer tinting
+        private double _npVizBarHeight = 100; // default visualizer bar height
+        private bool _npVizResizing;          // drag-resize in progress
+        private double _npVizResizeStartY;    // mouse Y at drag start
+        private double _npVizResizeStartH;    // height at drag start
+        private int _npVizPlacement;          // 0 = full-width, 1 = under-cover
+        private bool _npLyricsHidden;             // lyrics-off mode (pure viz + art)
+        private bool _npTranslateEnabled;         // show translated lyrics alongside original
+        private string _npTranslateFrom = "auto"; // source language (auto = detect)
+        private string _npTranslateTo = "en";     // target language
+        private List<string>? _npTranslatedLines; // cached translation of current lyrics
+        private bool _npKaraokeEnabled;           // word-by-word karaoke mode
+        private int _npLyricsVersion;              // incremented each track change to discard stale lyrics
+        private bool _npSubCoverShowArtist = true; // true = Artist (default), false = Up Next
+        private bool _npPrefsLoaded;              // one-time load from ThemeManager
+        private int _npCoverSize;                 // custom album cover size (0 = default)
+        private int _npTitleSize;                 // custom title font size (0 = default)
+        private int _npSubTextSize;               // custom artist/up-next font size (0 = default)
+        private int _npLyricsSize;                // custom lyrics font size (0 = default)
+        private int _npVizSize;                   // custom visualizer height (0 = default)
+        private int _npLyricsOffsetX;             // horizontal lyrics offset in px (0 = default ~24px margin)
+        private int _npCoverOffsetX;              // cover horizontal position offset
+        private int _npCoverOffsetY;              // cover vertical position offset
+        private int _npTitleOffsetX;              // title horizontal position offset
+        private int _npTitleOffsetY;              // title vertical position offset
+        private int _npArtistOffsetX;             // artist horizontal position offset
+        private int _npArtistOffsetY;             // artist vertical position offset
+        private int _npVizOffsetY;                // visualizer vertical position offset
+        private DispatcherTimer? _npBgAnimTimer;  // animated background timer
+
+        // Active visualizer canvas (NP or main)
+        private Canvas VizTarget => (_npVisible && _npVisualizerEnabled)
+            ? (_npVizPlacement == 1 ? NpUnderCoverVizCanvas : NpVisualizerCanvas)
+            : VisualizerCanvas;
+
+        private static readonly (LyricService.LyricProvider Provider, string Name)[] NpLyricProviders =
+        {
+            (LyricService.LyricProvider.Auto, "Auto"),
+            (LyricService.LyricProvider.LrcFile, "LRC File"),
+            (LyricService.LyricProvider.Embedded, "Embedded"),
+            (LyricService.LyricProvider.LrcLib, "LRCLIB"),
+            (LyricService.LyricProvider.Netease, "Netease"),
+            (LyricService.LyricProvider.Musixmatch, "Musixmatch"),
+        };
+        private int _npProviderIndex;
 
         // Playback history for back-button navigation
         private readonly List<AudioFileInfo> _playHistory = new();
@@ -150,6 +217,28 @@ namespace AudioQualityChecker
         public MainWindow()
         {
             InitializeComponent();
+
+            // ── Integrity check (silent — only alerts on tampered builds) ──
+            try
+            {
+                var (isTampered, _) = IntegrityVerifier.Verify();
+                if (isTampered)
+                {
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        MessageBox.Show(
+                            IntegrityVerifier.GetWarningMessage(),
+                            "AudioAuditor — Security Warning",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }, DispatcherPriority.Loaded);
+                }
+            }
+            catch { /* never block startup */ }
+
+            // Load scan cache if enabled
+            if (ThemeManager.ScanCacheEnabled)
+                ScanCacheService.EnsureLoaded();
 
             // Restore saved column layout (order + widths)
             RestoreColumnLayout();
@@ -229,6 +318,9 @@ namespace AudioQualityChecker
                     _isPausedForOcclusion = false;
                     ResumeAnimations();
                 }
+                // Re-apply NP layout margins for fullscreen vs normal
+                if (_npVisible)
+                    NpApplyVizPlacement();
             };
 
             // Initialize footer support link visibility
@@ -284,7 +376,8 @@ namespace AudioQualityChecker
                         {
                             Dispatcher.Invoke(() =>
                             {
-                                UpdateVersionText.Text = $"AudioAuditor v{UpdateChecker.LatestVersion} is available!\nYou're currently on v{currentVersion}.";
+                                UpdateLatestText.Text = $"AudioAuditor v{UpdateChecker.LatestVersion} is available!";
+                                UpdateCurrentText.Text = $"You're currently on v{currentVersion}";
                                 UpdateOverlay.Visibility = Visibility.Visible;
                             });
                         }
@@ -906,6 +999,31 @@ namespace AudioQualityChecker
             {
                 AudioFileInfo? info = null;
                 bool acquired = false;
+
+                // ── Check scan cache first ──
+                if (ThemeManager.ScanCacheEnabled)
+                {
+                    try
+                    {
+                        var fi = new System.IO.FileInfo(path);
+                        if (fi.Exists && ScanCacheService.TryGet(path, fi.Length, fi.LastWriteTimeUtc, out var cached) && cached != null)
+                        {
+                            var count = Interlocked.Increment(ref _analysisCompleted);
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                _files.Add(cached);
+                                int t = _analysisTotal;
+                                AnalysisProgress.Maximum = t;
+                                StatusText.Text = $"Analyzed {count} / {t} files...";
+                                AnalysisProgress.Value = count;
+                                UpdateAnalysisEta(count, t);
+                            });
+                            return;
+                        }
+                    }
+                    catch { /* cache miss — fall through to normal analysis */ }
+                }
+
                 try
                 {
                     await semaphore.WaitAsync(ct);
@@ -980,6 +1098,12 @@ namespace AudioQualityChecker
 
                 if (info != null)
                 {
+                    // Cache the result for future use
+                    if (ThemeManager.ScanCacheEnabled)
+                    {
+                        try { ScanCacheService.Set(info); } catch { }
+                    }
+
                     await Dispatcher.InvokeAsync(() =>
                     {
                         _files.Add(info);
@@ -994,6 +1118,12 @@ namespace AudioQualityChecker
             });
 
             try { await Task.WhenAll(tasks); } catch (OperationCanceledException) { }
+
+            // Save scan cache to disk after batch completes
+            if (ThemeManager.ScanCacheEnabled)
+            {
+                try { await Task.Run(() => ScanCacheService.SaveToDisk()); } catch { }
+            }
 
             // ── Create virtual tracks from cue sheets ──
             foreach (var (audioPath, sheet) in cueEntries)
@@ -1951,22 +2081,34 @@ namespace AudioQualityChecker
 
         private void SeekSlider_MouseUp(object sender, MouseButtonEventArgs e)
         {
-            if (_player.TotalDuration.TotalSeconds > 0)
+            if (_player.TotalDuration.TotalSeconds > 0 && SeekSlider.Maximum > 0)
             {
                 double pos = SeekSlider.Value / SeekSlider.Maximum * _player.TotalDuration.TotalSeconds;
                 _player.Seek(pos);
                 _lastSeekTime = DateTime.UtcNow;
+
+                // Sync NP slider
+                NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+                if (NpSeekSlider.Maximum > 0)
+                    NpSeekSlider.Value = pos;
+                NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
             }
             _isSeeking = false;
         }
 
         private void SeekSlider_DragCompleted(object sender, DragCompletedEventArgs e)
         {
-            if (_player.TotalDuration.TotalSeconds > 0)
+            if (_player.TotalDuration.TotalSeconds > 0 && SeekSlider.Maximum > 0)
             {
                 double pos = SeekSlider.Value / SeekSlider.Maximum * _player.TotalDuration.TotalSeconds;
                 _player.Seek(pos);
                 _lastSeekTime = DateTime.UtcNow;
+
+                // Sync NP slider
+                NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+                if (NpSeekSlider.Maximum > 0)
+                    NpSeekSlider.Value = pos;
+                NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
             }
             _isSeeking = false;
         }
@@ -1996,6 +2138,9 @@ namespace AudioQualityChecker
                 // The crossfade path handles its own stop internally
                 if (crossfade && _player.IsPlaying)
                 {
+                    // Set the user volume first so the crossfade timer knows the target,
+                    // then start crossfade (which manages its own fade-in volume)
+                    _player.SetUserVolume((float)(VolumeSlider.Value / 100.0));
                     _player.PlayWithCrossfade(file.FilePath, normalize);
                 }
                 else
@@ -2005,10 +2150,14 @@ namespace AudioQualityChecker
                     // Small delay to let NAudio release resources
                     System.Threading.Thread.Sleep(30);
                     _player.Play(file.FilePath, normalize);
+                    _player.Volume = (float)(VolumeSlider.Value / 100.0);
                 }
-
-                _player.Volume = (float)(VolumeSlider.Value / 100.0);
                 SeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
+                // Also set NP seek slider maximum for Now Playing panel
+                NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+                NpSeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
+                NpSeekSlider.Value = 0;
+                NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
                 _playerTimer.Start();
                 UpdatePlayerUI();
                 DrawWaveformBackground();
@@ -2031,6 +2180,9 @@ namespace AudioQualityChecker
                 // SMTC media session (FluentFlyout / Windows media overlay)
                 _smtc?.UpdateNowPlayingFromTags(file.FilePath);
                 _smtc?.UpdatePlaybackState(true, false);
+
+                // Update Now Playing panel if visible
+                UpdateNowPlayingView();
             }
             catch (Exception ex)
             {
@@ -2152,6 +2304,10 @@ namespace AudioQualityChecker
         {
             Dispatcher.Invoke(() =>
             {
+                // Debounce: prevent double-fire from NAudio race conditions
+                if ((DateTime.UtcNow - _lastTrackFinishedTime).TotalMilliseconds < 2000) return;
+                _lastTrackFinishedTime = DateTime.UtcNow;
+
                 if (!ThemeManager.AutoPlayNext) return;
 
                 // If queue has items, play from queue first
@@ -3627,39 +3783,75 @@ namespace AudioQualityChecker
 
         private void OnWindowDeactivated(object? sender, EventArgs e)
         {
-            _occlusionCheckTimer?.Stop();
-            _occlusionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            _occlusionCheckTimer.Tick += (s, args) =>
+            if (_occlusionCheckTimer != null)
             {
-                if (IsActive) { _occlusionCheckTimer?.Stop(); return; }
-
-                bool fullscreen = IsAnotherAppFullscreen();
-                if (fullscreen && !_isPausedForOcclusion)
-                {
-                    _isPausedForOcclusion = true;
-                    PauseAnimations();
-                }
-                else if (!fullscreen && _isPausedForOcclusion)
-                {
-                    _isPausedForOcclusion = false;
-                    ResumeAnimations();
-                }
-            };
+                _occlusionCheckTimer.Stop();
+                _occlusionCheckTimer.Tick -= OcclusionCheckTimer_Tick;
+            }
+            _occlusionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _occlusionCheckTimer.Tick += OcclusionCheckTimer_Tick;
             _occlusionCheckTimer.Start();
+        }
+
+        private void OcclusionCheckTimer_Tick(object? sender, EventArgs e)
+        {
+            if (IsActive) { _occlusionCheckTimer?.Stop(); return; }
+
+            bool fullscreen = IsAnotherAppFullscreen();
+            if (fullscreen && !_isPausedForOcclusion)
+            {
+                _isPausedForOcclusion = true;
+                PauseAnimations();
+            }
+            else if (!fullscreen && _isPausedForOcclusion)
+            {
+                _isPausedForOcclusion = false;
+                ResumeAnimations();
+            }
         }
 
         private void PauseAnimations()
         {
             StopVisualizer();
             StopWaveformAnimation();
+
+            // Pause NP panel animations when not visible
+            if (_npVisible)
+            {
+                _npUpdateTimer?.Stop();
+                NpStopBgAnimation();
+                NpStopGlowPulse();
+            }
         }
 
         private void ResumeAnimations()
         {
-            if (_visualizerMode && _player.IsPlaying)
-                StartVisualizer();
-            if (_waveformData.Length > 0)
-                StartWaveformAnimation();
+            if (_npVisible)
+            {
+                // Resume NP panel timers and re-sync lyrics
+                _npUpdateTimer?.Start();
+                NpStartBgAnimation();
+                NpStartGlowPulse();
+
+                // Resume the visualizer rendering (VizTarget already points to correct canvas)
+                if (_npVisualizerEnabled && _player.IsPlaying)
+                    StartVisualizer();
+
+                // Re-sync lyrics to current position immediately
+                if (_npCurrentLyrics.IsTimed && _player != null)
+                {
+                    var pos = _player.CurrentPosition;
+                    _npCurrentLyricIndex = -1; // force full refresh
+                    NpUpdateLyricHighlight(pos);
+                }
+            }
+            else
+            {
+                if (_visualizerMode && _player.IsPlaying)
+                    StartVisualizer();
+                if (_waveformData.Length > 0)
+                    StartWaveformAnimation();
+            }
         }
 
         private bool IsAnotherAppFullscreen()
@@ -4383,8 +4575,8 @@ namespace AudioQualityChecker
         {
             if (!_player.IsPlaying && !_player.IsPaused)
             {
-                if (VisualizerCanvas.Children.Count > 0)
-                    VisualizerCanvas.Children.Clear();
+                if (VizTarget.Children.Count > 0)
+                    VizTarget.Children.Clear();
                 _vizBars = null;
                 _particles = null;
                 _particleElements = null;
@@ -4402,8 +4594,8 @@ namespace AudioQualityChecker
                 _lastVizRenderTime = re.RenderingTime;
             }
 
-            double width = VisualizerCanvas.ActualWidth;
-            double height = VisualizerCanvas.ActualHeight;
+            double width = VizTarget.ActualWidth;
+            double height = VizTarget.ActualHeight;
             if (width < 10 || height < 10) return;
 
             int numBars = VizNumBars;
@@ -4511,18 +4703,23 @@ namespace AudioQualityChecker
             double barWidth = width / numBars * 0.8;
             double gap = width / numBars * 0.2;
 
-            // Ensure we're in bars mode (not particles)
-            if (_particleElements != null)
+            // Ensure we're in bars mode (clean up other styles)
+            if (_particleElements != null || _circleElements != null || _scopeLine != null
+                || _kaleidoPolys != null || _vuBlocks != null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
+                _circleElements = null;
+                _scopeLine = null;
+                _kaleidoPolys = null;
+                _vuBlocks = null;
                 _vizBars = null;
             }
 
             if (_vizBars == null || _vizBars.Length != numBars)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _vizBars = new System.Windows.Shapes.Rectangle[numBars];
                 _vizBrushes = new SolidColorBrush[numBars];
                 for (int b = 0; b < numBars; b++)
@@ -4539,7 +4736,7 @@ namespace AudioQualityChecker
                     };
                     Canvas.SetLeft(_vizBars[b], b * (barWidth + gap) + gap / 2);
                     Canvas.SetTop(_vizBars[b], height - 2);
-                    VisualizerCanvas.Children.Add(_vizBars[b]);
+                    VizTarget.Children.Add(_vizBars[b]);
                 }
             }
 
@@ -4572,12 +4769,17 @@ namespace AudioQualityChecker
             double gap = width / numBars * 0.2;
             double centerY = height / 2.0;
 
-            // Ensure we're in mirrored mode (not particles or classic)
-            if (_particleElements != null)
+            // Ensure we're in mirrored mode (clean up other styles)
+            if (_particleElements != null || _circleElements != null || _scopeLine != null
+                || _kaleidoPolys != null || _vuBlocks != null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
+                _circleElements = null;
+                _scopeLine = null;
+                _kaleidoPolys = null;
+                _vuBlocks = null;
                 _vizBars = null;
                 _vizMirrorBars = null;
             }
@@ -4585,7 +4787,7 @@ namespace AudioQualityChecker
             // Need 2x bars (top half + bottom half)
             if (_vizBars == null || _vizBars.Length != numBars || _vizMirrorBars == null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _vizBars = new System.Windows.Shapes.Rectangle[numBars];
                 _vizMirrorBars = new System.Windows.Shapes.Rectangle[numBars];
                 _vizBrushes = new SolidColorBrush[numBars];
@@ -4607,7 +4809,7 @@ namespace AudioQualityChecker
                     };
                     Canvas.SetLeft(_vizBars[b], b * (barWidth + gap) + gap / 2);
                     Canvas.SetTop(_vizBars[b], centerY - 1);
-                    VisualizerCanvas.Children.Add(_vizBars[b]);
+                    VizTarget.Children.Add(_vizBars[b]);
 
                     // Bottom bar (grows downward from center, slightly dimmer)
                     _vizMirrorBars[b] = new System.Windows.Shapes.Rectangle
@@ -4622,7 +4824,7 @@ namespace AudioQualityChecker
                     };
                     Canvas.SetLeft(_vizMirrorBars[b], b * (barWidth + gap) + gap / 2);
                     Canvas.SetTop(_vizMirrorBars[b], centerY);
-                    VisualizerCanvas.Children.Add(_vizMirrorBars[b]);
+                    VizTarget.Children.Add(_vizMirrorBars[b]);
                 }
             }
 
@@ -4662,12 +4864,17 @@ namespace AudioQualityChecker
             bool rainbow = ThemeManager.VisualizerRainbowEnabled;
             double time = Environment.TickCount64 / 1000.0;
 
-            // Ensure we're in particle mode (not bars)
-            if (_vizBars != null)
+            // Ensure we're in particle mode (clean up other styles)
+            if (_vizBars != null || _circleElements != null || _scopeLine != null
+                || _kaleidoPolys != null || _vuBlocks != null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _vizBars = null;
                 _vizMirrorBars = null;
+                _circleElements = null;
+                _scopeLine = null;
+                _kaleidoPolys = null;
+                _vuBlocks = null;
                 _particleElements = null;
                 _particles = null;
             }
@@ -4689,7 +4896,7 @@ namespace AudioQualityChecker
                         IsHitTestVisible = false,
                         Visibility = Visibility.Collapsed
                     };
-                    VisualizerCanvas.Children.Add(_particleElements[i]);
+                    VizTarget.Children.Add(_particleElements[i]);
                 }
             }
 
@@ -4763,7 +4970,11 @@ namespace AudioQualityChecker
                 double size = 4 + (1 - lifeFrac) * 4; // starts at 8px, shrinks to 4px
 
                 Color color;
-                if (rainbow)
+                if (_npVisible && _npColorMatchEnabled && _npVizColorPrimary != default)
+                {
+                    color = GetBarColor(p.Band, numBars, bandNorm, gradient, false, time);
+                }
+                else if (rainbow)
                 {
                     double hue = (bandNorm + time * 0.15) % 1.0;
                     color = HsvToColor(hue * 360, 0.9, 0.6 + alpha * 0.4);
@@ -4825,7 +5036,7 @@ namespace AudioQualityChecker
             // Clean up other mode elements
             if (_particleElements != null || _vizBars != null || _scopeLine != null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
                 _vizBars = null;
@@ -4837,7 +5048,7 @@ namespace AudioQualityChecker
             // Initialize / reallocate circle bar elements when count changes
             if (_circleElements == null || _circleElements.Length != totalLines)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _circleElements = new System.Windows.Shapes.Line[totalLines];
                 _circleBrushes = new SolidColorBrush[totalLines];
                 for (int i = 0; i < totalLines; i++)
@@ -4849,7 +5060,7 @@ namespace AudioQualityChecker
                         StrokeThickness = 2,
                         IsHitTestVisible = false
                     };
-                    VisualizerCanvas.Children.Add(_circleElements[i]);
+                    VizTarget.Children.Add(_circleElements[i]);
                 }
                 _lastCircleTotalLines = totalLines;
             }
@@ -4931,14 +5142,17 @@ namespace AudioQualityChecker
             double time = Environment.TickCount64 / 1000.0;
 
             // Clean up other mode elements
-            if (_particleElements != null || _vizBars != null || _circleElements != null)
+            if (_particleElements != null || _vizBars != null || _circleElements != null
+                || _kaleidoPolys != null || _vuBlocks != null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
                 _vizBars = null;
                 _vizMirrorBars = null;
                 _circleElements = null;
+                _kaleidoPolys = null;
+                _vuBlocks = null;
                 _scopeLine = null;
             }
 
@@ -4956,12 +5170,16 @@ namespace AudioQualityChecker
                     StrokeThickness = 1.5,
                     IsHitTestVisible = false
                 };
-                VisualizerCanvas.Children.Add(_scopeLine);
+                VizTarget.Children.Add(_scopeLine);
             }
 
             // Color the scope line
             Color lineColor;
-            if (rainbow)
+            if (_npVisible && _npColorMatchEnabled && _npVizColorPrimary != default)
+            {
+                lineColor = BoostVizColor(_npVizColorPrimary, 80);
+            }
+            else if (rainbow)
             {
                 double hue = (time * 0.2) % 1.0;
                 lineColor = HsvToColor(hue * 360, 0.8, 0.9);
@@ -5009,7 +5227,7 @@ namespace AudioQualityChecker
             if (_particleElements != null || _vizBars != null || _circleElements != null
                 || _scopeLine != null || _vuBlocks != null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
                 _vizBars = null;
@@ -5023,7 +5241,7 @@ namespace AudioQualityChecker
             // Initialize polygon ring elements
             if (_kaleidoPolys == null || _kaleidoPolys.Length != KaleidoRingCount)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _kaleidoPolys = new System.Windows.Shapes.Polygon[KaleidoRingCount];
                 _kaleidoBrushes = new SolidColorBrush[KaleidoRingCount];
                 for (int i = 0; i < KaleidoRingCount; i++)
@@ -5037,7 +5255,7 @@ namespace AudioQualityChecker
                         StrokeLineJoin = System.Windows.Media.PenLineJoin.Round,
                         IsHitTestVisible = false
                     };
-                    VisualizerCanvas.Children.Add(_kaleidoPolys[i]);
+                    VizTarget.Children.Add(_kaleidoPolys[i]);
                 }
                 _kaleidoPhase = 0;
                 _kaleidoSmoothedEnergy = 0;
@@ -5106,7 +5324,11 @@ namespace AudioQualityChecker
                 _kaleidoPolys[ring].StrokeThickness = thickness;
 
                 Color color;
-                if (rainbow)
+                if (_npVisible && _npColorMatchEnabled && _npVizColorPrimary != default)
+                {
+                    color = GetBarColor(ring, KaleidoRingCount, energy, gradient, false, time);
+                }
+                else if (rainbow)
                 {
                     double hue = (ringPhase + time * 0.05 + (double)ring / KaleidoRingCount * 0.3) % 1.0;
                     color = HsvToColor(hue * 360, 0.8, 0.4 + energy * 0.5);
@@ -5153,7 +5375,7 @@ namespace AudioQualityChecker
             if (_particleElements != null || _vizBars != null || _circleElements != null
                 || _scopeLine != null || _kaleidoPolys != null)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
                 _vizBars = null;
@@ -5167,7 +5389,7 @@ namespace AudioQualityChecker
             // Initialize VU blocks
             if (_vuBlocks == null || _vuBlocks.Length != totalBlocks)
             {
-                VisualizerCanvas.Children.Clear();
+                VizTarget.Children.Clear();
                 _vuBlocks = new System.Windows.Shapes.Rectangle[totalBlocks];
                 _vuBrushes = new SolidColorBrush[totalBlocks];
                 for (int i = 0; i < totalBlocks; i++)
@@ -5180,7 +5402,7 @@ namespace AudioQualityChecker
                         RadiusX = 1,
                         RadiusY = 1
                     };
-                    VisualizerCanvas.Children.Add(_vuBlocks[i]);
+                    VizTarget.Children.Add(_vuBlocks[i]);
                 }
             }
 
@@ -5221,7 +5443,11 @@ namespace AudioQualityChecker
                     double rowNorm = (double)rowFromBottom / VuRows; // 0=bottom, 1=top
 
                     Color color;
-                    if (rainbow)
+                    if (_npVisible && _npColorMatchEnabled && _npVizColorPrimary != default)
+                    {
+                        color = GetBarColor(col, VuColumns, rowNorm, gradient, false, time);
+                    }
+                    else if (rainbow)
                     {
                         double hue = ((double)col / VuColumns + time * 0.08) % 1.0;
                         color = HsvToColor(hue * 360, 0.85, isLit ? (0.5 + rowNorm * 0.5) : 0.08);
@@ -5272,6 +5498,21 @@ namespace AudioQualityChecker
         // ── Shared color utility for bar-based modes ──
         private Color GetBarColor(int barIndex, int numBars, double value, Color[] gradient, bool rainbow, double time)
         {
+            // If NP color-match is active, use album colors instead of theme gradient
+            if (_npVisible && _npColorMatchEnabled && _npVizColorPrimary != default)
+            {
+                var prim = _npVizColorPrimary;
+                var sec = _npVizColorSecondary;
+                // Boost vibrancy: increase saturation before brightening
+                var c1 = BoostVizColor(prim, 60);
+                var c2 = BoostVizColor(sec, 80);
+                double t = value;
+                return Color.FromArgb(255,
+                    (byte)(c1.R + (c2.R - c1.R) * t),
+                    (byte)(c1.G + (c2.G - c1.G) * t),
+                    (byte)(c1.B + (c2.B - c1.B) * t));
+            }
+
             if (rainbow)
             {
                 double hue = ((double)barIndex / numBars + time * 0.15 + value * 0.3) % 1.0;
@@ -5301,6 +5542,34 @@ namespace AudioQualityChecker
                         (byte)(gradient[1].B + (gradient[2].B - gradient[1].B) * seg));
                 }
             }
+        }
+
+        /// <summary>
+        /// Boosts a color for visualizer display — increases saturation and brightness
+        /// so album-matched colors are vibrant rather than washed-out/grey.
+        /// </summary>
+        private static Color BoostVizColor(Color c, int brighten)
+        {
+            double r = c.R / 255.0, g = c.G / 255.0, b = c.B / 255.0;
+            double max = Math.Max(r, Math.Max(g, b));
+            double min = Math.Min(r, Math.Min(g, b));
+            double delta = max - min;
+            double h = 0, s = max == 0 ? 0 : delta / max, v = max;
+
+            if (delta > 0)
+            {
+                if (max == r) h = 60 * (((g - b) / delta) % 6);
+                else if (max == g) h = 60 * ((b - r) / delta + 2);
+                else h = 60 * ((r - g) / delta + 4);
+                if (h < 0) h += 360;
+            }
+
+            // Boost saturation: ensure minimum 0.5 for grey-ish colors
+            s = Math.Max(s, 0.5);
+            // Brighten the value
+            v = Math.Min(1.0, v + brighten / 255.0);
+
+            return HsvToColor(h, s, v);
         }
 
         /// <summary>
@@ -5634,6 +5903,2169 @@ namespace AudioQualityChecker
                 ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        private void NowPlaying_Click(object sender, RoutedEventArgs e)
+        {
+            ToggleNowPlaying(!_npVisible);
+        }
+
+        private void ToggleNowPlaying(bool show)
+        {
+            _npVisible = show;
+            NowPlayingPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            MainContent.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
+
+            if (show)
+            {
+                NpLoadPreferences();
+                if (_npUpdateTimer == null)
+                {
+                    _npUpdateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+                    _npUpdateTimer.Tick += NpUpdateTimer_Tick;
+                }
+                _npUpdateTimer.Start();
+
+                if (_player.CurrentFile != null)
+                {
+                    var currentFile = _files.FirstOrDefault(f =>
+                        string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                    if (currentFile != null)
+                        NpSetTrack(currentFile);
+                }
+                NpVolumeSlider.Value = VolumeSlider.Value;
+                NpUpdatePlayState();
+                NpUpdateShuffleIcon();
+                NpUpdateAutoPlayIcon();
+                NpUpdateVisualizerIcon();
+                NpUpdateColorMatchIcon();
+                NpApplyVizPlacement();
+                NpUpdateLyricsOffIcon();
+                NpUpdateTranslateIcon();
+                NpUpdateKaraokeIcon();
+                NpApplyLyricsOffMode();
+                NpUpdateNextTrackPreview();
+                NpProviderBtn.ToolTip = $"Provider: {NpLyricProviders[_npProviderIndex].Name}";
+                NpStartBgAnimation();
+                NpStartGlowPulse();
+
+                if (_npVisualizerEnabled && _player.IsPlaying)
+                    NpStartVisualizer();
+                else if (_visualizerActive && !_npVisualizerEnabled)
+                {
+                    // Main visualizer is running but NP viz is off — pause main since it's hidden
+                    _mainVizWasActive = true;
+                    StopVisualizer();
+                    VisualizerCanvas.Children.Clear();
+                }
+            }
+            else
+            {
+                _npUpdateTimer?.Stop();
+                NpStopVisualizer();
+                NpStopBgAnimation();
+                NpStopGlowPulse();
+
+                // Resume main visualizer if it was running before NP opened
+                if (_mainVizWasActive && _visualizerMode && _player.IsPlaying)
+                {
+                    _mainVizWasActive = false;
+                    ClearVisualizerCaches();
+                    VisualizerCanvas.Children.Clear();
+                    StartVisualizer();
+                }
+
+                // Restore slider accent to theme default when leaving NP
+                if (_npColorMatchEnabled)
+                {
+                    var vizColors = ThemeManager.GetVisualizerColors();
+                    Application.Current.Resources["PlaybarAccentColor"] = new SolidColorBrush(vizColors.ProgressGradient[0]);
+
+                    // Restore all button resources overridden by color match
+                    ThemeManager.ApplyTheme(ThemeManager.CurrentTheme);
+                    ApplyThemeTitleBar();
+                }
+            }
+        }
+
+        private void NpSetTrack(AudioFileInfo file)
+        {
+            // Reset Now Playing seek slider to prevent stale seeks on track change
+            NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+            NpSeekSlider.Value = 0;
+            NpSeekSlider.Maximum = 0;
+            NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+
+            var displayTitle = file.Title
+                ?? (file.FileName != null ? System.IO.Path.GetFileNameWithoutExtension(file.FileName) : null)
+                ?? "Unknown";
+            NpSongTitle.Text = displayTitle;
+            NpBigTitle.Text = displayTitle;
+            NpSongArtist.Text = file.Artist ?? "";
+
+            // Show audio specs with color-coded bitrate
+            NpSongSpecs.Inlines.Clear();
+            var specParts = new List<string>();
+            if (!string.IsNullOrEmpty(file.FormatDisplay)) specParts.Add(file.FormatDisplay);
+            if (file.SampleRate > 0) specParts.Add($"{file.SampleRate / 1000.0:0.#} kHz");
+            if (file.BitsPerSample > 0) specParts.Add($"{file.BitsPerSample}-bit");
+            if (file.Channels > 0) specParts.Add(file.Channels == 1 ? "Mono" : file.Channels == 2 ? "Stereo" : $"{file.Channels}ch");
+
+            var defaultBrush = (Brush)FindResource("TextSecondary");
+            for (int s = 0; s < specParts.Count; s++)
+            {
+                if (s > 0) NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run(specParts[s]) { Foreground = defaultBrush });
+            }
+
+            // Add bitrate with status coloring (green=Real, red=Fake, orange=Unknown)
+            int displayBitrate = file.ActualBitrate > 0 ? file.ActualBitrate : file.ReportedBitrate;
+            if (displayBitrate > 0)
+            {
+                if (specParts.Count > 0)
+                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
+
+                var statusColor = file.Status switch
+                {
+                    AudioStatus.Valid => System.Windows.Media.Color.FromRgb(0x4C, 0xC9, 0x4C),     // green
+                    AudioStatus.Fake => System.Windows.Media.Color.FromRgb(0xFF, 0x5C, 0x5C),      // red
+                    AudioStatus.Corrupt => System.Windows.Media.Color.FromRgb(0xFF, 0x5C, 0x5C),   // red
+                    _ => System.Windows.Media.Color.FromRgb(0xFF, 0xA5, 0x00),                     // orange
+                };
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run($"{displayBitrate} kbps")
+                {
+                    Foreground = new SolidColorBrush(statusColor),
+                    FontWeight = FontWeights.SemiBold
+                });
+            }
+
+            // Add DR inline (only if enabled and available)
+            if (ThemeManager.DynamicRangeEnabled && file.HasDynamicRange && file.DynamicRange > 0)
+            {
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run($"DR-{file.DynamicRange:0}") { Foreground = defaultBrush });
+            }
+
+            // Add BPM inline (only if enabled and available)
+            if (ThemeManager.BpmDetectionEnabled && file.Bpm > 0)
+            {
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run($"{file.Bpm} BPM") { Foreground = defaultBrush });
+            }
+
+            // Build MQA / AI / quality tags
+            NpTagsPanel.Children.Clear();
+            if (file.IsMqa)
+                NpTagsPanel.Children.Add(NpCreateTag(file.IsMqaStudio ? "MQA Studio" : "MQA", "#00C2FF"));
+            if (file.IsAlac)
+                NpTagsPanel.Children.Add(NpCreateTag("ALAC", "#7ACC52"));
+            if (file.IsAnyAiDetected)
+                NpTagsPanel.Children.Add(NpCreateTag("AI", "#FF6B6B"));
+            if (file.IsFakeStereo)
+                NpTagsPanel.Children.Add(NpCreateTag("Fake Stereo", "#FFA500"));
+
+            // Reset lyrics when switching tracks — clear immediately to prevent stale state
+            bool isSameTrack = string.Equals(_npLastTrackPath, file.FilePath, StringComparison.OrdinalIgnoreCase);
+            _npLastTrackPath = file.FilePath;
+
+            if (!isSameTrack)
+            {
+                NpLyricsScroller.ScrollToVerticalOffset(0);
+                _npCurrentLyricIndex = -1;
+                _npCurrentLyrics = LyricsResult.Empty;
+                _npLyricTextBlocks.Clear();
+                _npTranslatedLines = null;
+                NpLyricsPanel.Children.Clear();
+                _npLyricsVersion++; // invalidate any in-flight lyrics fetch
+            }
+
+            if (!string.IsNullOrEmpty(file.FilePath))
+            {
+                NpLoadCover(file.FilePath);
+                if (!isSameTrack)
+                    _ = NpLoadLyricsAsync(file.FilePath, file.Artist, file.Title);
+            }
+
+            NpUpdateNextTrackPreview();
+        }
+
+        private Border NpCreateTag(string text, string color)
+        {
+            var c = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(color);
+            return new Border
+            {
+                Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(40, c.R, c.G, c.B)),
+                BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromArgb(100, c.R, c.G, c.B)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(5, 1, 5, 1),
+                Margin = new Thickness(2, 0, 0, 0),
+                Child = new TextBlock
+                {
+                    Text = text,
+                    FontSize = 9,
+                    FontWeight = FontWeights.SemiBold,
+                    FontFamily = new FontFamily("Segoe UI"),
+                    Foreground = new SolidColorBrush(c),
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+        }
+
+        private void NpLoadCover(string filePath)
+        {
+            try
+            {
+                var tagFile = TagLib.File.Create(filePath);
+                if (tagFile.Tag.Pictures.Length > 0)
+                {
+                    var pic = tagFile.Tag.Pictures[0];
+                    var imageData = pic.Data.Data;
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    using (var ms = new MemoryStream(imageData))
+                    {
+                        bmp.StreamSource = ms;
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.EndInit();
+                    }
+                    bmp.Freeze();
+
+                    NpCoverImage.Source = bmp;
+
+                    // Clear explicit dimensions — let MaxWidth/MaxHeight + Stretch="Uniform" handle sizing
+                    NpCoverImage.ClearValue(FrameworkElement.WidthProperty);
+                    NpCoverImage.ClearValue(FrameworkElement.HeightProperty);
+
+                    // Re-apply scaling constraints so MaxWidth/MaxHeight are current
+                    NpApplyFullscreenScaling(WindowState == WindowState.Maximized);
+
+                    NpApplyGlow(imageData);
+                }
+                else
+                {
+                    NpClearCover();
+                }
+            }
+            catch
+            {
+                NpClearCover();
+            }
+        }
+
+        private void NpClearCover()
+        {
+            NpCoverImage.Source = null;
+            NpCoverImage.ClearValue(FrameworkElement.WidthProperty);
+            NpCoverImage.ClearValue(FrameworkElement.HeightProperty);
+            NpCoverGlow1.Background = Brushes.Transparent;
+            NpCoverGlow2.Background = Brushes.Transparent;
+            NpBgGradient.Background = Brushes.Transparent;
+            NpCoverShadow.Color = Colors.Black;
+            NpCoverShadow.Opacity = 0.4;
+        }
+
+        private void NpCoverBorder_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            NpCoverClip.Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+        }
+
+        private void NpApplyGlow(byte[] imageData)
+        {
+            try
+            {
+                // Convert to BGRA32 for color extraction
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                using (var ms = new MemoryStream(imageData))
+                {
+                    bmp.StreamSource = ms;
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.EndInit();
+                }
+                bmp.Freeze();
+
+                var converted = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
+                int stride = converted.PixelWidth * 4;
+                var pixels = new byte[stride * converted.PixelHeight];
+                converted.CopyPixels(pixels, stride, 0);
+
+                var colors = AlbumColorExtractor.Extract(pixels, converted.PixelWidth, converted.PixelHeight, stride);
+
+                var primaryColor = System.Windows.Media.Color.FromRgb(
+                    colors.Primary.R, colors.Primary.G, colors.Primary.B);
+                var secondaryColor = System.Windows.Media.Color.FromRgb(
+                    colors.Secondary.R, colors.Secondary.G, colors.Secondary.B);
+
+                // Store album colors for color-match theming
+                _npAlbumPrimary = primaryColor;
+                _npAlbumSecondary = secondaryColor;
+                _npAlbumBackground = System.Windows.Media.Color.FromRgb(
+                    colors.Background.R, colors.Background.G, colors.Background.B);
+
+                // Glow borders use album colors
+                NpCoverGlow1.Background = new SolidColorBrush(primaryColor);
+                NpCoverGlow2.Background = new SolidColorBrush(secondaryColor);
+
+                // DropShadow colored from the album's primary color
+                NpCoverShadow.Color = primaryColor;
+                NpCoverShadow.Opacity = 0.6;
+
+                // Background gradient from album colors (fuller, more saturated)
+                var bg1 = System.Windows.Media.Color.FromArgb(220,
+                    colors.Background.R, colors.Background.G, colors.Background.B);
+                var bg2 = System.Windows.Media.Color.FromArgb(200,
+                    (byte)(colors.Background.R / 4),
+                    (byte)(colors.Background.G / 4),
+                    (byte)(colors.Background.B / 4));
+                NpBgGradient.Background = new LinearGradientBrush(bg1, bg2, 45);
+
+                // Apply color-match mode
+                NpApplyColorMatchMode();
+            }
+            catch
+            {
+                NpBgGradient.Background = Brushes.Transparent;
+            }
+        }
+
+        // ─── WPF Now Playing: Lyrics ───
+
+        private async Task NpLoadLyricsAsync(string filePath, string? artist = null, string? title = null)
+        {
+            _npCurrentLyricIndex = -1;
+            int version = _npLyricsVersion; // snapshot before await
+
+            // Show searching status immediately
+            var providerName = NpLyricProviders[_npProviderIndex].Name;
+            NpShowLyricStatus($"Searching for lyrics ({providerName})...");
+
+            LyricsResult result;
+            try
+            {
+                result = await LyricService.GetLyricsAsync(
+                    filePath, _npLyricProvider, artist, title);
+            }
+            catch
+            {
+                result = LyricService.GetLyrics(filePath, _npLyricProvider);
+            }
+
+            // If the track changed while we were fetching, discard stale results
+            if (version != _npLyricsVersion) return;
+
+            _npCurrentLyrics = result;
+            NpBuildLyricLines();
+
+            // Force immediate lyric sync — the song may already be well into playback
+            // by the time the async lyrics load completes, so kick the highlight now
+            // rather than waiting for the next timer tick + layout pass
+            if (_npCurrentLyrics.IsTimed && _player != null)
+            {
+                _npCurrentLyricIndex = -1;
+                // Dispatch at Loaded priority so the layout pass completes first
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (version != _npLyricsVersion) return;
+                    NpUpdateLyricHighlight(_player.CurrentPosition);
+                }, System.Windows.Threading.DispatcherPriority.Loaded);
+            }
+        }
+
+        private void NpShowLyricStatus(string message)
+        {
+            NpLyricsPanel.Children.Clear();
+            _npLyricTextBlocks.Clear();
+            var status = new TextBlock
+            {
+                Text = message,
+                Foreground = (Brush)FindResource("TextDim"),
+                FontSize = 15,
+                FontStyle = FontStyles.Italic,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 20, 0, 0)
+            };
+            NpLyricsPanel.Children.Add(status);
+        }
+
+        private void NpBuildLyricLines()
+        {
+            NpLyricsPanel.Children.Clear();
+            _npLyricTextBlocks.Clear();
+
+            if (!_npCurrentLyrics.HasLyrics)
+            {
+                var providerName = NpLyricProviders[_npProviderIndex].Name;
+                var noLyrics = new TextBlock
+                {
+                    Text = $"No lyrics found via {providerName}\nTry switching providers or drop a .lrc file",
+                    Foreground = (Brush)FindResource("TextDim"),
+                    FontSize = 15,
+                    FontStyle = FontStyles.Italic,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 20, 0, 0)
+                };
+                NpLyricsPanel.Children.Add(noLyrics);
+                return;
+            }
+
+            // Small top spacer only - lyrics start near the top aligned with album cover
+            NpLyricsPanel.Children.Add(new Border { Height = 8 });
+
+            for (int i = 0; i < _npCurrentLyrics.Lines.Count; i++)
+            {
+                var line = _npCurrentLyrics.Lines[i];
+
+                // Main lyric line
+                var tb = new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = TextAlignment.Left,
+                    Margin = new Thickness(0, 6, 0, _npTranslateEnabled && _npTranslatedLines != null ? 0 : 6),
+                    FontSize = _npLyricsSize > 0 ? _npLyricsSize : (WindowState == WindowState.Maximized ? 22 : 18),
+                    FontFamily = new FontFamily("Segoe UI"),
+                    Cursor = _npCurrentLyrics.IsTimed ? System.Windows.Input.Cursors.Hand : System.Windows.Input.Cursors.Arrow,
+                    Foreground = new SolidColorBrush(
+                        System.Windows.Media.Color.FromArgb(85, 255, 255, 255))
+                };
+
+                // Karaoke mode: build word-by-word Runs; otherwise plain text
+                if (_npKaraokeEnabled && _npCurrentLyrics.IsTimed)
+                {
+                    var words = line.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var word in words)
+                    {
+                        var run = new System.Windows.Documents.Run(word + " ")
+                        {
+                            Foreground = new SolidColorBrush(
+                                System.Windows.Media.Color.FromArgb(85, 255, 255, 255))
+                        };
+                        tb.Inlines.Add(run);
+                    }
+                }
+                else
+                {
+                    tb.Text = line.Text;
+                }
+
+                // Click to seek to this lyric's timestamp
+                if (_npCurrentLyrics.IsTimed)
+                {
+                    int lineIndex = i;
+                    var capturedLyrics = _npCurrentLyrics; // capture for closure safety
+                    tb.MouseLeftButtonDown += (s, e) =>
+                    {
+                        if (capturedLyrics != _npCurrentLyrics) return; // stale lyrics
+                        if (lineIndex < capturedLyrics.Lines.Count && _player != null)
+                        {
+                            var seekTime = capturedLyrics.Lines[lineIndex].Time;
+                            _player.Seek(seekTime.TotalSeconds);
+                            _lastSeekTime = DateTime.UtcNow;
+
+                            // Update NP seek slider without triggering seek feedback
+                            NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+                            NpSeekSlider.Value = seekTime.TotalSeconds;
+                            NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+
+                            // Also update main seek slider
+                            if (SeekSlider.Maximum > 0)
+                                SeekSlider.Value = seekTime.TotalSeconds / _player.TotalDuration.TotalSeconds * SeekSlider.Maximum;
+
+                            // Resume playback if paused
+                            if (!_player.IsPlaying && _player.IsPaused)
+                                _player.Resume();
+
+                            // Force immediate lyric highlight update
+                            _npCurrentLyricIndex = -1;
+                            NpUpdateLyricHighlight(seekTime);
+                        }
+                    };
+                }
+
+                _npLyricTextBlocks.Add(tb);
+                NpLyricsPanel.Children.Add(tb);
+
+                // Show translation below the original line
+                if (_npTranslateEnabled && _npTranslatedLines != null && i < _npTranslatedLines.Count)
+                {
+                    var translated = _npTranslatedLines[i];
+                    if (!string.IsNullOrWhiteSpace(translated) &&
+                        !string.Equals(translated, line.Text, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var transTb = new TextBlock
+                        {
+                            Text = translated,
+                            TextWrapping = TextWrapping.Wrap,
+                            TextAlignment = TextAlignment.Left,
+                            Margin = new Thickness(0, 0, 0, 6),
+                            FontSize = 14,
+                            FontStyle = FontStyles.Italic,
+                            FontFamily = new FontFamily("Segoe UI"),
+                            Foreground = new SolidColorBrush(
+                                System.Windows.Media.Color.FromArgb(140, 255, 255, 255)),
+                            Tag = "translation" // mark for styling
+                        };
+                        NpLyricsPanel.Children.Add(transTb);
+                    }
+                }
+            }
+
+            NpLyricsPanel.Children.Add(new Border { Height = 200 });
+
+            // If translate was just enabled, kick off translation
+            if (_npTranslateEnabled && _npTranslatedLines == null)
+                _ = NpTranslateLyricsAsync();
+        }
+
+        private void NpUpdateLyricHighlight(TimeSpan position)
+        {
+            if (!_npCurrentLyrics.IsTimed || _npLyricTextBlocks.Count == 0) return;
+
+            // Use custom lyrics size if set, otherwise window-state default
+            bool fs = WindowState == WindowState.Maximized;
+            double baseLyricSize = _npLyricsSize > 0 ? _npLyricsSize : (fs ? 22 : 18);
+
+            int newIdx = -1;
+            for (int i = _npCurrentLyrics.Lines.Count - 1; i >= 0; i--)
+            {
+                if (position >= _npCurrentLyrics.Lines[i].Time)
+                {
+                    newIdx = i;
+                    break;
+                }
+            }
+
+            bool lineChanged = newIdx != _npCurrentLyricIndex;
+
+            // In karaoke mode, update word progress on active line even without line change
+            if (!lineChanged && _npKaraokeEnabled && newIdx >= 0 && newIdx < _npLyricTextBlocks.Count)
+            {
+                NpAnimateKaraokeWords(_npLyricTextBlocks[newIdx], newIdx, position);
+                return;
+            }
+
+            if (!lineChanged) return;
+
+            _npCurrentLyricIndex = newIdx;
+
+            var duration = TimeSpan.FromMilliseconds(150);
+            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+
+            for (int i = 0; i < _npLyricTextBlocks.Count; i++)
+            {
+                var tb = _npLyricTextBlocks[i];
+
+                if (i == newIdx)
+                {
+                    // Active line: bright highlight
+                    tb.FontWeight = FontWeights.SemiBold;
+                    var sizeAnim = new DoubleAnimation(baseLyricSize, duration) { EasingFunction = ease };
+                    tb.BeginAnimation(TextBlock.FontSizeProperty, sizeAnim);
+
+                    if (_npKaraokeEnabled && tb.Inlines.Count > 0)
+                    {
+                        // Karaoke word-by-word: illuminate words progressively
+                        NpAnimateKaraokeWords(tb, i, position);
+                    }
+                    else
+                    {
+                        var activeBrush = tb.Foreground as SolidColorBrush;
+                        if (activeBrush == null || activeBrush.IsFrozen)
+                        {
+                            activeBrush = new SolidColorBrush(Colors.White);
+                            tb.Foreground = activeBrush;
+                        }
+                        var activeAnim = new ColorAnimation(Colors.White, duration) { EasingFunction = ease };
+                        activeBrush.BeginAnimation(SolidColorBrush.ColorProperty, activeAnim);
+                    }
+                }
+                else
+                {
+                    // Non-active lines
+                    System.Windows.Media.Color targetColor;
+                    double targetSize;
+
+                    if (i < newIdx)
+                    {
+                        targetColor = System.Windows.Media.Color.FromArgb(68, 255, 255, 255);
+                        targetSize = baseLyricSize;
+                    }
+                    else
+                    {
+                        targetColor = System.Windows.Media.Color.FromArgb(85, 255, 255, 255);
+                        targetSize = baseLyricSize;
+                    }
+                    tb.FontWeight = FontWeights.Normal;
+
+                    if (_npKaraokeEnabled && tb.Inlines.Count > 0)
+                    {
+                        // Reset all word Runs to dim
+                        foreach (var inline in tb.Inlines)
+                        {
+                            if (inline is System.Windows.Documents.Run run)
+                            {
+                                var brush = run.Foreground as SolidColorBrush;
+                                if (brush == null || brush.IsFrozen)
+                                {
+                                    brush = new SolidColorBrush(targetColor);
+                                    run.Foreground = brush;
+                                }
+                                brush.BeginAnimation(SolidColorBrush.ColorProperty,
+                                    new ColorAnimation(targetColor, duration) { EasingFunction = ease });
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var colorAnim = new ColorAnimation(targetColor, duration) { EasingFunction = ease };
+                        var brush = tb.Foreground as SolidColorBrush;
+                        if (brush == null || brush.IsFrozen)
+                        {
+                            brush = new SolidColorBrush(brush?.Color ?? Colors.White);
+                            tb.Foreground = brush;
+                        }
+                        brush.BeginAnimation(SolidColorBrush.ColorProperty, colorAnim);
+                    }
+
+                    var sizeAnim = new DoubleAnimation(targetSize, duration) { EasingFunction = ease };
+                    tb.BeginAnimation(TextBlock.FontSizeProperty, sizeAnim);
+                }
+            }
+
+            // Smooth auto-scroll — position active line at 25% from top
+            if (newIdx >= 0 && newIdx < _npLyricTextBlocks.Count)
+            {
+                var target = _npLyricTextBlocks[newIdx];
+                try
+                {
+                    var transform = target.TransformToAncestor(NpLyricsPanel);
+                    var point = transform.Transform(new System.Windows.Point(0, 0));
+                    double scrollerHeight = NpLyricsScroller.ViewportHeight;
+                    double targetY = point.Y - scrollerHeight * 0.25;
+                    if (targetY < 0) targetY = 0;
+                    NpAnimateScroll(NpLyricsScroller, targetY, 200);
+                }
+                catch { /* element not yet in visual tree */ }
+            }
+        }
+
+        /// <summary>Animate karaoke word-by-word illumination on the active line.</summary>
+        private void NpAnimateKaraokeWords(TextBlock tb, int lineIdx, TimeSpan position)
+        {
+            var runs = tb.Inlines.OfType<System.Windows.Documents.Run>().ToList();
+            if (runs.Count == 0) return;
+
+            // Calculate how far through this line we are (0.0 to 1.0)
+            var lineStart = _npCurrentLyrics.Lines[lineIdx].Time;
+            var lineEnd = lineIdx + 1 < _npCurrentLyrics.Lines.Count
+                ? _npCurrentLyrics.Lines[lineIdx + 1].Time
+                : lineStart + TimeSpan.FromSeconds(4); // default 4s for last line
+
+            double lineDuration = (lineEnd - lineStart).TotalMilliseconds;
+            if (lineDuration <= 0) lineDuration = 4000;
+            double elapsed = (position - lineStart).TotalMilliseconds;
+            double progress = Math.Clamp(elapsed / lineDuration, 0, 1);
+
+            // Smooth gradient sweep: each word fades in over a soft transition zone
+            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+            var dur = TimeSpan.FromMilliseconds(200);
+            double transitionWidth = 1.5 / runs.Count; // smooth zone spans ~1.5 words
+
+            for (int w = 0; w < runs.Count; w++)
+            {
+                double wordCenter = (w + 0.5) / runs.Count;
+                // Compute smooth illumination factor (0 = dim, 1 = fully lit)
+                double factor = Math.Clamp((progress - wordCenter + transitionWidth / 2) / transitionWidth, 0, 1);
+
+                // Interpolate between dim and fully lit
+                byte a = (byte)(90 + (255 - 90) * factor);
+                byte rgb = (byte)(180 + (255 - 180) * factor); // slight warmth when dim
+                var targetColor = System.Windows.Media.Color.FromArgb(a, 255, rgb, rgb);
+                if (factor >= 0.95) targetColor = Colors.White; // snap to pure white when nearly lit
+
+                var brush = runs[w].Foreground as SolidColorBrush;
+                if (brush == null || brush.IsFrozen)
+                {
+                    brush = new SolidColorBrush(targetColor);
+                    runs[w].Foreground = brush;
+                }
+                else
+                {
+                    brush.BeginAnimation(SolidColorBrush.ColorProperty,
+                        new ColorAnimation(targetColor, dur) { EasingFunction = ease });
+                }
+            }
+        }
+
+        /// <summary>Smoothly animates a ScrollViewer to a target vertical offset.</summary>
+        private void NpAnimateScroll(ScrollViewer viewer, double targetOffset, double durationMs)
+        {
+            double current = viewer.VerticalOffset;
+            double diff = targetOffset - current;
+            if (Math.Abs(diff) < 1) return;
+
+            int steps = (int)(durationMs / 16); // ~60fps
+            if (steps < 1) steps = 1;
+            int step = 0;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+            timer.Tick += (_, _) =>
+            {
+                step++;
+                double t = (double)step / steps;
+                // ease-out quad
+                t = 1 - (1 - t) * (1 - t);
+                viewer.ScrollToVerticalOffset(current + diff * t);
+                if (step >= steps)
+                    timer.Stop();
+            };
+            timer.Start();
+        }
+
+        // ─── NP Timer ───
+
+        private void NpUpdateTimer_Tick(object? sender, EventArgs e)
+        {
+            if (_player == null) return;
+
+            var pos = _player.CurrentPosition;
+            var total = _player.TotalDuration;
+
+            NpTimeElapsed.Text = NpFormatTime(pos);
+            NpTimeTotal.Text = NpFormatTime(total);
+
+            // Don't update slider while user is dragging, and respect seek cooldown
+            if (total.TotalSeconds > 0 && !_npIsSeeking &&
+                (DateTime.UtcNow - _lastSeekTime).TotalMilliseconds > 500)
+            {
+                NpSeekSlider.Maximum = total.TotalSeconds;
+                NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+                NpSeekSlider.Value = pos.TotalSeconds;
+                NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+            }
+            else if (total.TotalSeconds > 0)
+            {
+                NpSeekSlider.Maximum = total.TotalSeconds;
+            }
+
+            NpUpdatePlayState();
+            NpUpdateLyricHighlight(pos);
+        }
+
+        private void NpUpdatePlayState()
+        {
+            bool playing = _player?.IsPlaying == true;
+            NpPlayPath.Visibility = playing ? Visibility.Collapsed : Visibility.Visible;
+            NpPausePath.Visibility = playing ? Visibility.Visible : Visibility.Collapsed;
+
+            // Ensure play/pause buttons have correct color (respects color match)
+            if (_npColorMatchEnabled && _npAlbumSecondary != default)
+            {
+                var controlTint = new SolidColorBrush(System.Windows.Media.Color.FromRgb(
+                    (byte)Math.Min(255, _npAlbumSecondary.R + 100),
+                    (byte)Math.Min(255, _npAlbumSecondary.G + 100),
+                    (byte)Math.Min(255, _npAlbumSecondary.B + 100)));
+                NpPlayPath.Fill = controlTint;
+                NpPausePath.Fill = controlTint;
+            }
+
+            // Start NP visualizer when playing (leave frozen on pause, don't tear down)
+            if (_npVisualizerEnabled && _npVisible && playing)
+            {
+                NpStartVisualizer();
+            }
+        }
+
+        private static string NpFormatTime(TimeSpan ts) =>
+            ts.TotalHours >= 1 ? ts.ToString(@"h\:mm\:ss") : ts.ToString(@"m\:ss");
+
+        // ─── NP Control Events ───
+
+        private void NpPlayPause_Click(object sender, RoutedEventArgs e)
+        {
+            if (_player == null) return;
+            if (_player.IsPlaying) _player.Pause(); else _player.Resume();
+            NpUpdatePlayState();
+        }
+
+        private void NpPrev_Click(object sender, RoutedEventArgs e) =>
+            PrevTrack_Click(sender, e);
+
+        private void NpNext_Click(object sender, RoutedEventArgs e) =>
+            NextTrack_Click(sender, e);
+
+        private void NpShuffle_Click(object sender, RoutedEventArgs e)
+        {
+            _shuffleMode = !_shuffleMode;
+            UpdateShuffleUI();
+            NpUpdateShuffleIcon();
+        }
+
+        private void NpUpdateShuffleIcon()
+        {
+            if (NpShuffleIcon == null) return;
+            var activeColor = NpGetIconBrush(true);
+            var inactiveColor = NpGetIconBrush(false);
+            NpShuffleIcon.Stroke = _shuffleMode ? activeColor : inactiveColor;
+            NpShuffleBtn.ToolTip = _shuffleMode ? "Shuffle: ON" : "Shuffle: OFF";
+        }
+
+        private void NpLyricSource_Click(object sender, RoutedEventArgs e)
+        {
+            _npProviderIndex = (_npProviderIndex + 1) % NpLyricProviders.Length;
+            _npLyricProvider = NpLyricProviders[_npProviderIndex].Provider;
+            NpProviderBtn.ToolTip = $"Provider: {NpLyricProviders[_npProviderIndex].Name}";
+
+            if (_player.CurrentFile != null)
+            {
+                var currentFile = _files.FirstOrDefault(f =>
+                    string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                if (currentFile != null)
+                    _ = NpLoadLyricsAsync(currentFile.FilePath, currentFile.Artist, currentFile.Title);
+            }
+        }
+
+        private void NpVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_player != null)
+            {
+                _player.Volume = (float)(NpVolumeSlider.Value / 100.0);
+                VolumeSlider.Value = NpVolumeSlider.Value;
+            }
+            NpUpdateVolumeIcon();
+        }
+
+        private void NpVolumeIcon_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isMuted)
+            {
+                _preMuteVolume = NpVolumeSlider.Value;
+                NpVolumeSlider.Value = 0;
+                VolumeSlider.Value = 0;
+                _isMuted = true;
+            }
+            else
+            {
+                NpVolumeSlider.Value = _preMuteVolume;
+                VolumeSlider.Value = _preMuteVolume;
+                _isMuted = false;
+            }
+            NpUpdateVolumeIcon();
+        }
+
+        private void NpUpdateVolumeIcon()
+        {
+            double vol = NpVolumeSlider.Value;
+            string pathData;
+            if (vol <= 0 || _isMuted)
+                pathData = "M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 12,5 L 16,11 M 16,5 L 12,11"; // mute X
+            else if (vol <= 33)
+                pathData = "M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z"; // speaker only
+            else if (vol <= 66)
+                pathData = "M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11"; // one wave
+            else
+                pathData = "M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11 M 13,3 Q 16,8 13,13"; // two waves
+            try { NpVolumeIconPath.Data = Geometry.Parse(pathData); } catch { }
+        }
+
+        // ─── NP Visualizer Resize ───
+
+        private void NpVizResize_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            _npVizResizing = true;
+            _npVizResizeStartY = e.GetPosition(this).Y;
+            _npVizResizeStartH = _npVizBarHeight;
+            ((UIElement)sender).CaptureMouse();
+            e.Handled = true;
+        }
+
+        private void NpVizResize_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_npVizResizing) return;
+            double deltaY = _npVizResizeStartY - e.GetPosition(this).Y;
+            double newHeight = Math.Clamp(_npVizResizeStartH + deltaY, 40, 400);
+            _npVizBarHeight = newHeight;
+            if (_npVizPlacement == 0)
+                NpVizBar.Height = newHeight;
+            else
+                NpUnderCoverVizRow.Height = new GridLength(newHeight);
+            e.Handled = true;
+        }
+
+        private void NpVizResize_MouseUp(object sender, MouseButtonEventArgs e)
+        {
+            _npVizResizing = false;
+            ((UIElement)sender).ReleaseMouseCapture();
+            e.Handled = true;
+        }
+
+        private void NpSeekSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            // During drag, only update visual position — actual seek happens on release
+        }
+
+        private void NpSeekSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            _npIsSeeking = true;
+        }
+
+        private void NpSeekSlider_MouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (_player != null && _player.TotalDuration.TotalSeconds > 0 && NpSeekSlider.Maximum > 0)
+            {
+                _player.Seek(NpSeekSlider.Value);
+                _lastSeekTime = DateTime.UtcNow;
+
+                // Sync main slider
+                SeekSlider.Value = NpSeekSlider.Value / NpSeekSlider.Maximum * SeekSlider.Maximum;
+            }
+            _npIsSeeking = false;
+        }
+
+        private void NpSeekSlider_DragCompleted(object sender, DragCompletedEventArgs e)
+        {
+            if (_player != null && _player.TotalDuration.TotalSeconds > 0 && NpSeekSlider.Maximum > 0)
+            {
+                _player.Seek(NpSeekSlider.Value);
+                _lastSeekTime = DateTime.UtcNow;
+
+                // Sync main slider
+                SeekSlider.Value = NpSeekSlider.Value / NpSeekSlider.Maximum * SeekSlider.Maximum;
+            }
+            _npIsSeeking = false;
+        }
+
+        private void NpBack_Click(object sender, RoutedEventArgs e) => ToggleNowPlaying(false);
+
+        // ─── NP Auto-Play Toggle ───
+
+        private void NpAutoPlay_Click(object sender, RoutedEventArgs e)
+        {
+            ThemeManager.AutoPlayNext = !ThemeManager.AutoPlayNext;
+            ThemeManager.SavePlayOptions();
+            NpUpdateAutoPlayIcon();
+        }
+
+        private void NpUpdateAutoPlayIcon()
+        {
+            var active = NpGetIconBrush(true);
+            var inactive = NpGetIconBrush(false);
+            var brush = ThemeManager.AutoPlayNext ? active : inactive;
+            NpAutoPlayIcon.Fill = brush;
+            NpAutoPlayIcon.Stroke = brush;
+            NpAutoPlayBtn.ToolTip = ThemeManager.AutoPlayNext ? "Auto-play: ON" : "Auto-play: OFF";
+        }
+
+        // ─── NP Visualizer Toggle ───
+
+        private void NpVisualizerToggle_Click(object sender, RoutedEventArgs e)
+        {
+            _npVisualizerEnabled = !_npVisualizerEnabled;
+            NpApplyVizPlacement();
+            NpUpdateVisualizerIcon();
+
+            if (_npVisualizerEnabled && _player.IsPlaying)
+                NpStartVisualizer();
+            else
+                NpStopVisualizer();
+            NpSavePreferences();
+        }
+
+        private void NpUpdateVisualizerIcon()
+        {
+            var active = NpGetIconBrush(true);
+            var inactive = NpGetIconBrush(false);
+            NpVisualizerIcon.Stroke = _npVisualizerEnabled ? active : inactive;
+            NpVisualizerBtn.ToolTip = _npVisualizerEnabled ? "Visualizer: ON" : "Visualizer: OFF";
+        }
+
+        private void NpUpdateVizPlacementIcon()
+        {
+            NpVizPlacementIcon.Stroke = NpGetIconBrush(false);
+        }
+
+        private bool _npVizRedirected; // true when NP owns the visualizer pipeline
+
+        private void NpStartVisualizer()
+        {
+            if (_npVizRedirected) return; // already redirected
+            _npVizRedirected = true;
+
+            // Clear cached elements so they rebuild on the active canvas via VizTarget
+            ClearVisualizerCaches();
+            NpVisualizerCanvas.Children.Clear();
+            NpUnderCoverVizCanvas.Children.Clear();
+            if (!_visualizerActive)
+            {
+                _mainVizWasActive = false;
+                StartVisualizer();
+            }
+            else
+            {
+                _mainVizWasActive = true;
+                // Clear main canvas elements since VizTarget now points to NP canvas
+                VisualizerCanvas.Children.Clear();
+            }
+        }
+
+        private void NpStopVisualizer()
+        {
+            if (!_npVizRedirected) return;
+            _npVizRedirected = false;
+
+            ClearVisualizerCaches();
+            NpVisualizerCanvas.Children.Clear();
+            NpUnderCoverVizCanvas.Children.Clear();
+            if (!_mainVizWasActive)
+            {
+                // Main visualizer was not running before NP took over, stop it
+                StopVisualizer();
+            }
+            else if (!_npVisible)
+            {
+                // NP is closing — restore main visualizer
+                VisualizerCanvas.Children.Clear();
+            }
+            else
+            {
+                // NP still visible but NP viz toggled off — keep main viz paused
+                StopVisualizer();
+                // Keep _mainVizWasActive true so it restores when NP closes
+            }
+        }
+
+        private void ClearVisualizerCaches()
+        {
+            _vizBars = null;
+            _vizMirrorBars = null;
+            _particles = null;
+            _particleElements = null;
+            _circleElements = null;
+            _scopeLine = null;
+            _kaleidoPolys = null;
+            _vuBlocks = null;
+        }
+
+        // ─── NP Visualizer Style Picker ───
+
+        private void NpVisualizerStyle_Click(object sender, RoutedEventArgs e)
+        {
+            // Toggle: if already open, close it
+            if (NpVizStylePopup.IsOpen)
+            {
+                NpVizStylePopup.IsOpen = false;
+                return;
+            }
+
+            NpVizStyleMenu.Children.Clear();
+            for (int i = 0; i < _vizStyleNames.Length; i++)
+            {
+                int idx = i;
+                var tb = new TextBlock
+                {
+                    Text = (_npVisualizerStyle == i ? "● " : "   ") + _vizStyleNames[i],
+                    FontSize = 12,
+                    FontFamily = new System.Windows.Media.FontFamily("Segoe UI"),
+                    Foreground = (Brush)FindResource(_npVisualizerStyle == i ? "TextPrimary" : "TextSecondary"),
+                    Padding = new Thickness(10, 5, 10, 5),
+                    Cursor = System.Windows.Input.Cursors.Hand
+                };
+                tb.MouseLeftButtonUp += (s, ev) =>
+                {
+                    NpApplyVisualizerStyle(idx);
+                    NpVizStylePopup.IsOpen = false;
+                };
+                NpVizStyleMenu.Children.Add(tb);
+            }
+            NpVizStylePopup.IsOpen = true;
+        }
+
+        private void NpApplyVisualizerStyle(int style)
+        {
+            _npVisualizerStyle = style;
+            // Apply the style to the shared visualizer renderer
+            _visualizerStyle = style;
+            ClearVisualizerCaches();
+            NpVisualizerCanvas.Children.Clear();
+            NpUnderCoverVizCanvas.Children.Clear();
+            VisualizerCanvas.Children.Clear();
+            NpSavePreferences();
+        }
+
+        // ─── NP Color Match Toggle ───
+
+        private void NpColorMatch_Click(object sender, RoutedEventArgs e)
+        {
+            _npColorMatchEnabled = !_npColorMatchEnabled;
+            NpUpdateColorMatchIcon();
+            NpApplyColorMatchMode();
+            NpSavePreferences();
+        }
+
+        private void NpUpdateColorMatchIcon()
+        {
+            var active = NpGetIconBrush(true);
+            var inactive = NpGetIconBrush(false);
+            NpColorMatchIcon.Stroke = _npColorMatchEnabled ? active : inactive;
+            NpColorMatchFill.Fill = _npColorMatchEnabled ? active : inactive;
+            NpColorMatchBtn.ToolTip = _npColorMatchEnabled ? "Color match: ON" : "Color match: OFF";
+        }
+
+        /// <summary>
+        /// Returns a brush for NP button icons that respects color-match mode.
+        /// When color match is ON, returns album-tinted colors instead of theme defaults.
+        /// </summary>
+        private Brush NpGetIconBrush(bool active)
+        {
+            if (_npColorMatchEnabled && _npAlbumPrimary != default)
+            {
+                if (active)
+                    return new SolidColorBrush(System.Windows.Media.Color.FromRgb(
+                        (byte)Math.Min(255, _npAlbumPrimary.R + 120),
+                        (byte)Math.Min(255, _npAlbumPrimary.G + 120),
+                        (byte)Math.Min(255, _npAlbumPrimary.B + 120)));
+                else
+                    return new SolidColorBrush(System.Windows.Media.Color.FromRgb(
+                        (byte)Math.Min(255, _npAlbumPrimary.R + 80),
+                        (byte)Math.Min(255, _npAlbumPrimary.G + 80),
+                        (byte)Math.Min(255, _npAlbumPrimary.B + 80)));
+            }
+            return (Brush)FindResource(active ? "TextPrimary" : "TextMuted");
+        }
+
+        private void NpApplyColorMatchMode()
+        {
+            if (_npColorMatchEnabled && NpCoverImage.Source != null
+                && _npAlbumPrimary != default)
+            {
+                // Background: stronger gradient, minimal dark overlay
+                NpBgGradient.Opacity = 1.0;
+                NpDarkOverlay.Background = new SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(20, 0, 0, 0));
+
+                // Bottom bar: deeply tinted
+                var barBg = System.Windows.Media.Color.FromArgb(200,
+                    (byte)(_npAlbumBackground.R / 3),
+                    (byte)(_npAlbumBackground.G / 3),
+                    (byte)(_npAlbumBackground.B / 3));
+                NpBottomBar.Background = new SolidColorBrush(barBg);
+                NpBottomBar.BorderBrush = new SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(80,
+                        _npAlbumPrimary.R, _npAlbumPrimary.G, _npAlbumPrimary.B));
+
+                // Title highlight with brightened primary
+                var bright = System.Windows.Media.Color.FromRgb(
+                    (byte)Math.Min(255, _npAlbumPrimary.R + 100),
+                    (byte)Math.Min(255, _npAlbumPrimary.G + 100),
+                    (byte)Math.Min(255, _npAlbumPrimary.B + 100));
+                NpSongTitle.Foreground = new SolidColorBrush(bright);
+                NpBigTitle.Foreground = new SolidColorBrush(bright);
+
+                // Artist text with lighter secondary
+                NpSongArtist.Foreground = new SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(
+                        (byte)Math.Min(255, _npAlbumSecondary.R + 80),
+                        (byte)Math.Min(255, _npAlbumSecondary.G + 80),
+                        (byte)Math.Min(255, _npAlbumSecondary.B + 80)));
+
+                // Specs text brighter
+                NpSongSpecs.Foreground = new SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(200,
+                        (byte)Math.Min(255, _npAlbumPrimary.R + 60),
+                        (byte)Math.Min(255, _npAlbumPrimary.G + 60),
+                        (byte)Math.Min(255, _npAlbumPrimary.B + 60)));
+
+                // Tint Up Next badge to match album colors
+                NpNextTrackBorder.Background = new SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(50,
+                        _npAlbumPrimary.R, _npAlbumPrimary.G, _npAlbumPrimary.B));
+                NpNextTrackLabel.Foreground = new SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(
+                        (byte)Math.Min(255, _npAlbumSecondary.R + 80),
+                        (byte)Math.Min(255, _npAlbumSecondary.G + 80),
+                        (byte)Math.Min(255, _npAlbumSecondary.B + 80)));
+                NpNextTrackText.Foreground = new SolidColorBrush(bright);
+
+                // Tint all icon paths in the bottom bar with album colors
+                var iconTint = new SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(
+                        (byte)Math.Min(255, _npAlbumPrimary.R + 80),
+                        (byte)Math.Min(255, _npAlbumPrimary.G + 80),
+                        (byte)Math.Min(255, _npAlbumPrimary.B + 80)));
+                var controlTint = new SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(
+                        (byte)Math.Min(255, _npAlbumSecondary.R + 100),
+                        (byte)Math.Min(255, _npAlbumSecondary.G + 100),
+                        (byte)Math.Min(255, _npAlbumSecondary.B + 100)));
+
+                // Playback control fills
+                NpPlayPath.Fill = controlTint;
+                NpPausePath.Fill = controlTint;
+
+                // Prev/Next icons
+                NpPrevLine.Stroke = controlTint;
+                NpPrevFill.Fill = controlTint;
+                NpNextFill.Fill = controlTint;
+                NpNextLine.Stroke = controlTint;
+
+                // Volume icon
+                NpVolumeIconPath.Fill = iconTint;
+                NpVolumeIconPath.Stroke = iconTint;
+
+                // Time labels
+                NpTimeElapsed.Foreground = iconTint;
+                NpTimeTotal.Foreground = iconTint;
+
+                // Tint all option button icons in the bottom bar
+                // (use individual update methods so active/inactive state is respected)
+                NpUpdateShuffleIcon();
+                NpUpdateAutoPlayIcon();
+                NpUpdateVisualizerIcon();
+                NpUpdateVizPlacementIcon();
+                NpUpdateLyricsOffIcon();
+                NpUpdateTranslateIcon();
+                NpUpdateKaraokeIcon();
+                NpUpdateColorMatchIcon();
+
+                // Tint remaining static icons that don't have toggle states
+                NpVizStyleIcon.Stroke = iconTint;
+                NpProviderCircle.Stroke = iconTint;
+                NpProviderArc.Stroke = new SolidColorBrush(bright);
+                NpLoadLrcBody.Stroke = iconTint;
+                NpLoadLrcFold.Stroke = iconTint;
+                NpSettingsGear.Stroke = iconTint;
+                NpSettingsCenter.Stroke = iconTint;
+                NpTranslateSettingsIcon.Stroke = iconTint;
+                NpLayoutIcon.Stroke = iconTint;
+
+                // Seek and Volume sliders: tint the accent color
+                var sliderAccent = new SolidColorBrush(bright);
+                Application.Current.Resources["PlaybarAccentColor"] = sliderAccent;
+
+                // Tint button backgrounds/hover/pressed/border with album colors
+                var btnBg = System.Windows.Media.Color.FromArgb(160,
+                    (byte)(_npAlbumBackground.R / 2),
+                    (byte)(_npAlbumBackground.G / 2),
+                    (byte)(_npAlbumBackground.B / 2));
+                var btnHover = System.Windows.Media.Color.FromArgb(200,
+                    (byte)Math.Min(255, _npAlbumPrimary.R / 3 + 30),
+                    (byte)Math.Min(255, _npAlbumPrimary.G / 3 + 30),
+                    (byte)Math.Min(255, _npAlbumPrimary.B / 3 + 30));
+                var btnPressed = System.Windows.Media.Color.FromArgb(220,
+                    (byte)Math.Min(255, _npAlbumPrimary.R / 2 + 40),
+                    (byte)Math.Min(255, _npAlbumPrimary.G / 2 + 40),
+                    (byte)Math.Min(255, _npAlbumPrimary.B / 2 + 40));
+                var btnBorder = System.Windows.Media.Color.FromArgb(60,
+                    _npAlbumPrimary.R, _npAlbumPrimary.G, _npAlbumPrimary.B);
+                Application.Current.Resources["ButtonBg"] = new SolidColorBrush(btnBg);
+                Application.Current.Resources["ButtonHover"] = new SolidColorBrush(btnHover);
+                Application.Current.Resources["ButtonPressed"] = new SolidColorBrush(btnPressed);
+                Application.Current.Resources["ButtonBorder"] = new SolidColorBrush(btnBorder);
+
+                // Tint the titlebar to match the bottom bar color
+                try
+                {
+                    var hwnd = new WindowInteropHelper(this).Handle;
+                    if (hwnd != IntPtr.Zero)
+                    {
+                        byte r = (byte)(_npAlbumBackground.R / 3);
+                        byte g = (byte)(_npAlbumBackground.G / 3);
+                        byte b = (byte)(_npAlbumBackground.B / 3);
+                        int colorRef = r | (g << 8) | (b << 16);
+                        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref colorRef, sizeof(int));
+                    }
+                }
+                catch { }
+
+                // Store colors for visualizer tinting (used by render methods)
+                _npVizColorPrimary = _npAlbumPrimary;
+                _npVizColorSecondary = _npAlbumSecondary;
+            }
+            else
+            {
+                // Restore defaults
+                NpBgGradient.Opacity = 0.6;
+                NpDarkOverlay.Background = new SolidColorBrush(
+                    System.Windows.Media.Color.FromArgb(102, 0, 0, 0));
+                NpBottomBar.Background = (Brush)FindResource("ToolbarBg");
+                NpBottomBar.BorderBrush = (Brush)FindResource("BorderColor");
+                NpSongTitle.Foreground = (Brush)FindResource("TextPrimary");
+                NpBigTitle.Foreground = (Brush)FindResource("TextPrimary");
+                NpSongArtist.Foreground = (Brush)FindResource("TextSecondary");
+                NpSongSpecs.Foreground = (Brush)FindResource("TextSecondary");
+
+                // Restore Up Next badge to defaults
+                NpNextTrackBorder.Background = (Brush)FindResource("ButtonBg");
+                NpNextTrackLabel.Foreground = (Brush)FindResource("TextPrimary");
+                NpNextTrackText.Foreground = (Brush)FindResource("TextPrimary");
+
+                NpPlayPath.Fill = (Brush)FindResource("TextPrimary");
+                NpPausePath.Fill = (Brush)FindResource("TextPrimary");
+                NpPrevLine.Stroke = (Brush)FindResource("TextPrimary");
+                NpPrevFill.Fill = (Brush)FindResource("TextPrimary");
+                NpNextFill.Fill = (Brush)FindResource("TextPrimary");
+                NpNextLine.Stroke = (Brush)FindResource("TextPrimary");
+                NpVolumeIconPath.Fill = (Brush)FindResource("TextMuted");
+                NpVolumeIconPath.Stroke = (Brush)FindResource("TextMuted");
+                NpTimeElapsed.Foreground = (Brush)FindResource("TextMuted");
+                NpTimeTotal.Foreground = (Brush)FindResource("TextMuted");
+
+                // Restore option button icon colors (use individual methods for active/inactive state)
+                NpUpdateShuffleIcon();
+                NpUpdateAutoPlayIcon();
+                NpUpdateVisualizerIcon();
+                NpUpdateVizPlacementIcon();
+                NpUpdateLyricsOffIcon();
+                NpUpdateTranslateIcon();
+                NpUpdateKaraokeIcon();
+                NpUpdateColorMatchIcon();
+
+                // Restore static icon colors to theme defaults
+                var muted = (Brush)FindResource("TextMuted");
+                NpVizStyleIcon.Stroke = muted;
+                NpProviderCircle.Stroke = muted;
+                NpProviderArc.Stroke = (Brush)FindResource("AccentColor");
+                NpLoadLrcBody.Stroke = muted;
+                NpLoadLrcFold.Stroke = muted;
+                NpSettingsGear.Stroke = muted;
+                NpSettingsCenter.Stroke = muted;
+                NpTranslateSettingsIcon.Stroke = muted;
+                NpLayoutIcon.Stroke = muted;
+
+                // Restore slider accent to theme default
+                var vizColors = ThemeManager.GetVisualizerColors();
+                Application.Current.Resources["PlaybarAccentColor"] = new SolidColorBrush(vizColors.ProgressGradient[0]);
+
+                // Restore button backgrounds/hover/pressed/border to theme defaults
+                ThemeManager.ApplyTheme(ThemeManager.CurrentTheme);
+
+                // Restore titlebar to theme default
+                ApplyThemeTitleBar();
+
+                _npVizColorPrimary = default;
+                _npVizColorSecondary = default;
+            }
+        }
+
+        // ─── NP Layout Customization ───
+
+        private bool _npLayoutPopupInit;
+
+        private void NpLayoutCustomize_Click(object sender, RoutedEventArgs e)
+        {
+            // Seed sliders with current values (suppress change events during init)
+            _npLayoutPopupInit = true;
+            bool fs = WindowState == WindowState.Maximized;
+            NpLayoutCoverSlider.Value = _npCoverSize > 0 ? _npCoverSize : (fs ? 420 : 300);
+            NpLayoutTitleSlider.Value = _npTitleSize > 0 ? _npTitleSize : (fs ? 32 : 24);
+            NpLayoutSubSlider.Value = _npSubTextSize > 0 ? _npSubTextSize : (fs ? 12 : 10);
+            NpLayoutLyricsSlider.Value = _npLyricsSize > 0 ? _npLyricsSize : (fs ? 22 : 18);
+            NpLayoutLyricsPosSlider.Value = _npLyricsOffsetX;
+            NpLayoutVizSlider.Value = _npVizSize > 0 ? _npVizSize : (int)_npVizBarHeight;
+            NpLayoutCoverXSlider.Value = _npCoverOffsetX;
+            NpLayoutCoverYSlider.Value = _npCoverOffsetY;
+            NpLayoutTitleXSlider.Value = _npTitleOffsetX;
+            NpLayoutTitleYSlider.Value = _npTitleOffsetY;
+            NpLayoutArtistXSlider.Value = _npArtistOffsetX;
+            NpLayoutArtistYSlider.Value = _npArtistOffsetY;
+            NpLayoutVizYSlider.Value = _npVizOffsetY;
+            _npLayoutPopupInit = false;
+            NpLayoutPopup.IsOpen = true;
+            NpLayoutPopup.Closed -= NpLayoutPopup_Closed;
+            NpLayoutPopup.Closed += NpLayoutPopup_Closed;
+        }
+
+        private void NpLayoutPopup_Closed(object? sender, EventArgs e)
+        {
+            NpSavePreferences();
+        }
+
+        private void NpLayoutSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_npLayoutPopupInit || !IsLoaded) return;
+
+            _npCoverSize = (int)NpLayoutCoverSlider.Value;
+            _npTitleSize = (int)NpLayoutTitleSlider.Value;
+            _npSubTextSize = (int)NpLayoutSubSlider.Value;
+            _npLyricsSize = (int)NpLayoutLyricsSlider.Value;
+            _npLyricsOffsetX = (int)NpLayoutLyricsPosSlider.Value;
+            _npVizSize = (int)NpLayoutVizSlider.Value;
+            _npCoverOffsetX = (int)NpLayoutCoverXSlider.Value;
+            _npCoverOffsetY = (int)NpLayoutCoverYSlider.Value;
+            _npTitleOffsetX = (int)NpLayoutTitleXSlider.Value;
+            _npTitleOffsetY = (int)NpLayoutTitleYSlider.Value;
+            _npArtistOffsetX = (int)NpLayoutArtistXSlider.Value;
+            _npArtistOffsetY = (int)NpLayoutArtistYSlider.Value;
+            _npVizOffsetY = (int)NpLayoutVizYSlider.Value;
+
+            // Live preview
+            NpApplyFullscreenScaling(WindowState == WindowState.Maximized);
+        }
+
+        private void NpLayoutReset_Click(object sender, RoutedEventArgs e)
+        {
+            _npCoverSize = 0;
+            _npTitleSize = 0;
+            _npSubTextSize = 0;
+            _npLyricsSize = 0;
+            _npLyricsOffsetX = 0;
+            _npVizSize = 0;
+            _npCoverOffsetX = 0;
+            _npCoverOffsetY = 0;
+            _npTitleOffsetX = 0;
+            _npTitleOffsetY = 0;
+            _npArtistOffsetX = 0;
+            _npArtistOffsetY = 0;
+            _npVizOffsetY = 0;
+
+            bool fs = WindowState == WindowState.Maximized;
+            _npLayoutPopupInit = true;
+            NpLayoutCoverSlider.Value = fs ? 420 : 300;
+            NpLayoutTitleSlider.Value = fs ? 32 : 24;
+            NpLayoutSubSlider.Value = fs ? 12 : 10;
+            NpLayoutLyricsSlider.Value = fs ? 22 : 18;
+            NpLayoutLyricsPosSlider.Value = 0;
+            NpLayoutVizSlider.Value = (int)_npVizBarHeight;
+            NpLayoutCoverXSlider.Value = 0;
+            NpLayoutCoverYSlider.Value = 0;
+            NpLayoutTitleXSlider.Value = 0;
+            NpLayoutTitleYSlider.Value = 0;
+            NpLayoutArtistXSlider.Value = 0;
+            NpLayoutArtistYSlider.Value = 0;
+            NpLayoutVizYSlider.Value = 0;
+            _npLayoutPopupInit = false;
+
+            NpApplyFullscreenScaling(fs);
+            NpSavePreferences();
+        }
+
+        // ─── NP Settings Button ───
+
+        private void NpSettings_Click(object sender, RoutedEventArgs e)
+        {
+            var settingsWindow = new SettingsWindow { Owner = this };
+            settingsWindow.ShowDialog();
+
+            // Full theme + NP refresh after settings change
+            try
+            {
+                UpdateServiceButtonLabels();
+                ApplyThemeTitleBar();
+                UpdateShuffleUI();
+                _eqSliderTemplateCache = null;
+                InitializeEqualizerSliders();
+                ChkEqEnabled.IsChecked = ThemeManager.EqualizerEnabled;
+
+                // Sync Discord RPC state
+                if (ThemeManager.DiscordRpcEnabled && !string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
+                {
+                    if (!_discord.IsEnabled) _discord.Enable(); else _discord.Enable();
+                }
+                else if (_discord.IsEnabled) _discord.Disable();
+
+                // Sync spatial / normalization / Last.fm
+                var spatial = _player.CurrentSpatialAudio;
+                if (spatial != null) spatial.Enabled = ThemeManager.SpatialAudioEnabled;
+                if (_player.IsPlaying || _player.IsPaused)
+                    _player.SetNormalization(ThemeManager.AudioNormalization);
+                if (!string.IsNullOrEmpty(ThemeManager.LastFmSessionKey))
+                    _lastFm.Configure(ThemeManager.LastFmApiKey, ThemeManager.LastFmApiSecret, ThemeManager.LastFmSessionKey);
+                UpdateLastFmStatusIndicator();
+                ApplyColumnVisibility();
+
+                // NP-specific refreshes
+                NpUpdateAutoPlayIcon();
+                if (_npColorMatchEnabled)
+                    NpApplyColorMatchMode();
+                // Re-apply NP background from DynamicResource
+                NpBottomBar.Background = (System.Windows.Media.Brush)FindResource("PanelBg");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NpSettings_Click refresh] {ex}");
+            }
+        }
+
+        // ─── NP Visualizer Placement Toggle ───
+
+        private void NpVizPlacement_Click(object sender, RoutedEventArgs e)
+        {
+            _npVizPlacement = (_npVizPlacement + 1) % 2;
+            NpApplyVizPlacement();
+
+            // Restart visualizer to use the new target canvas
+            if (_npVisualizerEnabled)
+            {
+                NpStopVisualizer();
+                NpStartVisualizer();
+            }
+            NpSavePreferences();
+        }
+
+        private void NpApplyVizPlacement()
+        {
+            NpUpdateVizPlacementIcon();
+            if (_npVizPlacement == 0)
+            {
+                // Full-width bar above playbar
+                NpVizBar.Height = _npVisualizerEnabled ? _npVizBarHeight : 0;
+                NpUnderCoverVizRow.Height = new GridLength(0);
+                NpUnderCoverVizBorder.Visibility = Visibility.Collapsed;
+                NpVizPlacementBtn.ToolTip = "Visualizer: Full-width";
+                NpVizPlacementIcon.Data = System.Windows.Media.Geometry.Parse("M 1,13 L 15,13 M 1,10 L 15,10");
+            }
+            else
+            {
+                // Under album cover
+                NpVizBar.Height = 0;
+                NpUnderCoverVizRow.Height = _npVisualizerEnabled ? new GridLength(_npVizBarHeight) : new GridLength(0);
+                NpUnderCoverVizBorder.Visibility = _npVisualizerEnabled ? Visibility.Visible : Visibility.Collapsed;
+                NpVizPlacementBtn.ToolTip = "Visualizer: Under cover";
+                NpVizPlacementIcon.Data = System.Windows.Media.Geometry.Parse("M 1,6 L 8,6 M 1,10 L 8,10");
+            }
+
+            // Adjust title/UpNext spacing relative to album cover glow.
+            // Glow extends ~24px outside cover. When viz ON, push title UP
+            // (big bottom margin = gap above cover) and UpNext DOWN (big top margin)
+            // so they sit outside the blur. When viz OFF, bring them back closer.
+            bool fullscreen = WindowState == WindowState.Maximized;
+            if (fullscreen)
+            {
+                // Fullscreen: push title DOWN (big top margin) and UpNext UP (small top margin)
+                NpBigTitleBorder.Margin = _npVisualizerEnabled
+                    ? new Thickness(8, 80, 8, 36)
+                    : new Thickness(8, 80, 8, 4);
+                NpNextTrackBorder.Margin = new Thickness(0, 4, 0, 2);
+            }
+            else
+            {
+                NpBigTitleBorder.Margin = _npVisualizerEnabled
+                    ? new Thickness(8, 0, 8, 36)   // UP: flush top, 36px gap before cover (clears glow)
+                    : new Thickness(8, 12, 8, 4);  // DOWN: 12px from top, small gap to cover
+                NpNextTrackBorder.Margin = _npVisualizerEnabled
+                    ? new Thickness(0, 36, 0, 2)   // DOWN: 36px gap after cover (clears glow)
+                    : new Thickness(0, 4, 0, 2);   // UP: small gap under cover
+            }
+            NpApplyFullscreenScaling(fullscreen);
+        }
+
+        private void NpApplyFullscreenScaling(bool fullscreen)
+        {
+            // Defaults per window state (used when custom size is 0)
+            int defCover = fullscreen ? 420 : 300;
+            int defTitle = fullscreen ? 32 : 24;
+            int defSub = fullscreen ? 12 : 10;
+            int defLyrics = fullscreen ? 22 : 18;
+            int defViz = (int)_npVizBarHeight; // user-draggable bar height
+
+            int coverSz = _npCoverSize > 0 ? _npCoverSize : defCover;
+            int titleSz = _npTitleSize > 0 ? _npTitleSize : defTitle;
+            int subSz = _npSubTextSize > 0 ? _npSubTextSize : defSub;
+            int lyricsSz = _npLyricsSize > 0 ? _npLyricsSize : defLyrics;
+
+            // Album cover — MaxWidth/MaxHeight constrain size; clip handled by SizeChanged
+            NpCoverImage.MaxWidth = coverSz;
+            NpCoverImage.MaxHeight = coverSz;
+
+            // Title/artist widths based on available column width (decoupled from cover size)
+            double colWidth = Math.Max(300, (ActualWidth - 96) / 2); // 96 = margins 32+32+16+16
+            int titleMaxW = (int)(colWidth * 0.92);
+            int titleBorderH = Math.Max(36, titleSz + 16);
+            int titleViewboxH = Math.Max(30, titleSz + 10);
+            NpBigTitleBorder.MaxHeight = titleBorderH;
+            NpBigTitle.FontSize = titleSz;
+            NpBigTitle.MaxWidth = titleMaxW;
+            if (NpBigTitleBorder.Child is Viewbox vb) vb.MaxHeight = titleViewboxH;
+
+            // Artist / Up-next label
+            NpNextTrackLabel.FontSize = subSz;
+            NpNextTrackText.FontSize = subSz;
+            NpNextTrackText.MaxWidth = (int)(colWidth * 0.65);
+
+            // Lyrics — clear any running animation first so direct set takes effect
+            foreach (var tb in _npLyricTextBlocks)
+            {
+                tb.BeginAnimation(TextBlock.FontSizeProperty, null);
+                tb.FontSize = lyricsSz;
+            }
+
+            // Lyrics horizontal offset
+            int lyricsLeftMargin = 24 + _npLyricsOffsetX;
+            NpLyricsDropTarget.Margin = new Thickness(lyricsLeftMargin, 0, 0, 0);
+
+            // Position offsets via RenderTransform (translate)
+            NpCoverAssembly.RenderTransform = new TranslateTransform(_npCoverOffsetX, _npCoverOffsetY);
+            NpBigTitleBorder.RenderTransform = new TranslateTransform(_npTitleOffsetX, _npTitleOffsetY);
+            NpNextTrackBorder.RenderTransform = new TranslateTransform(_npArtistOffsetX, _npArtistOffsetY);
+            NpVizBar.RenderTransform = new TranslateTransform(0, _npVizOffsetY);
+            NpUnderCoverVizBorder.RenderTransform = new TranslateTransform(0, _npVizOffsetY);
+
+            // Visualizer height (only if custom)
+            if (_npVizSize > 0)
+            {
+                _npVizBarHeight = _npVizSize;
+                NpApplyVizBarHeight();
+            }
+        }
+
+        private void NpApplyVizBarHeight()
+        {
+            if (_npVizPlacement == 0)
+            {
+                // Full-width bar
+                if (_npVisualizerEnabled)
+                    NpVizBar.Height = _npVizBarHeight;
+            }
+            else
+            {
+                // Under-cover
+                if (_npVisualizerEnabled)
+                    NpUnderCoverVizRow.Height = new GridLength(_npVizBarHeight);
+            }
+        }
+
+        // ─── NP Lyrics-Off (Pure Viz + Art Mode) ───
+
+        private void NpLyricsOff_Click(object sender, RoutedEventArgs e)
+        {
+            _npLyricsHidden = !_npLyricsHidden;
+            NpApplyLyricsOffMode();
+            NpUpdateLyricsOffIcon();
+            NpSavePreferences();
+        }
+
+        private void NpApplyLyricsOffMode()
+        {
+            if (_npLyricsHidden)
+            {
+                // Collapse lyrics column, expand art column
+                NpContentArea.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+                NpContentArea.ColumnDefinitions[1].Width = new GridLength(0);
+                NpLyricsDropTarget.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                // Restore two-column layout
+                NpContentArea.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+                NpContentArea.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
+                NpLyricsDropTarget.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void NpUpdateLyricsOffIcon()
+        {
+            var active = _npColorMatchEnabled && _npAlbumPrimary != default
+                ? NpGetIconBrush(true) : (Brush)FindResource("AccentColor");
+            var inactive = NpGetIconBrush(false);
+            NpLyricsOffIcon.Stroke = _npLyricsHidden ? active : inactive;
+            NpLyricsOffBtn.ToolTip = _npLyricsHidden ? "Show lyrics" : "Hide lyrics (art mode)";
+        }
+
+        // ─── NP Translation ───
+
+        private void NpTranslate_Click(object sender, RoutedEventArgs e)
+        {
+            _npTranslateEnabled = !_npTranslateEnabled;
+            NpUpdateTranslateIcon();
+
+            if (_npTranslateEnabled)
+            {
+                NpTranslateSettingsBtn.Visibility = Visibility.Visible;
+                _ = NpTranslateLyricsAsync();
+            }
+            else
+            {
+                NpTranslateSettingsBtn.Visibility = Visibility.Collapsed;
+                _npTranslatedLines = null;
+                // Rebuild lines without translations
+                NpBuildLyricLines();
+            }
+            NpSavePreferences();
+        }
+
+        private void NpUpdateTranslateIcon()
+        {
+            var active = _npColorMatchEnabled && _npAlbumPrimary != default
+                ? NpGetIconBrush(true) : (Brush)FindResource("AccentColor");
+            var inactive = NpGetIconBrush(false);
+            NpTranslateIcon.Stroke = _npTranslateEnabled ? active : inactive;
+            NpTranslateBtn.ToolTip = _npTranslateEnabled ? "Translation: ON" : "Translate lyrics";
+        }
+
+        private void NpTranslateSettings_Click(object sender, RoutedEventArgs e)
+        {
+            // Toggle popup
+            if (NpTranslatePopup.IsOpen)
+            {
+                NpTranslatePopup.IsOpen = false;
+                return;
+            }
+
+            // Populate combos if empty
+            if (NpTranslateFromCombo.Items.Count == 0)
+            {
+                NpTranslateFromCombo.Items.Add(new ComboBoxItem { Content = "Auto-detect", Tag = "auto" });
+                foreach (var kv in TranslateService.LanguageNames)
+                    NpTranslateFromCombo.Items.Add(new ComboBoxItem { Content = kv.Value, Tag = kv.Key });
+                NpTranslateFromCombo.SelectedIndex = 0;
+            }
+            if (NpTranslateToCombo.Items.Count == 0)
+            {
+                foreach (var kv in TranslateService.LanguageNames)
+                    NpTranslateToCombo.Items.Add(new ComboBoxItem { Content = kv.Value, Tag = kv.Key });
+                // Default: English
+                for (int i = 0; i < NpTranslateToCombo.Items.Count; i++)
+                {
+                    if (NpTranslateToCombo.Items[i] is ComboBoxItem ci && ci.Tag is string t && t == "en")
+                    { NpTranslateToCombo.SelectedIndex = i; break; }
+                }
+                if (NpTranslateToCombo.SelectedIndex < 0)
+                    NpTranslateToCombo.SelectedIndex = 0;
+            }
+            NpTranslatePopup.IsOpen = true;
+        }
+
+        private void NpTranslateFrom_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (NpTranslateFromCombo.SelectedItem is ComboBoxItem item && item.Tag is string lang)
+            {
+                _npTranslateFrom = lang;
+                if (_npTranslateEnabled)
+                {
+                    _npTranslatedLines = null;
+                    _ = NpTranslateLyricsAsync();
+                }
+            }
+        }
+
+        private void NpTranslateTo_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (NpTranslateToCombo.SelectedItem is ComboBoxItem item && item.Tag is string lang)
+            {
+                _npTranslateTo = lang;
+                if (_npTranslateEnabled)
+                {
+                    _npTranslatedLines = null;
+                    _ = NpTranslateLyricsAsync();
+                }
+            }
+        }
+
+        private async Task NpTranslateLyricsAsync()
+        {
+            if (!_npCurrentLyrics.HasLyrics) return;
+            int version = _npLyricsVersion; // snapshot to detect track change
+
+            var lines = _npCurrentLyrics.Lines.Select(l => l.Text).ToList();
+            if (lines.Count == 0) return;
+
+            // Detect source language if set to auto
+            string fromLang = _npTranslateFrom;
+            if (fromLang == "auto")
+            {
+                // Use first non-empty, non-instrumental line to detect
+                var sample = lines.FirstOrDefault(l =>
+                    !string.IsNullOrWhiteSpace(l) && l.Length > 3
+                    && !l.StartsWith('[') && !l.StartsWith('(')) ?? "";
+                if (!string.IsNullOrWhiteSpace(sample))
+                    fromLang = await TranslateService.DetectLanguageAsync(sample);
+                else
+                    fromLang = "en"; // fallback
+            }
+
+            if (version != _npLyricsVersion) return; // track changed during await
+
+            // Don't translate if source == target
+            if (string.Equals(fromLang, _npTranslateTo, StringComparison.OrdinalIgnoreCase))
+            {
+                _npTranslatedLines = null;
+                NpBuildLyricLines();
+                return;
+            }
+
+            try
+            {
+                _npTranslatedLines = await TranslateService.TranslateLinesAsync(lines, fromLang, _npTranslateTo);
+            }
+            catch
+            {
+                _npTranslatedLines = null;
+            }
+
+            if (version != _npLyricsVersion) return; // track changed during await
+            NpBuildLyricLines();
+        }
+
+        // ─── NP Karaoke Mode ───
+
+        private void NpKaraoke_Click(object sender, RoutedEventArgs e)
+        {
+            _npKaraokeEnabled = !_npKaraokeEnabled;
+            NpUpdateKaraokeIcon();
+            _npCurrentLyricIndex = -1;
+            NpBuildLyricLines();
+            NpSavePreferences();
+        }
+
+        private void NpUpdateKaraokeIcon()
+        {
+            var active = _npColorMatchEnabled && _npAlbumPrimary != default
+                ? NpGetIconBrush(true) : (Brush)FindResource("AccentColor");
+            var inactive = NpGetIconBrush(false);
+            NpKaraokeIcon.Stroke = _npKaraokeEnabled ? active : inactive;
+            NpKaraokeBtn.ToolTip = _npKaraokeEnabled ? "Karaoke: ON" : "Karaoke word-by-word";
+        }
+
+        // ─── NP Double-click Album Art → Tag Editor ───
+
+        private DateTime _npLastCoverClick = DateTime.MinValue;
+
+        private void NpCoverBorder_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            // Detect double-click manually (MouseDoubleClick not available on Border)
+            var now = DateTime.UtcNow;
+            if ((now - _npLastCoverClick).TotalMilliseconds < 400)
+            {
+                // Double-click detected — open tag editor
+                if (_player.CurrentFile != null)
+                {
+                    var file = _files.FirstOrDefault(f =>
+                        string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                    if (file != null)
+                    {
+                        var editor = new MetadataEditorWindow(file, this);
+                        editor.ShowDialog();
+                        if (editor.MetadataChanged)
+                        {
+                            _filteredView?.Refresh();
+                            // Reload cover in case it changed
+                            NpSetTrack(file);
+                        }
+                    }
+                }
+                _npLastCoverClick = DateTime.MinValue;
+            }
+            else
+            {
+                _npLastCoverClick = now;
+            }
+        }
+
+        // ─── NP Next Track Preview ───
+
+        private void NpNextTrackBorder_Click(object sender, MouseButtonEventArgs e)
+        {
+            _npSubCoverShowArtist = !_npSubCoverShowArtist;
+            NpUpdateNextTrackPreview();
+            NpSavePreferences();
+        }
+
+        private void NpUpdateNextTrackPreview()
+        {
+            if (_npSubCoverShowArtist)
+            {
+                // Show current artist
+                string artist = NpSongArtist.Text;
+                if (!string.IsNullOrWhiteSpace(artist))
+                {
+                    NpNextTrackLabel.Text = "Artist:  ";
+                    NpNextTrackText.Text = artist;
+                    NpNextTrackBorder.Visibility = Visibility.Visible;
+                    NpNextTrackBorder.ToolTip = "Click to show Up Next";
+                }
+                else
+                {
+                    NpNextTrackBorder.Visibility = Visibility.Collapsed;
+                }
+                return;
+            }
+
+            // Up Next mode
+            AudioFileInfo? nextTrack = null;
+
+            try
+            {
+                if (_queue.Count > 0)
+                {
+                    nextTrack = _queue[0];
+                }
+                else
+                {
+                    var items = _filteredView?.Cast<AudioFileInfo>().ToList();
+                    if (items != null && items.Count > 0 && _player.CurrentFile != null)
+                    {
+                        if (_shuffleMode && _shuffleDeck.Count > 0)
+                        {
+                            // Use the actual deck index to accurately show the next shuffled track
+                            if (_shuffleDeckIndex < _shuffleDeck.Count)
+                                nextTrack = _shuffleDeck[_shuffleDeckIndex];
+                        }
+                        else
+                        {
+                            int idx = items.FindIndex(f =>
+                                string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                            if (idx >= 0 && idx + 1 < items.Count)
+                                nextTrack = items[idx + 1];
+                        }
+                    }
+                }
+            }
+            catch { /* ignore */ }
+
+            if (nextTrack != null && ThemeManager.AutoPlayNext)
+            {
+                string name = nextTrack.Title ?? nextTrack.FileName ?? "Unknown";
+                if (!string.IsNullOrWhiteSpace(nextTrack.Artist))
+                    name = $"{nextTrack.Artist} — {name}";
+                NpNextTrackLabel.Text = "Up next:  ";
+                NpNextTrackText.Text = name;
+                NpNextTrackBorder.Visibility = Visibility.Visible;
+                NpNextTrackBorder.ToolTip = "Click to show Artist";
+            }
+            else
+            {
+                NpNextTrackBorder.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        // ─── NP Animated Background ───
+
+        private double _npBgAngle;
+
+        private void NpStartBgAnimation()
+        {
+            if (_npBgAnimTimer != null) return;
+            _npBgAngle = 45;
+            _npBgAnimTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            _npBgAnimTimer.Tick += NpBgAnim_Tick;
+            _npBgAnimTimer.Start();
+        }
+
+        private void NpStopBgAnimation()
+        {
+            _npBgAnimTimer?.Stop();
+            _npBgAnimTimer = null;
+        }
+
+        private void NpBgAnim_Tick(object? sender, EventArgs e)
+        {
+            if (NpBgGradient.Background is LinearGradientBrush lgb && !lgb.IsFrozen)
+            {
+                // Slow rotation: ~0.15 degrees per tick (50ms) ≈ 3 degrees/sec → full 360 in 2 minutes
+                _npBgAngle = (_npBgAngle + 0.15) % 360;
+                double rad = _npBgAngle * Math.PI / 180.0;
+                double cos = Math.Cos(rad), sin = Math.Sin(rad);
+                lgb.StartPoint = new System.Windows.Point(0.5 - cos * 0.5, 0.5 - sin * 0.5);
+                lgb.EndPoint = new System.Windows.Point(0.5 + cos * 0.5, 0.5 + sin * 0.5);
+            }
+        }
+
+        // ─── NP Glow Pulse Animation ───
+
+        private DispatcherTimer? _npGlowPulseTimer;
+        private double _npGlowPhase;
+
+        private void NpStartGlowPulse()
+        {
+            if (_npGlowPulseTimer != null) return;
+            _npGlowPhase = 0;
+            _npGlowPulseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            _npGlowPulseTimer.Tick += NpGlowPulse_Tick;
+            _npGlowPulseTimer.Start();
+        }
+
+        private void NpStopGlowPulse()
+        {
+            _npGlowPulseTimer?.Stop();
+            _npGlowPulseTimer = null;
+        }
+
+        private void NpGlowPulse_Tick(object? sender, EventArgs e)
+        {
+            _npGlowPhase += 0.03; // Slow breathing
+            double pulse = 0.5 + 0.12 * Math.Sin(_npGlowPhase); // oscillates 0.38 – 0.62
+            double pulse2 = 0.35 + 0.08 * Math.Sin(_npGlowPhase + 1.0); // offset phase
+            NpCoverGlow1.Opacity = pulse;
+            NpCoverGlow2.Opacity = pulse2;
+        }
+
+        // ─── NP Drag Leave (hide overlay) ───
+
+        private void NpLyrics_DragLeave(object sender, System.Windows.DragEventArgs e)
+        {
+            NpDropOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        // ─── NP Drag and Drop LRC ───
+
+        private void NpLyrics_DragOver(object sender, System.Windows.DragEventArgs e)
+        {
+            e.Effects = System.Windows.DragDropEffects.None;
+            if (e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+            {
+                var files = e.Data.GetData(System.Windows.DataFormats.FileDrop) as string[];
+                if (files != null && files.Any(f =>
+                    f.EndsWith(".lrc", StringComparison.OrdinalIgnoreCase)))
+                {
+                    e.Effects = System.Windows.DragDropEffects.Copy;
+                    NpDropOverlay.Visibility = Visibility.Visible;
+                }
+            }
+            e.Handled = true;
+        }
+
+        private void NpLyrics_Drop(object sender, System.Windows.DragEventArgs e)
+        {
+            NpDropOverlay.Visibility = Visibility.Collapsed;
+
+            if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) return;
+            var files = e.Data.GetData(System.Windows.DataFormats.FileDrop) as string[];
+            if (files == null) return;
+
+            var lrcFile = files.FirstOrDefault(f =>
+                f.EndsWith(".lrc", StringComparison.OrdinalIgnoreCase));
+            if (lrcFile == null) return;
+
+            var result = LyricService.LoadFromLrcFile(lrcFile);
+            if (result.HasLyrics)
+            {
+                _npCurrentLyrics = result;
+                _npCurrentLyricIndex = -1;
+                NpBuildLyricLines();
+            }
+        }
+
+        // ─── NP Load LRC File (file picker) ───
+
+        private void NpLoadLrcFile_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "LRC files (*.lrc)|*.lrc|All files (*.*)|*.*",
+                Title = "Select LRC lyrics file"
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                var result = LyricService.LoadFromLrcFile(dlg.FileName);
+                if (result.HasLyrics)
+                {
+                    _npCurrentLyrics = result;
+                    _npCurrentLyricIndex = -1;
+                    NpBuildLyricLines();
+                }
+            }
+        }
+
+        // ─── NP Search LRCLIB ───
+
+        private async void NpSearchLyrics_Click(object sender, RoutedEventArgs e)
+        {
+            if (_player.CurrentFile == null) return;
+
+            var currentFile = _files.FirstOrDefault(f =>
+                string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+            if (currentFile == null) return;
+
+            var artist = currentFile.Artist ?? "";
+            var title = currentFile.Title ?? currentFile.FileName ?? "";
+
+            if (string.IsNullOrWhiteSpace(artist) && string.IsNullOrWhiteSpace(title)) return;
+
+            NpSongSpecs.Text = "Searching lyrics...";
+
+            try
+            {
+                var results = await LyricService.SearchLrcLibAsync(artist, title);
+                if (results.Count > 0)
+                {
+                    var best = results.FirstOrDefault(r => r.HasSyncedLyrics)
+                               ?? results.FirstOrDefault(r => r.HasPlainLyrics);
+                    if (best != null)
+                    {
+                        _npCurrentLyrics = LyricService.ApplySearchResult(best);
+                        _npCurrentLyricIndex = -1;
+                        NpBuildLyricLines();
+                        // Restore specs text
+                        NpSongSpecs.Text = "";
+                        if (_player.CurrentFile != null)
+                        {
+                            var cf = _files.FirstOrDefault(f =>
+                                string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                            if (cf != null) NpSetTrack(cf);
+                        }
+                        return;
+                    }
+                }
+                NpSongSpecs.Text = "No lyrics found";
+            }
+            catch
+            {
+                NpSongSpecs.Text = "Search failed";
+            }
+        }
+
+        /// <summary>Update the Now Playing panel when a new track starts.</summary>
+        private void UpdateNowPlayingView()
+        {
+            if (_npVisible && _player.CurrentFile != null)
+            {
+                var currentFile = _files.FirstOrDefault(f =>
+                    string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                if (currentFile != null)
+                    NpSetTrack(currentFile);
+            }
+        }
+
+        private void NpLoadPreferences()
+        {
+            if (_npPrefsLoaded) return;
+            _npPrefsLoaded = true;
+            _npVisualizerEnabled = ThemeManager.NpVisualizerEnabled;
+            _npColorMatchEnabled = ThemeManager.NpColorMatchEnabled;
+            _npLyricsHidden = ThemeManager.NpLyricsHidden;
+            _npTranslateEnabled = ThemeManager.NpTranslateEnabled;
+            _npKaraokeEnabled = ThemeManager.NpKaraokeEnabled;
+            _npVisualizerStyle = ThemeManager.NpVisualizerStyle;
+            _npVizPlacement = ThemeManager.NpVizPlacement;
+            _npSubCoverShowArtist = ThemeManager.NpSubCoverShowArtist;
+            _npCoverSize = ThemeManager.NpCoverSize;
+            _npTitleSize = ThemeManager.NpTitleSize;
+            _npSubTextSize = ThemeManager.NpSubTextSize;
+            _npLyricsSize = ThemeManager.NpLyricsSize;
+            _npVizSize = ThemeManager.NpVizSize;
+            _npLyricsOffsetX = ThemeManager.NpLyricsOffsetX;
+            _npCoverOffsetX = ThemeManager.NpCoverOffsetX;
+            _npCoverOffsetY = ThemeManager.NpCoverOffsetY;
+            _npTitleOffsetX = ThemeManager.NpTitleOffsetX;
+            _npTitleOffsetY = ThemeManager.NpTitleOffsetY;
+            _npArtistOffsetX = ThemeManager.NpArtistOffsetX;
+            _npArtistOffsetY = ThemeManager.NpArtistOffsetY;
+            _npVizOffsetY = ThemeManager.NpVizOffsetY;
+        }
+
+        private void NpSavePreferences()
+        {
+            ThemeManager.NpVisualizerEnabled = _npVisualizerEnabled;
+            ThemeManager.NpColorMatchEnabled = _npColorMatchEnabled;
+            ThemeManager.NpLyricsHidden = _npLyricsHidden;
+            ThemeManager.NpTranslateEnabled = _npTranslateEnabled;
+            ThemeManager.NpKaraokeEnabled = _npKaraokeEnabled;
+            ThemeManager.NpVisualizerStyle = _npVisualizerStyle;
+            ThemeManager.NpVizPlacement = _npVizPlacement;
+            ThemeManager.NpSubCoverShowArtist = _npSubCoverShowArtist;
+            ThemeManager.NpCoverSize = _npCoverSize;
+            ThemeManager.NpTitleSize = _npTitleSize;
+            ThemeManager.NpSubTextSize = _npSubTextSize;
+            ThemeManager.NpLyricsSize = _npLyricsSize;
+            ThemeManager.NpVizSize = _npVizSize;
+            ThemeManager.NpLyricsOffsetX = _npLyricsOffsetX;
+            ThemeManager.NpCoverOffsetX = _npCoverOffsetX;
+            ThemeManager.NpCoverOffsetY = _npCoverOffsetY;
+            ThemeManager.NpTitleOffsetX = _npTitleOffsetX;
+            ThemeManager.NpTitleOffsetY = _npTitleOffsetY;
+            ThemeManager.NpArtistOffsetX = _npArtistOffsetX;
+            ThemeManager.NpArtistOffsetY = _npArtistOffsetY;
+            ThemeManager.NpVizOffsetY = _npVizOffsetY;
+            ThemeManager.SavePlayOptions();
+        }
+
         private void EqEnabled_Changed(object sender, RoutedEventArgs e)
         {
             bool enabled = ChkEqEnabled.IsChecked == true;
@@ -5694,6 +8126,62 @@ namespace AudioQualityChecker
             {
                 SearchBox.Text = "";
                 FileGrid.Focus();
+                e.Handled = true;
+            }
+            // Media playback controls
+            else if (e.Key == Key.MediaPlayPause)
+            {
+                PlayPause_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+            }
+            else if (e.Key == Key.MediaNextTrack)
+            {
+                NextTrack_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+            }
+            else if (e.Key == Key.MediaPreviousTrack)
+            {
+                PrevTrack_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+            }
+            else if (e.Key == Key.MediaStop)
+            {
+                if (_player.IsPlaying)
+                    PlayPause_Click(this, new RoutedEventArgs());
+                e.Handled = true;
+            }
+            // Arrow key controls: Left/Right = seek, Up/Down = volume
+            else if (e.Key == Key.Left)
+            {
+                _player.SeekRelative(-5);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Right)
+            {
+                _player.SeekRelative(5);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Up)
+            {
+                double newVol = Math.Min(100, VolumeSlider.Value + 5);
+                VolumeSlider.Value = newVol;
+                if (_npVisible) NpVolumeSlider.Value = newVol;
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Down)
+            {
+                double newVol = Math.Max(0, VolumeSlider.Value - 5);
+                VolumeSlider.Value = newVol;
+                if (_npVisible) NpVolumeSlider.Value = newVol;
+                e.Handled = true;
+            }
+            else if (e.Key == Key.M)
+            {
+                // Toggle mute
+                if (_npVisible)
+                    NpVolumeIcon_Click(this, new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = MouseLeftButtonUpEvent });
+                else
+                    VolumeIcon_Click(this, new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left) { RoutedEvent = MouseLeftButtonUpEvent });
                 e.Handled = true;
             }
         }

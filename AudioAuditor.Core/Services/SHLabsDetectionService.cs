@@ -9,8 +9,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Win32;
-
 namespace AudioQualityChecker.Services
 {
     /// <summary>
@@ -18,7 +16,6 @@ namespace AudioQualityChecker.Services
     /// that holds the API key. Local + server-side rate limiting (15/day, 100/month per install).
     /// Results are cached locally by file hash to avoid re-scanning.
     /// </summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public static class SHLabsDetectionService
     {
         // ── Proxy endpoint (Cloudflare Worker — holds the real API key) ──
@@ -36,8 +33,12 @@ namespace AudioQualityChecker.Services
         // SH Labs direct API URL (used when user has their own key)
         private const string SHLabsDirectUrl = "https://shlabs.music/api/v1/detect";
 
-        // ── Installation ID (survives uninstall/reinstall via Registry) ──
-        private const string RegistryPath = @"Software\AudioAuditor";
+        /// <summary>
+        /// Set by the UI layer (ThemeManager) to provide the user's custom SH Labs API key.
+        /// When non-empty, the proxy is bypassed entirely.
+        /// </summary>
+        public static string? CustomApiKey { get; set; }
+
         private const string InstallIdKey = "InstallId";
 
         // ── Local cache file paths ──
@@ -103,7 +104,7 @@ namespace AudioQualityChecker.Services
         /// Returns true if the user has configured their own SH Labs API key.
         /// When set, the proxy is bypassed entirely — no rate limits, no data sent to proxy.
         /// </summary>
-        public static bool HasCustomApiKey => !string.IsNullOrWhiteSpace(ThemeManager.SHLabsCustomApiKey);
+        public static bool HasCustomApiKey => !string.IsNullOrWhiteSpace(CustomApiKey);
 
         /// <summary>
         /// Analyze a file via the SH Labs proxy (or directly if custom API key is set).
@@ -163,7 +164,7 @@ namespace AudioQualityChecker.Services
                 form.Add(fileContent, "file", Path.GetFileName(filePath));
 
                 using var request = new HttpRequestMessage(HttpMethod.Post, SHLabsDirectUrl);
-                request.Headers.Add("X-API-Key", ThemeManager.SHLabsCustomApiKey.Trim());
+                request.Headers.Add("X-API-Key", CustomApiKey!.Trim());
                 request.Content = form;
 
                 using var response = await _http.SendAsync(request, ct);
@@ -306,29 +307,32 @@ namespace AudioQualityChecker.Services
         }
 
         // ═══════════════════════════════════════════
-        //  Installation ID (Registry — survives reinstall)
+        //  Installation ID (file-based — cross-platform)
         // ═══════════════════════════════════════════
 
         public static string GetOrCreateInstallId()
         {
             try
             {
-                using var key = Registry.CurrentUser.CreateSubKey(RegistryPath);
-                var existing = key?.GetValue(InstallIdKey) as string;
-                if (!string.IsNullOrEmpty(existing))
-                    return existing;
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AudioAuditor");
+                string idFile = Path.Combine(dir, "install_id.txt");
+                if (File.Exists(idFile))
+                {
+                    string existing = File.ReadAllText(idFile).Trim();
+                    if (!string.IsNullOrEmpty(existing) && existing.Length >= 32)
+                        return existing;
+                }
 
-                // Generate a deterministic-ish ID from machine + user
-                string raw = $"{Environment.MachineName}:{Environment.UserName}:AudioAuditor";
-                string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..32];
-                key?.SetValue(InstallIdKey, id, RegistryValueKind.String);
+                // Generate a random GUID-based ID (not predictable from machine info)
+                string id = Guid.NewGuid().ToString("N");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(idFile, id);
                 return id;
             }
             catch
             {
-                // Fallback: deterministic from machine name
-                string raw = $"{Environment.MachineName}:{Environment.UserName}:AudioAuditor";
-                return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..32];
+                // Fallback: random ID (not persisted)
+                return Guid.NewGuid().ToString("N");
             }
         }
 

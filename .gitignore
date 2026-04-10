@@ -92,8 +92,15 @@ to-do.txt
 AGENTS.md
 angents.md
 
-# SH Labs secrets 
-Services/SHLabsSecrets.cs
+# ═══ Cross-platform port (Avalonia NOT ready for release) ═══
+AudioAuditor.Avalonia/
+AVALONIA_PORT_PLAN.md
+
+# SH Labs secrets (any location)
+**/SHLabsSecrets.cs
+
+# Internal security documentation
+SECURITY_INTERNALS.md
 
 # Node / Wrangler
 node_modules/
@@ -129,7 +136,3 @@ crashdumps/
 # Test results
 TestResults/
 *.trx
-*.csproj
-*.csproj
-AudioAuditorCLI/AudioAuditorCLI.csproj
-AudioQualityChecker.csproj

@@ -11,7 +11,7 @@ namespace AudioQualityChecker.Services
     /// Supports 8/16/24/32-bit, all standard sample rates, 1-8 channels.
     /// Outputs IEEE float PCM to preserve full dynamic range for analysis.
     /// </summary>
-    internal sealed class FlacFileReader : WaveStream
+    public sealed class FlacFileReader : WaveStream
     {
         private readonly WaveFormat _waveFormat;
         private readonly byte[] _pcmData;

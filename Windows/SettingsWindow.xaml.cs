@@ -200,16 +200,20 @@ namespace AudioQualityChecker
             // Visualizer full-volume
             ChkVisualizerFullVolume.IsChecked = ThemeManager.VisualizerFullVolume;
 
+            // Scan cache
+            ChkScanCache.IsChecked = ThemeManager.ScanCacheEnabled;
+            UpdateCacheStatus();
+
             // Auto-update check
             ChkCheckForUpdates.IsChecked = ThemeManager.CheckForUpdates;
 
             // Version info
             string currentVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?";
-            CurrentVersionText.Text = $"Current version: {currentVersion}";
+            CurrentVersionText.Text = currentVersion;
             if (!string.IsNullOrEmpty(UpdateChecker.LatestVersion))
-                LatestVersionText.Text = $"Latest version: {UpdateChecker.LatestVersion}";
+                LatestVersionText.Text = UpdateChecker.LatestVersion;
             else
-                LatestVersionText.Text = "Latest version: checking...";
+                LatestVersionText.Text = "checking...";
             _ = LoadLatestVersionAsync(currentVersion);
 
             // Column visibility checkboxes — checked = visible (not hidden)
@@ -489,14 +493,14 @@ namespace AudioQualityChecker
                 Dispatcher.Invoke(() =>
                 {
                     if (!string.IsNullOrEmpty(UpdateChecker.LatestVersion))
-                        LatestVersionText.Text = $"Latest version: {UpdateChecker.LatestVersion}";
+                        LatestVersionText.Text = UpdateChecker.LatestVersion;
                     else
-                        LatestVersionText.Text = "Latest version: unable to check";
+                        LatestVersionText.Text = "unable to check";
                 });
             }
             catch
             {
-                Dispatcher.Invoke(() => LatestVersionText.Text = "Latest version: unable to check");
+                Dispatcher.Invoke(() => LatestVersionText.Text = "unable to check");
             }
         }
 
@@ -539,6 +543,7 @@ namespace AudioQualityChecker
         {
             if (_initializing) return;
             ThemeManager.SHLabsCustomApiKey = SHLabsApiKeyBox.Text.Trim();
+            SHLabsDetectionService.CustomApiKey = ThemeManager.SHLabsCustomApiKey;
             ThemeManager.SavePlayOptions();
             UpdateSHLabsQuota();
         }
@@ -547,6 +552,7 @@ namespace AudioQualityChecker
         {
             SHLabsApiKeyBox.Text = "";
             ThemeManager.SHLabsCustomApiKey = "";
+            SHLabsDetectionService.CustomApiKey = "";
             ThemeManager.SavePlayOptions();
             UpdateSHLabsQuota();
         }
@@ -576,6 +582,44 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.VisualizerFullVolume = ChkVisualizerFullVolume.IsChecked == true;
             ThemeManager.SavePlayOptions();
+        }
+
+        // ═══════════════════════════════════════════
+        //  Scan Cache
+        // ═══════════════════════════════════════════
+
+        private void ScanCache_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.ScanCacheEnabled = ChkScanCache.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+            UpdateCacheStatus();
+        }
+
+        private void ClearCache_Click(object sender, RoutedEventArgs e)
+        {
+            ScanCacheService.Clear();
+            UpdateCacheStatus();
+        }
+
+        private void UpdateCacheStatus()
+        {
+            if (ThemeManager.ScanCacheEnabled)
+            {
+                ScanCacheService.EnsureLoaded();
+                int count = ScanCacheService.EntryCount;
+                long sizeBytes = ScanCacheService.GetCacheSizeBytes();
+                string sizeStr = sizeBytes < 1024 ? $"{sizeBytes} B"
+                    : sizeBytes < 1024 * 1024 ? $"{sizeBytes / 1024.0:F1} KB"
+                    : $"{sizeBytes / (1024.0 * 1024.0):F1} MB";
+                CacheStatusText.Text = count > 0
+                    ? $"{count:N0} files cached ({sizeStr})"
+                    : "Cache is empty";
+            }
+            else
+            {
+                CacheStatusText.Text = "Disabled";
+            }
         }
 
         // ═══════════════════════════════════════════

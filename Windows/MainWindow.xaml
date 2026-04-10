@@ -149,11 +149,24 @@
             </Setter>
         </Style>
 
+        <!-- Themed ToolTip style -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="{DynamicResource PanelBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+
         <!-- Player button -->
         <Style x:Key="PlayerButton" TargetType="Button" BasedOn="{StaticResource DarkButton}">
             <Setter Property="Padding" Value="6,4"/>
             <Setter Property="MinWidth" Value="32"/>
             <Setter Property="FontSize" Value="14"/>
+            <Setter Property="ToolTipService.InitialShowDelay" Value="150"/>
+            <Setter Property="ToolTipService.BetweenShowDelay" Value="50"/>
         </Style>
 
         <!-- Volume slider with circle thumb matching seek bar -->
@@ -1094,6 +1107,7 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="100"/>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
                             <Button Grid.Column="0" x:Name="BtnShuffle"
@@ -1212,6 +1226,18 @@
                                     ToolTip="Equalizer" Padding="6,4">
                                 <TextBlock Text="EQ" FontFamily="Segoe UI" FontSize="11"
                                            FontWeight="Bold"/>
+                            </Button>
+
+                            <!-- Now Playing -->
+                            <Button Grid.Column="11" Click="NowPlaying_Click"
+                                    Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
+                                    ToolTip="Now Playing / Lyrics View" Padding="6,4">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="♫" FontSize="13" Foreground="{DynamicResource TextMuted}"
+                                               VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                    <TextBlock Text="NP" FontSize="10" Foreground="{DynamicResource TextMuted}"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
                             </Button>
                         </Grid>
                     </Border>
@@ -1456,6 +1482,636 @@
             </Border>
         </Grid>
     </DockPanel>
+
+    <!-- ═══ Now Playing Panel (takes over entire window) ═══ -->
+    <Grid x:Name="NowPlayingPanel" Visibility="Collapsed" Background="{DynamicResource WindowBg}">
+        <!-- Dynamic background gradient from album art -->
+        <Border x:Name="NpBgGradient" Opacity="0.6"/>
+        <!-- Dark overlay that adapts to color-match mode -->
+        <Border x:Name="NpDarkOverlay" Background="#66000000"/>
+
+        <DockPanel>
+            <!-- ═══ Bottom: Controls Bar (docked first = very bottom) ═══ -->
+            <Border x:Name="NpBottomBar" DockPanel.Dock="Bottom" Padding="12,6,12,8"
+                    Background="{DynamicResource ToolbarBg}"
+                    BorderBrush="{DynamicResource BorderColor}" BorderThickness="0,1,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Row 0: Seek bar -->
+                    <Grid Grid.Row="0" Margin="0,0,0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="NpTimeElapsed" Grid.Column="0" Text="0:00"
+                                   Foreground="{DynamicResource TextMuted}" FontSize="10"
+                                   VerticalAlignment="Center" Margin="0,0,8,0"
+                                   FontFamily="Segoe UI"/>
+                        <Slider x:Name="NpSeekSlider" Grid.Column="1"
+                                Minimum="0" Maximum="100"
+                                Style="{StaticResource SeekSlider}"
+                                ValueChanged="NpSeekSlider_ValueChanged"
+                                PreviewMouseLeftButtonDown="NpSeekSlider_PreviewMouseDown"
+                                PreviewMouseLeftButtonUp="NpSeekSlider_MouseUp"
+                                Thumb.DragCompleted="NpSeekSlider_DragCompleted"/>
+                        <TextBlock x:Name="NpTimeTotal" Grid.Column="2" Text="0:00"
+                                   Foreground="{DynamicResource TextMuted}" FontSize="10"
+                                   VerticalAlignment="Center" Margin="8,0,0,0"
+                                   FontFamily="Segoe UI"/>
+                    </Grid>
+
+                    <!-- Row 1: ALL controls on one single row -->
+                    <Grid Grid.Row="1" Margin="0,2,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Left: Track info + specs + tags -->
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                            <TextBlock x:Name="NpSongTitle" Text="No track playing"
+                                       Foreground="{DynamicResource TextPrimary}" FontSize="14"
+                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                       FontFamily="Segoe UI"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                                <TextBlock x:Name="NpSongArtist" Text=""
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="11"
+                                           TextTrimming="CharacterEllipsis" FontFamily="Segoe UI"/>
+                                <TextBlock x:Name="NpSongSpecs" Text=""
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="10"
+                                           VerticalAlignment="Center" Margin="8,0,0,0"
+                                           FontFamily="Segoe UI" TextTrimming="CharacterEllipsis"/>
+                                <!-- MQA / AI tags area -->
+                                <StackPanel x:Name="NpTagsPanel" Orientation="Horizontal"
+                                            Margin="6,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Center: Playback controls -->
+                        <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Button x:Name="NpShuffleBtn" Click="NpShuffle_Click" ToolTip="Shuffle"
+                                    Style="{StaticResource PlayerButton}" MinWidth="28" Padding="4,4">
+                                <Viewbox Width="14" Height="14">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpShuffleIcon"
+                                              Data="M 1,12 L 10,3 M 10,3 L 7,3 M 10,3 L 10,6 M 1,4 L 10,13 M 10,13 L 7,13 M 10,13 L 10,10"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="2.2"
+                                              Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Button Click="NpPrev_Click" ToolTip="Previous Track"
+                                    Style="{StaticResource PlayerButton}" Margin="2,0,0,0"
+                                    MinWidth="28" Padding="4,4">
+                                <Viewbox Width="13" Height="13">
+                                    <Canvas Width="16" Height="14">
+                                        <Path x:Name="NpPrevLine" Data="M 2,1 L 2,13" Stroke="{DynamicResource TextPrimary}" StrokeThickness="2"/>
+                                        <Path x:Name="NpPrevFill" Data="M 5,7 L 14,1 L 14,13 Z" Fill="{DynamicResource TextPrimary}"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Button Click="NpPlayPause_Click" ToolTip="Play/Pause"
+                                    Style="{StaticResource PlayerButton}" Margin="2,0,0,0"
+                                    MinWidth="36" Padding="6,4">
+                                <Viewbox Width="16" Height="16">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpPlayPath" Data="M 3,1 L 3,15 L 15,8 Z"
+                                              Fill="{DynamicResource TextPrimary}"/>
+                                        <Path x:Name="NpPausePath"
+                                              Data="M 2,1 L 2,15 L 6,15 L 6,1 Z M 10,1 L 10,15 L 14,15 L 14,1 Z"
+                                              Fill="{DynamicResource TextPrimary}" Visibility="Collapsed"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Button Click="NpNext_Click" ToolTip="Next Track"
+                                    Style="{StaticResource PlayerButton}" Margin="2,0,0,0"
+                                    MinWidth="28" Padding="4,4">
+                                <Viewbox Width="13" Height="13">
+                                    <Canvas Width="16" Height="14">
+                                        <Path x:Name="NpNextFill" Data="M 2,1 L 2,13 L 12,7 Z" Fill="{DynamicResource TextPrimary}"/>
+                                        <Path x:Name="NpNextLine" Data="M 14,1 L 14,13" Stroke="{DynamicResource TextPrimary}" StrokeThickness="2"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                        </StackPanel>
+
+                        <!-- Right: ALL option buttons + Volume + Back, all on one level -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <!-- Auto-play toggle -->
+                            <Button x:Name="NpAutoPlayBtn" Click="NpAutoPlay_Click"
+                                    ToolTip="Auto-play next" Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpAutoPlayIcon"
+                                              Data="M 1,8 C 1,4 4,2 8,5 C 12,2 15,4 15,8 C 15,12 12,14 8,11 C 4,14 1,12 1,8 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.4"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Visualizer toggle -->
+                            <Button x:Name="NpVisualizerBtn" Click="NpVisualizerToggle_Click"
+                                    ToolTip="Visualizer" Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpVisualizerIcon"
+                                              Data="M 1,12 L 1,6 M 4,12 L 4,3 M 7,12 L 7,8 M 10,12 L 10,2 M 13,12 L 13,7"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="2"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Visualizer style dropdown -->
+                            <Button x:Name="NpVizStyleBtn" Click="NpVisualizerStyle_Click"
+                                    ToolTip="Visualizer style" Style="{StaticResource PlayerButton}"
+                                    MinWidth="20" Padding="2,4">
+                                <Viewbox Width="8" Height="8">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpVizStyleIcon" Data="M 3,5 L 8,11 L 13,5"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="2.5"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpVizStylePopup" StaysOpen="False"
+                                   Placement="Top" PlacementTarget="{Binding ElementName=NpVizStyleBtn}"
+                                   AllowsTransparency="True" PopupAnimation="Fade">
+                                <Border Background="{DynamicResource PanelBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        BorderThickness="1" CornerRadius="3"
+                                        Padding="2" Margin="0,0,0,2">
+                                    <StackPanel x:Name="NpVizStyleMenu" MinWidth="90"/>
+                                </Border>
+                            </Popup>
+                            <!-- Visualizer placement toggle -->
+                            <Button x:Name="NpVizPlacementBtn" Click="NpVizPlacement_Click"
+                                    ToolTip="Visualizer: Full-width"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpVizPlacementIcon"
+                                              Data="M 1,13 L 15,13 M 1,10 L 15,10"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Separator -->
+                            <Border Width="1" Height="18" Margin="4,0"
+                                    Background="{DynamicResource BorderColor}" Opacity="0.4"
+                                    VerticalAlignment="Center"/>
+                            <!-- Color-match -->
+                            <Button x:Name="NpColorMatchBtn" Click="NpColorMatch_Click"
+                                    ToolTip="Color match" Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpColorMatchIcon"
+                                              Data="M 8,1 A 7,7 0 1,1 8,15 A 7,7 0 1,1 8,1 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
+                                              Fill="Transparent"/>
+                                        <Path x:Name="NpColorMatchFill" Data="M 8,4 A 4,4 0 1,1 8,12"
+                                              Fill="{DynamicResource TextMuted}"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Lyrics-off (pure viz+art) toggle -->
+                            <Button x:Name="NpLyricsOffBtn" Click="NpLyricsOff_Click"
+                                    ToolTip="Hide lyrics (art mode)"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpLyricsOffIcon"
+                                              Data="M 2,2 L 14,2 M 2,6 L 14,6 M 2,10 L 10,10 M 2,14 L 8,14"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Separator -->
+                            <Border Width="1" Height="18" Margin="4,0"
+                                    Background="{DynamicResource BorderColor}" Opacity="0.4"
+                                    VerticalAlignment="Center"/>
+                            <!-- Translate lyrics toggle -->
+                            <Button x:Name="NpTranslateBtn" Click="NpTranslate_Click"
+                                    ToolTip="Translate lyrics"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpTranslateIcon"
+                                              Data="M 1,3 L 8,3 M 4.5,1 L 4.5,3 M 2,3 Q 3,8 6,10 M 7,3 Q 6,8 3,10 M 9,7 L 12,15 L 15,7 M 10,12 L 14,12"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Translate language settings -->
+                            <Button x:Name="NpTranslateSettingsBtn" Click="NpTranslateSettings_Click"
+                                    ToolTip="Translation settings"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="18" Padding="1,4" Visibility="Collapsed">
+                                <Viewbox Width="7" Height="7">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpTranslateSettingsIcon" Data="M 3,5 L 8,11 L 13,5"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="2.5"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpTranslatePopup" StaysOpen="False"
+                                   Placement="Top" PlacementTarget="{Binding ElementName=NpTranslateSettingsBtn}"
+                                   AllowsTransparency="True" PopupAnimation="Fade">
+                                <Border Background="{DynamicResource PanelBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        BorderThickness="1" CornerRadius="5"
+                                        Padding="8,6" Margin="0,0,0,2"
+                                        MaxHeight="350">
+                                    <StackPanel MinWidth="170">
+                                        <TextBlock Text="From language:" FontSize="11"
+                                                   Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,3"
+                                                   FontFamily="Segoe UI"/>
+                                        <ComboBox x:Name="NpTranslateFromCombo"
+                                                  SelectionChanged="NpTranslateFrom_Changed"
+                                                  FontSize="12" Margin="0,0,0,8" MaxDropDownHeight="200"
+                                                  Style="{StaticResource ThemedComboBox}"
+                                                  ItemContainerStyle="{StaticResource ThemedComboBoxItem}"/>
+                                        <TextBlock Text="To language:" FontSize="11"
+                                                   Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,3"
+                                                   FontFamily="Segoe UI"/>
+                                        <ComboBox x:Name="NpTranslateToCombo"
+                                                  SelectionChanged="NpTranslateTo_Changed"
+                                                  FontSize="12" MaxDropDownHeight="200"
+                                                  Style="{StaticResource ThemedComboBox}"
+                                                  ItemContainerStyle="{StaticResource ThemedComboBoxItem}"/>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
+                            <!-- Karaoke mode toggle -->
+                            <Button x:Name="NpKaraokeBtn" Click="NpKaraoke_Click"
+                                    ToolTip="Karaoke word-by-word"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpKaraokeIcon"
+                                              Data="M 8,1 C 5.8,1 4,2.8 4,5 L 4,8 C 4,10.2 5.8,12 8,12 C 10.2,12 12,10.2 12,8 L 12,5 C 12,2.8 10.2,1 8,1 Z M 8,14 L 8,16 M 5,16 L 11,16 M 2,8 C 2,11.3 4.7,14 8,14 C 11.3,14 14,11.3 14,8"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Separator -->
+                            <Border Width="1" Height="18" Margin="4,0"
+                                    Background="{DynamicResource BorderColor}" Opacity="0.4"
+                                    VerticalAlignment="Center"/>
+                            <!-- Lyrics provider cycle -->
+                            <Button x:Name="NpProviderBtn" Click="NpLyricSource_Click"
+                                    ToolTip="Cycle lyrics provider" Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpProviderCircle" Data="M 8,1 A 7,7 0 1,0 15,8 L 8,8 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
+                                              Fill="Transparent"/>
+                                        <Path x:Name="NpProviderArc" Data="M 8,1 A 7,7 0 0,1 15,8"
+                                              Stroke="{DynamicResource AccentColor}" StrokeThickness="1.5"
+                                              Fill="Transparent"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Load .lrc file -->
+                            <Button Click="NpLoadLrcFile_Click" ToolTip="Load .lrc file"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpLoadLrcBody" Data="M 3,1 L 10,1 L 13,4 L 13,15 L 3,15 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
+                                              Fill="Transparent" StrokeLineJoin="Round"/>
+                                        <Path x:Name="NpLoadLrcFold" Data="M 10,1 L 10,4 L 13,4"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
+                                              Fill="Transparent"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Settings -->
+                            <Button Click="NpSettings_Click" ToolTip="Settings"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpSettingsGear" Data="M 6.7,1 L 9.3,1 L 9.8,3.1 L 11.6,3.9 L 13.5,2.8 L 15.2,4.5 L 14.1,6.4 L 14.9,8.2 L 17,8.7 L 17,11.3 L 14.9,11.8 L 14.1,13.6 L 15.2,15.5 L 13.5,17.2 L 11.6,16.1 L 9.8,16.9 L 9.3,19 L 6.7,19 L 6.2,16.9 L 4.4,16.1 L 2.5,17.2 L 0.8,15.5 L 1.9,13.6 L 1.1,11.8 L -1,11.3 L -1,8.7 L 1.1,8.2 L 1.9,6.4 L 0.8,4.5 L 2.5,2.8 L 4.4,3.9 L 6.2,3.1 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2"
+                                              Fill="Transparent" StrokeLineJoin="Round"/>
+                                        <Ellipse x:Name="NpSettingsCenter" Canvas.Left="5" Canvas.Top="7" Width="6" Height="6"
+                                                 Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2"
+                                                 Fill="Transparent"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <!-- Customize NP Layout -->
+                            <Button x:Name="NpLayoutBtn" Click="NpLayoutCustomize_Click"
+                                    ToolTip="Customize layout"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpLayoutIcon"
+                                              Data="M 8,1 L 8,15 M 1,8 L 15,8 M 8,1 L 6,3 M 8,1 L 10,3 M 8,15 L 6,13 M 8,15 L 10,13 M 1,8 L 3,6 M 1,8 L 3,10 M 15,8 L 13,6 M 15,8 L 13,10"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpLayoutPopup" StaysOpen="False"
+                                   Placement="Top" PlacementTarget="{Binding ElementName=NpLayoutBtn}"
+                                   AllowsTransparency="True" PopupAnimation="Fade">
+                                <Border Background="{DynamicResource PanelBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        BorderThickness="1" CornerRadius="6"
+                                        Padding="14,10" Margin="0,0,0,4">
+                                    <ScrollViewer MaxHeight="460" VerticalScrollBarVisibility="Auto">
+                                    <StackPanel MinWidth="220">
+                                        <TextBlock Text="Customize Layout" FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+                                        <!-- ── Sizes ── -->
+                                        <TextBlock Text="Sizes" FontSize="10" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,4" FontWeight="Medium"/>
+                                        <!-- Album Cover Size -->
+                                        <TextBlock Text="Album Cover" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutCoverSlider" Minimum="200" Maximum="800" Value="400"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Title Size -->
+                                        <TextBlock Text="Song Title" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutTitleSlider" Minimum="16" Maximum="56" Value="28"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Artist / Up Next Size -->
+                                        <TextBlock Text="Artist / Up Next" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutSubSlider" Minimum="9" Maximum="24" Value="11"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Lyrics Size -->
+                                        <TextBlock Text="Lyrics" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutLyricsSlider" Minimum="12" Maximum="60" Value="18"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Lyrics Position -->
+                                        <TextBlock Text="Lyrics Position" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutLyricsPosSlider" Minimum="0" Maximum="300" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Visualizer Size -->
+                                        <TextBlock Text="Visualizer" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutVizSlider" Minimum="40" Maximum="300" Value="100"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,8"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- ── Position Offsets ── -->
+                                        <Border Height="1" Background="{DynamicResource BorderColor}" Opacity="0.3" Margin="0,2,0,6"/>
+                                        <TextBlock Text="Position Offsets" FontSize="10" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,4" FontWeight="Medium"/>
+                                        <!-- Cover Position -->
+                                        <TextBlock Text="Cover ↔" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutCoverXSlider" Minimum="-200" Maximum="200" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Cover ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutCoverYSlider" Minimum="-200" Maximum="200" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Title Position -->
+                                        <TextBlock Text="Title ↔" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutTitleXSlider" Minimum="-200" Maximum="200" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Title ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutTitleYSlider" Minimum="-200" Maximum="200" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Artist Position -->
+                                        <TextBlock Text="Artist ↔" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutArtistXSlider" Minimum="-200" Maximum="200" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Artist ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutArtistYSlider" Minimum="-200" Maximum="200" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Visualizer Position -->
+                                        <TextBlock Text="Visualizer ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutVizYSlider" Minimum="-200" Maximum="200" Value="0"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,8"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <!-- Reset -->
+                                        <Button Content="Reset to Default" FontSize="11" HorizontalAlignment="Right"
+                                                Click="NpLayoutReset_Click"
+                                                Style="{StaticResource PlayerButton}" Padding="8,3"/>
+                                    </StackPanel>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                            <!-- Separator -->
+                            <Border Width="1" Height="18" Margin="4,0"
+                                    Background="{DynamicResource BorderColor}" Opacity="0.4"
+                                    VerticalAlignment="Center"/>
+                            <Viewbox Width="13" Height="13" VerticalAlignment="Center"
+                                     Cursor="Hand" MouseLeftButtonDown="NpVolumeIcon_Click">
+                                <Canvas Width="16" Height="16">
+                                    <Path x:Name="NpVolumeIconPath"
+                                          Data="M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11"
+                                          Fill="{DynamicResource TextMuted}"
+                                          Stroke="{DynamicResource TextMuted}" StrokeThickness="0.5"/>
+                                </Canvas>
+                            </Viewbox>
+                            <Slider x:Name="NpVolumeSlider" Width="80"
+                                    Minimum="0" Maximum="100" Value="80"
+                                    VerticalAlignment="Center" Margin="4,0,6,0"
+                                    Style="{StaticResource VolumeSlider}"
+                                    ValueChanged="NpVolumeSlider_ValueChanged"/>
+                            <!-- Back -->
+                            <Button Click="NpBack_Click" ToolTip="Back to main view"
+                                    Style="{StaticResource PlayerButton}" MinWidth="28"
+                                    Padding="6,4">
+                                <Viewbox Width="13" Height="13">
+                                    <Canvas Width="16" Height="16">
+                                        <Path Data="M 12,2 L 4,8 L 12,14"
+                                              Stroke="{DynamicResource TextPrimary}" StrokeThickness="2"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- ═══ Full-width Visualizer Bar (above playbar) ═══ -->
+            <Border x:Name="NpVizBar" DockPanel.Dock="Bottom"
+                    Background="Transparent" ClipToBounds="True"
+                    Height="0">
+                <Grid>
+                    <!-- Resize grip at top edge -->
+                    <Border x:Name="NpVizResizeGrip" Height="5" VerticalAlignment="Top"
+                            Background="Transparent" Cursor="SizeNS"
+                            MouseLeftButtonDown="NpVizResize_MouseDown"
+                            MouseMove="NpVizResize_MouseMove"
+                            MouseLeftButtonUp="NpVizResize_MouseUp"
+                            Panel.ZIndex="1"/>
+                    <Canvas x:Name="NpVisualizerCanvas" ClipToBounds="True"
+                            Background="Transparent"/>
+                </Grid>
+            </Border>
+
+            <!-- ═══ Cover + Lyrics Area ═══ -->
+            <Grid x:Name="NpContentArea" Margin="32,16,32,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Left: Big title + Album Cover + optional under-cover visualizer -->
+                <Grid Grid.Column="0" Margin="0,0,16,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition x:Name="NpUnderCoverVizRow" Height="0"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Big bold song name above cover -->
+                    <Border x:Name="NpBigTitleBorder" Grid.Row="0" Margin="8,12,8,4" MaxHeight="48"
+                            HorizontalAlignment="Stretch">
+                        <Viewbox MaxHeight="42" StretchDirection="DownOnly" Stretch="Uniform"
+                                 HorizontalAlignment="Center">
+                            <TextBlock x:Name="NpBigTitle"
+                                       Text="" FontSize="28" FontWeight="Bold"
+                                       Foreground="{DynamicResource TextPrimary}"
+                                       TextAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                       FontFamily="Segoe UI"
+                                       MaxWidth="450"/>
+                        </Viewbox>
+                    </Border>
+
+                    <!-- Album cover with glow -->
+                    <Grid x:Name="NpCoverAssembly" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <!-- Outer color glow -->
+                    <Border x:Name="NpCoverGlow1" CornerRadius="20" Opacity="0.5" Margin="-24">
+                        <Border.Effect>
+                            <BlurEffect Radius="30"/>
+                        </Border.Effect>
+                    </Border>
+                    <!-- Inner color glow -->
+                    <Border x:Name="NpCoverGlow2" CornerRadius="14" Opacity="0.35" Margin="-14">
+                        <Border.Effect>
+                            <BlurEffect Radius="18"/>
+                        </Border.Effect>
+                    </Border>
+                    <!-- Album cover (double-click to edit tags) -->
+                    <Border x:Name="NpCoverBorder" CornerRadius="8"
+                            Background="{DynamicResource GridBg}"
+                            MouseLeftButtonDown="NpCoverBorder_MouseDoubleClick"
+                            SizeChanged="NpCoverBorder_SizeChanged">
+                        <Border.Effect>
+                            <DropShadowEffect x:Name="NpCoverShadow" BlurRadius="40"
+                                              ShadowDepth="6" Opacity="0.5" Color="Black"/>
+                        </Border.Effect>
+                        <Border.Clip>
+                            <RectangleGeometry x:Name="NpCoverClip" RadiusX="8" RadiusY="8"/>
+                        </Border.Clip>
+                        <Image x:Name="NpCoverImage" Stretch="Uniform"/>
+                    </Border>
+                    </Grid>
+
+                    <!-- Next track / Artist preview (under cover) — click to toggle -->
+                    <Border x:Name="NpNextTrackBorder" Grid.Row="2"
+                            HorizontalAlignment="Center" Margin="0,4,0,2"
+                            Background="{DynamicResource ButtonBg}" CornerRadius="5" Padding="10,4"
+                            Visibility="Collapsed" Cursor="Hand"
+                            MouseLeftButtonUp="NpNextTrackBorder_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="NpNextTrackLabel" Text="Artist:  " FontSize="11"
+                                       Foreground="{DynamicResource TextPrimary}"
+                                       FontFamily="Segoe UI" VerticalAlignment="Center"
+                                       FontWeight="Medium"/>
+                            <TextBlock x:Name="NpNextTrackText" FontSize="11"
+                                       Foreground="{DynamicResource TextPrimary}"
+                                       FontFamily="Segoe UI" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="280"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Under-cover visualizer (alternative placement) -->
+                    <Border x:Name="NpUnderCoverVizBorder" Grid.Row="3"
+                            ClipToBounds="True" Background="Transparent"
+                            Margin="0,8,0,0" CornerRadius="6">
+                        <Canvas x:Name="NpUnderCoverVizCanvas" ClipToBounds="True"
+                                Background="Transparent"/>
+                    </Border>
+                </Grid>
+
+                <!-- Right: Lyrics only -->
+                <Grid Grid.Column="1" Margin="24,0,0,0" x:Name="NpLyricsDropTarget"
+                      AllowDrop="True" Drop="NpLyrics_Drop" DragOver="NpLyrics_DragOver"
+                      DragLeave="NpLyrics_DragLeave">
+
+                    <!-- Lyrics area -->
+                    <ScrollViewer x:Name="NpLyricsScroller"
+                                  VerticalScrollBarVisibility="Hidden"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="NpLyricsPanel" Margin="0,4,8,80">
+                            <TextBlock x:Name="NpNoLyrics"
+                                       Text="No lyrics loaded&#x0a;Play a track to search for lyrics"
+                                       Foreground="{DynamicResource TextDim}" FontSize="14"
+                                       FontStyle="Italic" Margin="0,20,0,0"
+                                       TextWrapping="Wrap" FontFamily="Segoe UI"/>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Drop overlay hint -->
+                    <Border x:Name="NpDropOverlay"
+                            Visibility="Collapsed"
+                            Background="#CC1a1a2e" CornerRadius="8" Margin="4">
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <Viewbox Width="36" Height="36" Margin="0,0,0,8">
+                                <Canvas Width="16" Height="16">
+                                    <Path Data="M 3,1 L 10,1 L 13,4 L 13,15 L 3,15 Z"
+                                          Stroke="{DynamicResource AccentColor}" StrokeThickness="1.5"
+                                          Fill="Transparent" StrokeLineJoin="Round"/>
+                                    <Path Data="M 10,1 L 10,4 L 13,4"
+                                          Stroke="{DynamicResource AccentColor}" StrokeThickness="1.5"
+                                          Fill="Transparent"/>
+                                </Canvas>
+                            </Viewbox>
+                            <TextBlock Text="Drop .lrc file here"
+                                       Foreground="{DynamicResource AccentColor}" FontSize="15"
+                                       FontWeight="SemiBold" HorizontalAlignment="Center"
+                                       FontFamily="Segoe UI"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+        </DockPanel>
+    </Grid>
 
     <!-- ═══ Donation Overlay ═══ -->
     <Grid x:Name="DonationOverlay" Visibility="Collapsed">
@@ -1938,12 +2594,19 @@
 
                 <TextBlock Text="Update Available" FontSize="18" FontWeight="Bold"
                            FontFamily="Segoe UI" HorizontalAlignment="Center"
-                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,12"/>
 
-                <TextBlock x:Name="UpdateVersionText" TextWrapping="Wrap" TextAlignment="Center"
-                           FontSize="13" FontFamily="Segoe UI"
-                           Foreground="{DynamicResource TextSecondary}" LineHeight="20"
-                           Margin="0,0,0,20"/>
+                <StackPanel HorizontalAlignment="Center" Margin="0,0,0,20">
+                    <TextBlock x:Name="UpdateLatestText"
+                               FontSize="13" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" TextAlignment="Center"
+                               Margin="0,0,0,4"/>
+                    <TextBlock x:Name="UpdateCurrentText"
+                               FontSize="12" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextSecondary}"
+                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                </StackPanel>
 
                 <Button Click="UpdateDownload_Click" Cursor="Hand" HorizontalAlignment="Center"
                         Margin="0,0,0,16">

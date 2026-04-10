@@ -372,9 +372,31 @@
                 </Grid>
             </StackPanel>
 
-            <!-- Play Options Section -->
+            <!-- Scan Cache Section -->
             <StackPanel Grid.Row="4">
-                <TextBlock Text="Play Options" FontSize="14" FontWeight="SemiBold"
+                <TextBlock Text="Scan Cache" FontSize="14" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                           Margin="0,0,0,8"/>
+                <CheckBox x:Name="ChkScanCache" Content="Remember previous scan results"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                          FontFamily="Segoe UI" Margin="0,0,0,4"
+                          Checked="ScanCache_Changed" Unchecked="ScanCache_Changed"/>
+                <TextBlock Text="Caches analysis results locally so previously scanned files load instantly without re-analysis. Only uses cached data when the file hasn't been modified (same path, size, and date)."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,2,0,6" TextWrapping="Wrap"/>
+                <StackPanel Orientation="Horizontal" Margin="22,0,0,0">
+                    <Button x:Name="BtnClearCache" Content="Clear Cache"
+                            Style="{StaticResource SmallButton}" Click="ClearCache_Click"
+                            Margin="0,0,10,0"/>
+                    <TextBlock x:Name="CacheStatusText" Text=""
+                               Foreground="{DynamicResource TextMuted}" FontSize="11"
+                               FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Playback & Visualizer -->
+            <StackPanel Grid.Row="6">
+                <TextBlock Text="Playback &amp; Visualizer" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,10"/>
 
@@ -421,14 +443,6 @@
                           FontFamily="Segoe UI" Margin="0,10,0,0"
                           Checked="VisualizerFullVolume_Changed" Unchecked="VisualizerFullVolume_Changed"/>
                 <TextBlock Text="Makes the visualizer always respond as if the volume is at 100%, even when you lower it. Keeps the visual effects lively at any volume level."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
-
-                <CheckBox x:Name="ChkCheckForUpdates" Content="Check for Updates on Startup"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,10,0,0"
-                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
-                <TextBlock Text="Silently checks GitHub for a new version each time AudioAuditor starts and shows a notification if an update is available."
                            Foreground="{DynamicResource TextDim}" FontSize="11"
                            FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
 
@@ -489,7 +503,7 @@
             </StackPanel>
 
             <!-- Music Services Section -->
-            <StackPanel Grid.Row="6">
+            <StackPanel Grid.Row="8">
                 <TextBlock Text="Music Service Buttons" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,8"/>
@@ -709,7 +723,7 @@
             </StackPanel>
 
             <!-- Integrations Section -->
-            <StackPanel Grid.Row="8">
+            <StackPanel Grid.Row="10">
                 <TextBlock Text="Integrations" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,10"/>
@@ -840,7 +854,7 @@
             </StackPanel>
 
             <!-- Last.fm Section -->
-            <StackPanel Grid.Row="10">
+            <StackPanel Grid.Row="12">
                 <TextBlock Text="Last.fm Scrobbling" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,8"/>
@@ -1014,14 +1028,8 @@
                 </Grid>
             </StackPanel>
 
-            <!-- Note -->
-            <TextBlock Grid.Row="12"
-                       Text="All playback options are off by default. Music service buttons search for the selected song."
-                       Foreground="{DynamicResource TextMuted}" FontSize="11"
-                       FontFamily="Segoe UI" FontStyle="Italic" TextWrapping="Wrap"/>
-
             <!-- Export Format Section -->
-            <StackPanel Grid.Row="14">
+            <StackPanel Grid.Row="16">
                 <TextBlock Text="Export" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,8"/>
@@ -1039,7 +1047,7 @@
             </StackPanel>
 
             <!-- Performance Section -->
-            <StackPanel Grid.Row="16">
+            <StackPanel Grid.Row="20">
                 <TextBlock Text="Performance" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,8"/>
@@ -1154,7 +1162,7 @@
             </StackPanel>
 
             <!-- Columns & Features Section -->
-            <StackPanel Grid.Row="20">
+            <StackPanel Grid.Row="14">
                 <TextBlock Text="Columns &amp; Features" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                            Margin="0,0,0,8"/>
@@ -1219,15 +1227,51 @@
                 </WrapPanel>
             </StackPanel>
 
-            <!-- Version Info -->
-            <StackPanel Grid.Row="22" Margin="0,0,0,0">
-                <TextBlock Text="Version" FontSize="14" FontWeight="SemiBold"
+            <!-- Version & Updates -->
+            <StackPanel Grid.Row="22">
+                <TextBlock Text="Version &amp; Updates" FontSize="14" FontWeight="SemiBold"
                            FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,6"/>
-                <TextBlock x:Name="CurrentVersionText" FontSize="12" FontFamily="Segoe UI"
-                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
-                <TextBlock x:Name="LatestVersionText" FontSize="12" FontFamily="Segoe UI"
-                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,0"/>
+                           Margin="0,0,0,8"/>
+                <Border Background="{DynamicResource InputBg}" CornerRadius="6"
+                        Padding="14,10" Margin="0,0,0,10"
+                        BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="6"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Current:"
+                                   FontSize="12" FontFamily="Segoe UI"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1"
+                                   x:Name="CurrentVersionText" FontSize="12"
+                                   FontFamily="Segoe UI" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Latest:"
+                                   FontSize="12" FontFamily="Segoe UI"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1"
+                                   x:Name="LatestVersionText" FontSize="12"
+                                   FontFamily="Segoe UI"
+                                   Foreground="{DynamicResource TextSecondary}"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+                <CheckBox x:Name="ChkCheckForUpdates" Content="Check for Updates on Startup"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                          FontFamily="Segoe UI" Margin="0,0,0,4"
+                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+                <TextBlock Text="Silently checks GitHub for a new version each time AudioAuditor starts."
+                           Foreground="{DynamicResource TextDim}" FontSize="11"
+                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
             <!-- Attribution -->
