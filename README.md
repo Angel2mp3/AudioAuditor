@@ -50,6 +50,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
   <img width="1547" height="867" alt="Blurple theme" src="https://github.com/user-attachments/assets/2c4f27df-1ba0-4479-a89d-362502d80d6d" />
   <br/>
   <img width="1547" height="867" alt="Amethyst theme" src="https://github.com/user-attachments/assets/bf064074-c27c-4e58-afb9-74a7dd9842dc" />
+  <img width="1547" height="867" alt="image(31)" src="https://github.com/user-attachments/assets/324bf7c8-4c1a-4d90-999a-053a2bd8975f" />
 </p>
 
 ---
