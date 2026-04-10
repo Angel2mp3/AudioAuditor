@@ -10,7 +10,7 @@ namespace AudioQualityChecker.Services
     /// <summary>
     /// Reads an Opus file from an Ogg container using Concentus, producing IEEE float PCM.
     /// </summary>
-    internal class OpusFileReader : WaveStream
+    public class OpusFileReader : WaveStream
     {
         private readonly Stream _stream;
         private readonly WaveFormat _waveFormat;
@@ -104,7 +104,7 @@ namespace AudioQualityChecker.Services
     /// <summary>
     /// Reads DSD (.dsf/.dff) files by converting DSD bitstream to PCM at 176400 Hz.
     /// </summary>
-    internal class DsdToPcmReader : WaveStream
+    public class DsdToPcmReader : WaveStream
     {
         private readonly WaveFormat _waveFormat;
         private readonly byte[] _pcmData;

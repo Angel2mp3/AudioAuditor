@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditorCLI</AssemblyName>
-    <Version>1.5.1</Version>
+    <Version>1.6.0</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <DefineConstants>CROSS_PLATFORM</DefineConstants>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -15,29 +15,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Concentus.OggFile" Version="1.0.6" />
-    <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
-    <PackageReference Include="SharpCompress" Version="0.38.0" />
-    <PackageReference Include="TagLibSharp" Version="2.3.0" />
-    <PackageReference Include="ClosedXML" Version="0.104.2" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="2.88.9" />
   </ItemGroup>
 
-  <!-- Share model and service source files from the main project -->
   <ItemGroup>
-    <Compile Include="..\Models\AudioFileInfo.cs" Link="Models\AudioFileInfo.cs" />
-    <Compile Include="..\Services\AudioAnalyzer.cs" Link="Services\AudioAnalyzer.cs" />
-    <Compile Include="..\Services\MqaDetector.cs" Link="Services\MqaDetector.cs" />
-    <Compile Include="..\Services\AiWatermarkDetector.cs" Link="Services\AiWatermarkDetector.cs" />
-    <Compile Include="..\Services\ExperimentalAiDetector.cs" Link="Services\ExperimentalAiDetector.cs" />
-    <Compile Include="..\Services\FlacReader.cs" Link="Services\FlacReader.cs" />
-    <Compile Include="..\Services\ExportService.cs" Link="Services\ExportService.cs" />
-    <Compile Include="..\Services\AudioFormatReaders.cs" Link="Services\AudioFormatReaders.cs" />
+    <ProjectReference Include="..\AudioAuditor.Core\AudioAuditor.Core.csproj" />
+  </ItemGroup>
+
+  <!-- SpectrogramGenerator has WPF-specific code behind #if guards, link separately -->
+  <ItemGroup>
     <Compile Include="..\Services\SpectrogramGenerator.cs" Link="Services\SpectrogramGenerator.cs" />
-    <Compile Include="..\Services\UpdateChecker.cs" Link="Services\UpdateChecker.cs" />
   </ItemGroup>
 
 </Project>

@@ -8,7 +8,7 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor</AssemblyName>
-    <Version>1.5.1</Version>
+    <Version>1.6.0</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -18,6 +18,11 @@
   <ItemGroup>
     <Compile Remove="AudioAuditorCLI\**" />
     <None Remove="AudioAuditorCLI\**" />
+    <Compile Remove="AudioAuditor.Core\**" />
+    <None Remove="AudioAuditor.Core\**" />
+    <Compile Remove="AudioAuditor.Avalonia\**" />
+    <None Remove="AudioAuditor.Avalonia\**" />
+    <Page Remove="AudioAuditor.Avalonia\**" />
     <Compile Remove="AudioAuditorMac\**" />
     <None Remove="AudioAuditorMac\**" />
     <Compile Remove="AudioAuditor.Tests\**" />
@@ -34,13 +39,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Concentus.OggFile" Version="1.0.6" />
-    <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
-    <PackageReference Include="SharpCompress" Version="0.38.0" />
-    <PackageReference Include="TagLibSharp" Version="2.3.0" />
     <PackageReference Include="DiscordRichPresence" Version="1.2.1.24" />
-    <PackageReference Include="ClosedXML" Version="0.104.2" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="AudioAuditor.Core\AudioAuditor.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
