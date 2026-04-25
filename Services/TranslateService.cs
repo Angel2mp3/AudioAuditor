@@ -95,6 +95,7 @@ public static class TranslateService
     public static async Task<string> TranslateAsync(string text, string fromLang, string toLang)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
+        if (ThemeManager.OfflineModeEnabled) return text;
 
         try
         {

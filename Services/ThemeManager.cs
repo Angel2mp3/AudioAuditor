@@ -12,6 +12,8 @@ using System.Windows.Media;
 
 namespace AudioQualityChecker.Services
 {
+    public enum LoopMode { Off, All, One }
+
     public static class ThemeManager
     {
         private static readonly string SettingsDir =
@@ -23,7 +25,7 @@ namespace AudioQualityChecker.Services
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "AudioAuditor", "session.dat");
 
         public static readonly List<string> AvailableThemes = new() { "Dark", "Ocean", "Light", "Amethyst", "Dreamsicle", "Goldenrod", "Emerald", "Blurple", "Crimson", "Brown" };
-        public static readonly List<string> AvailablePlaybarThemes = new() { "Blue Fire", "Neon Pulse", "Sunset Glow", "Purple Haze", "Minimal", "Golden Wave", "Emerald Wave", "Blurple Wave", "Crimson Wave", "Brown Wave", "Rainbow Bars" };
+        public static readonly List<string> AvailablePlaybarThemes = new() { "Follow Theme", "Blue Fire", "Neon Pulse", "Sunset Glow", "Purple Haze", "Minimal", "Golden Wave", "Emerald Wave", "Blurple Wave", "Crimson Wave", "Brown Wave", "Rainbow Bars" };
 
         public static readonly List<string> AvailableMusicServices = new()
         {
@@ -34,17 +36,24 @@ namespace AudioQualityChecker.Services
         private static string _currentTheme = "Blurple";
         public static string CurrentTheme => _currentTheme;
 
-        private static string _currentPlaybarTheme = "Blurple Wave";
-        public static string CurrentPlaybarTheme => _currentPlaybarTheme;
+        private static string _currentPlaybarTheme = ""; // empty = follow color theme
+        public static string CurrentPlaybarTheme => string.IsNullOrEmpty(_currentPlaybarTheme) ? ResolveFollowPlaybarTheme() : _currentPlaybarTheme;
+        public static bool IsPlaybarFollowingTheme => string.IsNullOrEmpty(_currentPlaybarTheme);
 
         // All 6 configurable music service slots
         public static string[] MusicServiceSlots { get; } = new string[6];
 
         // Play Options
-        public static bool AutoPlayNext { get; set; }
+        public static bool AutoPlayNext { get; set; } = true;
         public static bool AudioNormalization { get; set; }
         public static bool Crossfade { get; set; }
-        public static int CrossfadeDuration { get; set; } = 3; // seconds, 1-10
+        public static int CrossfadeDuration { get; set; } = 5; // seconds, 1-15
+        public static CrossfadeType CrossfadeCurve { get; set; } = CrossfadeType.EqualPower;
+        public static bool CrossfadeOnManualSkip { get; set; } = false;
+        public static bool GaplessEnabled { get; set; }
+
+        // Loop mode: Off, All (loop playlist), One (loop single track)
+        public static LoopMode LoopMode { get; set; } = LoopMode.Off;
 
         // Visualizer mode (false=spectrogram, true=visualizer)
         public static bool VisualizerMode { get; set; }
@@ -56,7 +65,7 @@ namespace AudioQualityChecker.Services
         // Rainbow Visualizer: each bar gets its own cycling spectrum color
         public static bool RainbowVisualizerEnabled { get; set; }
 
-        // Visualizer style: 0=Bars, 1=Mirror, 2=Particles, 3=Circles, 4=Scope, 5=Abstract, 6=VU Meter
+        // Visualizer style: 0=Bars, 1=Mirror, 2=Particles, 3=Circles, 4=Scope, 5=VU Meter
         public static int VisualizerStyle { get; set; }
 
         // Auto-update check: silently checks GitHub on startup (on by default)
@@ -112,6 +121,10 @@ namespace AudioQualityChecker.Services
         // Custom service settings (for Custom... slots — 6 slots)
         public static string[] CustomServiceUrls { get; } = new string[6] { "", "", "", "", "", "" };
         public static string[] CustomServiceIcons { get; } = new string[6] { "", "", "", "", "", "" };
+
+        // Streaming service region settings
+        public static bool RegionAwareSearchEnabled { get; set; } = true;
+        public static string StreamingRegion { get; set; } = "us";
 
         // Equalizer
         public static bool EqualizerEnabled { get; set; }
@@ -172,8 +185,33 @@ namespace AudioQualityChecker.Services
         // Compared against app version; shown once per major version update.
         public static string FeatureConfigVersion { get; set; } = "";
 
+        // Welcome dialog version — tracks which version's welcome screen the user has seen.
+        // Shown on first install and again on version updates.
+        public static string WelcomeVersionSeen { get; set; } = "";
+
         // Visualizer full-volume mode: renders visualizer as if volume is at 100%
-        public static bool VisualizerFullVolume { get; set; }
+        public static bool VisualizerFullVolume { get; set; } = true;
+
+        // Persisted volume slider value (0–100). Restored on startup.
+        public static double Volume { get; set; } = 100.0;
+
+        // Silence detection fine-tuning (all off by default)
+        public static bool SilenceMinGapEnabled { get; set; }
+        public static double SilenceMinGapSeconds { get; set; } = 0.5;
+        public static bool SilenceSkipEdgesEnabled { get; set; }
+        public static double SilenceSkipEdgeSeconds { get; set; } = 5.0;
+
+        // Always run full audio file pass even when all detectors are disabled
+        public static bool AlwaysFullAnalysis { get; set; }
+
+        // Spectrogram export quality settings (off by default)
+        public static bool SpectrogramHiFiMode { get; set; }
+        public static bool SpectrogramMagmaColormap { get; set; }
+        public static int LastSettingsTab { get; set; }
+
+        // Frequency cutoff allow-listing: files with cutoff >= threshold won't be flagged
+        public static bool FrequencyCutoffAllowEnabled { get; set; }       // default false
+        public static int FrequencyCutoffAllowHz { get; set; } = 19600;    // default 19,600 Hz
 
         // Scan cache — remember previously analyzed files
         public static bool ScanCacheEnabled { get; set; }
@@ -181,8 +219,11 @@ namespace AudioQualityChecker.Services
         // ─── Now Playing panel preferences ───
         public static bool NpVisualizerEnabled { get; set; }
         public static bool NpColorMatchEnabled { get; set; }
+        public static bool NpColorCacheEnabled { get; set; } = true;
+        public static bool NpColorCachePersist { get; set; }
         public static bool NpLyricsHidden { get; set; }
         public static bool NpTranslateEnabled { get; set; }
+        public static bool NpAutoSaveLyricsEnabled { get; set; }
         public static bool NpKaraokeEnabled { get; set; }
         public static int NpVisualizerStyle { get; set; }
         public static int NpVizPlacement { get; set; } // 0=full-width, 1=under-cover
@@ -205,11 +246,40 @@ namespace AudioQualityChecker.Services
         public static int NpArtistOffsetY { get; set; }
         public static int NpVizOffsetY { get; set; }
 
+
         // Donation popup dismissed — never show again once dismissed
         public static bool DonationDismissed { get; set; }
 
         // Footer support link dismissed — never show again
         public static bool FooterSupportDismissed { get; set; }
+
+        // Close to system tray instead of exiting (off by default)
+        public static bool CloseToTray { get; set; }
+
+        // ─── File operation defaults ───
+        public static int RenamePatternIndex { get; set; }
+        public static string DefaultCopyFolder { get; set; } = "";
+        public static string DefaultMoveFolder { get; set; } = "";
+        public static string DefaultPlaylistFolder { get; set; } = "";
+
+        // ─── Main window color match ───
+        public static bool MainColorMatchEnabled { get; set; }
+
+        // ─── Offline / online mode ───
+        private static bool _offlineModeEnabled;
+        public static bool OfflineModeEnabled
+        {
+            get => _offlineModeEnabled;
+            set
+            {
+                _offlineModeEnabled = value;
+                // Keep the Core shim in sync so services don't need a ThemeManager reference
+                AudioQualityChecker.AudioAuditorSettings.OfflineMode = value;
+            }
+        }
+
+        // Whether the user has seen the first-launch online/offline dialog (persisted in Registry)
+        public static bool FirstLaunchComplete { get; set; }
 
         // Registry key path for cross-install persistence
         private const string RegistryKeyPath = @"Software\AudioAuditor";
@@ -251,16 +321,22 @@ namespace AudioQualityChecker.Services
             set => _maxConcurrency = Math.Clamp(value, 0, Environment.ProcessorCount);
         }
         public static int DefaultConcurrency => Math.Max(1, Math.Min(Environment.ProcessorCount / 2, 16));
-        /// <summary>Available presets shown in the Settings UI.</summary>
-        public static readonly (string Label, int Value)[] ConcurrencyPresets = new[]
+        /// <summary>Available presets shown in the Settings UI. Values scale to the user's CPU.</summary>
+        public static (string Label, int Value)[] ConcurrencyPresets => GetConcurrencyPresets();
+
+        private static (string Label, int Value)[] GetConcurrencyPresets()
         {
-            ("Auto (Balanced)", 0),
-            ("Low (2 threads)", 2),
-            ("Medium (4 threads)", 4),
-            ("High (8 threads)", 8),
-            ("Maximum (16 threads)", 16),
-            ("Custom", -1),
-        };
+            int cores = Environment.ProcessorCount;
+            return new[]
+            {
+                ("Auto (Balanced)", 0),
+                ($"Low (25% — {Math.Max(1, cores / 4)} threads)", Math.Max(1, cores / 4)),
+                ($"Medium (50% — {Math.Max(1, cores / 2)} threads)", Math.Max(1, cores / 2)),
+                ($"High (75% — {Math.Max(1, cores * 3 / 4)} threads)", Math.Max(1, cores * 3 / 4)),
+                ($"Maximum (100% — {cores} threads)", cores),
+                ("Custom", -1),
+            };
+        }
 
         // Performance — memory limit in MB (0 = auto)
         // Auto: 25% of total system memory, clamped 512–8192 MB
@@ -279,44 +355,54 @@ namespace AudioQualityChecker.Services
             }
         }
         public static int DefaultMemoryMB => (int)Math.Clamp(TotalSystemMemoryMB / 4, 512, 8192);
-        /// <summary>Available memory presets shown in the Settings UI.</summary>
-        public static readonly (string Label, int ValueMB)[] MemoryPresets = new[]
+        /// <summary>Available memory presets shown in the Settings UI. Values scale to the user's RAM.</summary>
+        public static (string Label, int ValueMB)[] MemoryPresets => GetMemoryPresets();
+
+        private static (string Label, int ValueMB)[] GetMemoryPresets()
         {
-            ("Auto (Balanced)", 0),
-            ("Low (512 MB)", 512),
-            ("Medium (1 GB)", 1024),
-            ("High (2 GB)", 2048),
-            ("Very High (4 GB)", 4096),
-            ("Maximum (8 GB)", 8192),
-            ("Custom", -1),
-        };
+            long totalMB = TotalSystemMemoryMB;
+            return new[]
+            {
+                ("Auto (Balanced)", 0),
+                ("Low (512 MB)", 512),
+                ("Medium (1 GB)", 1024),
+                ($"High (25% RAM — {(int)Math.Max(512, totalMB / 4):N0} MB)", (int)Math.Max(512, totalMB / 4)),
+                ($"Very High (50% RAM — {(int)Math.Max(1024, totalMB / 2):N0} MB)", (int)Math.Max(1024, totalMB / 2)),
+                ($"Maximum (75% RAM — {(int)Math.Max(2048, totalMB * 3 / 4):N0} MB)", (int)Math.Max(2048, totalMB * 3 / 4)),
+                ("Custom", -1),
+            };
+        }
 
         /// <summary>
         /// Returns true if the current process memory usage is within the configured limit.
         /// Call this before starting memory-heavy operations.
         /// </summary>
+        private static bool _memoryOk = true;
+        private static long _memoryCheckTick;
+        private const long MemoryCheckIntervalMs = 400;
+
         public static bool IsMemoryWithinLimit()
         {
             long limitBytes = (long)MaxMemoryMB * 1024 * 1024;
-            long currentBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
-            return currentBytes < limitBytes;
+            if (limitBytes == 0) return true; // no limit
+            long now = Environment.TickCount64;
+            if (now - _memoryCheckTick < MemoryCheckIntervalMs) return _memoryOk;
+            _memoryCheckTick = now;
+            _memoryOk = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 < limitBytes;
+            return _memoryOk;
         }
 
         /// <summary>
-        /// Waits asynchronously until memory usage drops below the configured limit.
-        /// Triggers GC if over limit and polls every 200ms.
+        /// Lightweight memory hint — does NOT block scans.
+        /// A single gen-0 GC is triggered if over limit, then execution continues immediately.
+        /// Blocking loops with GC.Collect(2) destroy scan throughput; we let the .NET GC manage memory.
         /// </summary>
         public static async Task WaitForMemoryAsync(CancellationToken ct = default)
         {
             if (IsMemoryWithinLimit()) return;
-            GC.Collect(2, GCCollectionMode.Forced, false);
-            GC.WaitForPendingFinalizers();
-            int waited = 0;
-            while (!IsMemoryWithinLimit() && waited < 10_000)
-            {
-                await Task.Delay(200, ct);
-                waited += 200;
-            }
+            // One quick gen-0 collection, then move on. No blocking loop.
+            GC.Collect(0, GCCollectionMode.Optimized, false);
+            await Task.CompletedTask;
         }
 
         public static void Initialize()
@@ -329,6 +415,7 @@ namespace AudioQualityChecker.Services
             if (GetRegistryFlag("DonationDismissed")) DonationDismissed = true;
             if (GetRegistryFlag("FooterSupportDismissed")) FooterSupportDismissed = true;
             if (GetRegistryFlag("AiConfigDismissed")) AiConfigDismissed = true;
+            if (GetRegistryFlag("FirstLaunchComplete")) FirstLaunchComplete = true;
 
             // Re-sync playbar accent after playbar theme is loaded from options
             UpdatePlaybarAccentResource();
@@ -445,12 +532,29 @@ namespace AudioQualityChecker.Services
         {
             if (!AvailablePlaybarThemes.Contains(playbarTheme))
                 playbarTheme = "Blue Fire";
-            _currentPlaybarTheme = playbarTheme;
+            _currentPlaybarTheme = playbarTheme == "Follow Theme" ? "" : playbarTheme;
             // Invalidate cached colors so GetPlaybarColors() recalculates
             _cachedPlaybarColors = null;
             _cachedPlaybarThemeName = null;
             UpdatePlaybarAccentResource();
             SavePlayOptions();
+        }
+
+        /// <summary>Maps the current color theme to its closest playbar theme when "Follow Theme" is selected.</summary>
+        private static string ResolveFollowPlaybarTheme()
+        {
+            return _currentTheme switch
+            {
+                "Light" => "Minimal",
+                "Amethyst" => "Purple Haze",
+                "Dreamsicle" => "Sunset Glow",
+                "Goldenrod" => "Golden Wave",
+                "Emerald" => "Emerald Wave",
+                "Blurple" => "Blurple Wave",
+                "Crimson" => "Crimson Wave",
+                "Brown" => "Brown Wave",
+                _ => "Blue Fire", // Dark, Ocean, fallback
+            };
         }
 
         /// <summary>
@@ -477,11 +581,12 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public static PlaybarColors GetPlaybarColors()
         {
-            if (_cachedPlaybarColors != null && _cachedPlaybarThemeName == _currentPlaybarTheme)
+            string effective = string.IsNullOrEmpty(_currentPlaybarTheme) ? ResolveFollowPlaybarTheme() : _currentPlaybarTheme;
+            if (_cachedPlaybarColors != null && _cachedPlaybarThemeName == effective)
                 return _cachedPlaybarColors;
 
-            _cachedPlaybarThemeName = _currentPlaybarTheme;
-            _cachedPlaybarColors = _currentPlaybarTheme switch
+            _cachedPlaybarThemeName = effective;
+            _cachedPlaybarColors = effective switch
             {
                 "Neon Pulse" => new PlaybarColors(
                     Color.FromArgb(40, 0, 255, 128),
@@ -567,19 +672,63 @@ namespace AudioQualityChecker.Services
         public static string GetMusicServiceUrl(string serviceName, string query)
         {
             string encoded = Uri.EscapeDataString(query);
+            string region = StreamingRegion?.ToLowerInvariant() ?? "us";
+            bool aware = RegionAwareSearchEnabled;
+
             return serviceName switch
             {
                 "Spotify" => $"https://open.spotify.com/search/{encoded}",
                 "YouTube Music" => $"https://music.youtube.com/search?q={encoded}",
                 "Tidal" => $"https://listen.tidal.com/search?q={encoded}",
-                "Qobuz" => $"https://www.qobuz.com/us-en/search/tracks/{encoded}",
-                "Amazon Music" => $"https://music.amazon.com/search/{encoded}",
-                "Apple Music" => $"https://music.apple.com/search?term={encoded}",
+                "Qobuz" => aware
+                    ? $"https://www.qobuz.com/{GetQobuzRegion(region)}/search/tracks/{encoded}"
+                    : $"https://www.qobuz.com/us-en/search/tracks/{encoded}",
+                "Amazon Music" => aware
+                    ? $"https://music.amazon.{GetAmazonTld(region)}/search/{encoded}"
+                    : $"https://music.amazon.com/search/{encoded}",
+                "Apple Music" => aware && region != "us"
+                    ? $"https://music.apple.com/{region}/search?term={encoded}"
+                    : $"https://music.apple.com/us/search?term={encoded}",
                 "Deezer" => $"https://www.deezer.com/search/{encoded}",
                 "SoundCloud" => $"https://soundcloud.com/search?q={encoded}",
                 "Bandcamp" => $"https://bandcamp.com/search?q={encoded}",
                 "Last.fm" => $"https://www.last.fm/search?q={encoded}",
                 _ => $"https://www.google.com/search?q={encoded}"
+            };
+        }
+
+        private static string GetAmazonTld(string region)
+        {
+            return region switch
+            {
+                "uk" => "co.uk",
+                "jp" => "co.jp",
+                "au" => "com.au",
+                "br" => "com.br",
+                "mx" => "com.mx",
+                "in" => "in",
+                "ca" => "ca",
+                "de" => "de",
+                "fr" => "fr",
+                _ => "com"
+            };
+        }
+
+        private static string GetQobuzRegion(string region)
+        {
+            return region switch
+            {
+                "us" => "us-en",
+                "uk" => "uk-en",
+                "ca" => "ca-en",
+                "au" => "au-en",
+                "de" => "de-de",
+                "fr" => "fr-fr",
+                "jp" => "jp-ja",
+                "br" => "br-pt",
+                "mx" => "mx-es",
+                "in" => "in-en",
+                _ => "us-en"
             };
         }
 
@@ -617,7 +766,10 @@ namespace AudioQualityChecker.Services
                     $"AudioNormalization={AudioNormalization}",
                     $"Crossfade={Crossfade}",
                     $"CrossfadeDuration={CrossfadeDuration}",
-                    $"PlaybarTheme={_currentPlaybarTheme}",
+                    $"CrossfadeCurve={CrossfadeCurve}",
+                    $"CrossfadeOnManualSkip={CrossfadeOnManualSkip}",
+                    $"GaplessEnabled={GaplessEnabled}",
+                    $"PlaybarTheme={(IsPlaybarFollowingTheme ? "" : _currentPlaybarTheme)}",
                     $"Service1={MusicServiceSlots[0]}",
                     $"Service2={MusicServiceSlots[1]}",
                     $"Service3={MusicServiceSlots[2]}",
@@ -669,21 +821,37 @@ namespace AudioQualityChecker.Services
                     $"AiConfigDismissed={AiConfigDismissed}",
                     $"FeatureConfigVersion={FeatureConfigVersion}",
                     $"VisualizerFullVolume={VisualizerFullVolume}",
+                    $"Volume={Volume:0.##}",
                     $"ColumnLayout={ColumnLayout}",
                     $"HiddenColumns={HiddenColumns}",
                     $"MaxConcurrency={_maxConcurrency}",
                     $"MaxMemoryMB={_maxMemoryMB}",
                     $"DonationDismissed={DonationDismissed}",
                     $"FooterSupportDismissed={FooterSupportDismissed}",
+                    $"CloseToTray={CloseToTray}",
                     $"CheckForUpdates={CheckForUpdates}",
                     $"ScanCacheEnabled={ScanCacheEnabled}",
+                    $"SilenceMinGapEnabled={SilenceMinGapEnabled}",
+                    $"SilenceMinGapSeconds={SilenceMinGapSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                    $"SilenceSkipEdgesEnabled={SilenceSkipEdgesEnabled}",
+                    $"SilenceSkipEdgeSeconds={SilenceSkipEdgeSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                    $"AlwaysFullAnalysis={AlwaysFullAnalysis}",
+                    $"SpectrogramHiFiMode={SpectrogramHiFiMode}",
+                    $"SpectrogramMagmaColormap={SpectrogramMagmaColormap}",
+                    $"FrequencyCutoffAllowEnabled={FrequencyCutoffAllowEnabled}",
+                    $"FrequencyCutoffAllowHz={FrequencyCutoffAllowHz}",
                     $"NpVisualizerEnabled={NpVisualizerEnabled}",
                     $"NpColorMatchEnabled={NpColorMatchEnabled}",
+                    $"NpColorCacheEnabled={NpColorCacheEnabled}",
+                    $"NpColorCachePersist={NpColorCachePersist}",
                     $"NpLyricsHidden={NpLyricsHidden}",
                     $"NpTranslateEnabled={NpTranslateEnabled}",
+                    $"NpAutoSaveLyricsEnabled={NpAutoSaveLyricsEnabled}",
                     $"NpKaraokeEnabled={NpKaraokeEnabled}",
                     $"NpVisualizerStyle={NpVisualizerStyle}",
                     $"NpVizPlacement={NpVizPlacement}",
+                    $"RegionAwareSearchEnabled={RegionAwareSearchEnabled}",
+                    $"StreamingRegion={StreamingRegion}",
                     $"NpSubCoverShowArtist={NpSubCoverShowArtist}",
                     $"NpCoverSize={NpCoverSize}",
                     $"NpTitleSize={NpTitleSize}",
@@ -697,7 +865,16 @@ namespace AudioQualityChecker.Services
                     $"NpTitleOffsetY={NpTitleOffsetY}",
                     $"NpArtistOffsetX={NpArtistOffsetX}",
                     $"NpArtistOffsetY={NpArtistOffsetY}",
-                    $"NpVizOffsetY={NpVizOffsetY}"
+                    $"NpVizOffsetY={NpVizOffsetY}",
+                    $"LoopMode={LoopMode}",
+                    $"RenamePatternIndex={RenamePatternIndex}",
+                    $"DefaultCopyFolder={DefaultCopyFolder}",
+                    $"DefaultMoveFolder={DefaultMoveFolder}",
+                    $"DefaultPlaylistFolder={DefaultPlaylistFolder}",
+                    $"MainColorMatchEnabled={MainColorMatchEnabled}",
+                    $"WelcomeVersionSeen={WelcomeVersionSeen}",
+                    $"OfflineModeEnabled={OfflineModeEnabled}",
+                    $"LastSettingsTab={LastSettingsTab}"
                 };
                 File.WriteAllLines(OptionsFile, lines);
             }
@@ -748,17 +925,22 @@ namespace AudioQualityChecker.Services
 
                     switch (key)
                     {
-                        case "AutoPlayNext": AutoPlayNext = bool.TryParse(val, out var b1) && b1; break;
+                        case "AutoPlayNext": AutoPlayNext = !bool.TryParse(val, out var b1) || b1; break; // default true
                         case "AudioNormalization": AudioNormalization = bool.TryParse(val, out var b2) && b2; break;
                         case "Crossfade": Crossfade = bool.TryParse(val, out var b3) && b3; break;
+                        case "GaplessEnabled": GaplessEnabled = bool.TryParse(val, out var bGap) && bGap; break;
                         case "CrossfadeDuration":
-                            if (int.TryParse(val, out var dur) && dur >= 1 && dur <= 10)
+                            if (int.TryParse(val, out var dur) && dur >= 1 && dur <= 15)
                                 CrossfadeDuration = dur;
                             break;
+                        case "CrossfadeCurve":
+                            if (Enum.TryParse<CrossfadeType>(val, out var curveType))
+                                CrossfadeCurve = curveType;
+                            break;
                         case "PlaybarTheme":
-                            if (AvailablePlaybarThemes.Contains(val))
+                            if (val == "" || AvailablePlaybarThemes.Contains(val))
                             {
-                                _currentPlaybarTheme = val;
+                                _currentPlaybarTheme = val == "Follow Theme" ? "" : val;
                             }
                             break;
 
@@ -773,7 +955,12 @@ namespace AudioQualityChecker.Services
                         case "SpectrogramDifferenceChannel": SpectrogramDifferenceChannel = bool.TryParse(val, out var bsd) && bsd; break;
                         case "RainbowVisualizer": RainbowVisualizerEnabled = bool.TryParse(val, out var brv) && brv; break;
                         case "VisualizerStyle":
-                            if (int.TryParse(val, out var vs) && vs >= 0 && vs <= 6) VisualizerStyle = vs;
+                            if (int.TryParse(val, out var vs) && vs >= 0 && vs <= 5)
+                            {
+                                // Migrate old Abstract style (index 5 was removed; 5 is now VU Meter)
+                                // Old index 5 (Abstract) → 0 (Bars), old 6 (VU) → 5 (VU)
+                                VisualizerStyle = vs == 5 ? 0 : vs;
+                            }
                             break;
                         case "VisualizerCycleSpeed":
                             if (int.TryParse(val, out var vcs) && vcs >= 5 && vcs <= 60) VisualizerCycleSpeed = vcs;
@@ -838,7 +1025,9 @@ namespace AudioQualityChecker.Services
                         case "SHLabsCustomApiKey": SHLabsCustomApiKey = val; SHLabsDetectionService.CustomApiKey = val; break;
                         case "AiConfigDismissed": AiConfigDismissed = bool.TryParse(val, out var bac) && bac; break;
                         case "FeatureConfigVersion": FeatureConfigVersion = val; break;
-                        case "VisualizerFullVolume": VisualizerFullVolume = bool.TryParse(val, out var bvfv) && bvfv; break;
+                        case "WelcomeVersionSeen": WelcomeVersionSeen = val; break;
+                        case "VisualizerFullVolume": VisualizerFullVolume = !bool.TryParse(val, out var bvfv) || bvfv; break; // default true
+                        case "Volume": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var bvol)) Volume = Math.Clamp(bvol, 0, 100); break;
                         case "ColumnLayout": ColumnLayout = val; break;
                         case "HiddenColumns": HiddenColumns = val; break;
                         case "MaxConcurrency":
@@ -851,19 +1040,38 @@ namespace AudioQualityChecker.Services
                             break;
                         case "DonationDismissed": DonationDismissed = bool.TryParse(val, out var bdd) && bdd; break;
                         case "FooterSupportDismissed": FooterSupportDismissed = bool.TryParse(val, out var bfs) && bfs; break;
+                        case "CloseToTray": CloseToTray = bool.TryParse(val, out var bct) && bct; break;
                         case "CheckForUpdates": CheckForUpdates = !bool.TryParse(val, out var bcu) || bcu; break; // default true
                         case "ScanCacheEnabled": ScanCacheEnabled = bool.TryParse(val, out var bsce) && bsce; break;
+                        case "SilenceMinGapEnabled": SilenceMinGapEnabled = bool.TryParse(val, out var bsmg) && bsmg; AudioAnalyzer.SilenceMinGapEnabled = SilenceMinGapEnabled; break;
+                        case "SilenceMinGapSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var smgs) && smgs > 0) { SilenceMinGapSeconds = smgs; AudioAnalyzer.SilenceMinGapSeconds = smgs; } break;
+                        case "SilenceSkipEdgesEnabled": SilenceSkipEdgesEnabled = bool.TryParse(val, out var bsse) && bsse; AudioAnalyzer.SilenceSkipEdgesEnabled = SilenceSkipEdgesEnabled; break;
+                        case "SilenceSkipEdgeSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var sses) && sses > 0) { SilenceSkipEdgeSeconds = sses; AudioAnalyzer.SilenceSkipEdgeSeconds = sses; } break;
+                        case "AlwaysFullAnalysis": AlwaysFullAnalysis = bool.TryParse(val, out var bafa) && bafa; AudioAnalyzer.AlwaysFullAnalysis = AlwaysFullAnalysis; break;
+                        case "SpectrogramHiFiMode": SpectrogramHiFiMode = bool.TryParse(val, out var bshf) && bshf; break;
+                        case "SpectrogramMagmaColormap": SpectrogramMagmaColormap = bool.TryParse(val, out var bsmc) && bsmc; break;
+                        case "FrequencyCutoffAllowEnabled": FrequencyCutoffAllowEnabled = bool.TryParse(val, out var bfca) && bfca; AudioAnalyzer.FrequencyCutoffAllowEnabled = FrequencyCutoffAllowEnabled; break;
+                        case "FrequencyCutoffAllowHz": if (int.TryParse(val, out var fcah) && fcah > 0) { FrequencyCutoffAllowHz = fcah; AudioAnalyzer.FrequencyCutoffAllowHz = fcah; } break;
                         case "NpVisualizerEnabled": NpVisualizerEnabled = bool.TryParse(val, out var bNpViz) && bNpViz; break;
                         case "NpColorMatchEnabled": NpColorMatchEnabled = bool.TryParse(val, out var bNpCm) && bNpCm; break;
+                        case "NpColorCacheEnabled": NpColorCacheEnabled = bool.TryParse(val, out var bNpCc) && bNpCc; break;
+                        case "NpColorCachePersist": NpColorCachePersist = bool.TryParse(val, out var bNpCp) && bNpCp; break;
                         case "NpLyricsHidden": NpLyricsHidden = bool.TryParse(val, out var bNpLh) && bNpLh; break;
                         case "NpTranslateEnabled": NpTranslateEnabled = bool.TryParse(val, out var bNpTr) && bNpTr; break;
+                        case "NpAutoSaveLyricsEnabled": NpAutoSaveLyricsEnabled = bool.TryParse(val, out var bNpAs) && bNpAs; break;
                         case "NpKaraokeEnabled": NpKaraokeEnabled = bool.TryParse(val, out var bNpKa) && bNpKa; break;
                         case "NpVisualizerStyle":
-                            if (int.TryParse(val, out var nvs) && nvs >= 0 && nvs <= 6) NpVisualizerStyle = nvs;
+                            if (int.TryParse(val, out var nvs) && nvs >= 0 && nvs <= 5)
+                            {
+                                // Migrate old Abstract style (index 5 was removed; 5 is now VU Meter)
+                                NpVisualizerStyle = nvs == 5 ? 0 : nvs;
+                            }
                             break;
                         case "NpVizPlacement":
                             if (int.TryParse(val, out var nvp) && nvp >= 0 && nvp <= 1) NpVizPlacement = nvp;
                             break;
+                        case "RegionAwareSearchEnabled": RegionAwareSearchEnabled = !(bool.TryParse(val, out var bra) && !bra); break; // default true
+                        case "StreamingRegion": StreamingRegion = string.IsNullOrWhiteSpace(val) ? "us" : val; break;
                         case "NpSubCoverShowArtist": NpSubCoverShowArtist = !bool.TryParse(val, out var bNpSca) || bNpSca; break; // default true
                         case "NpCoverSize": if (int.TryParse(val, out var ncs) && ncs >= 0 && ncs <= 900) NpCoverSize = ncs; break;
                         case "NpTitleSize": if (int.TryParse(val, out var nts) && nts >= 0 && nts <= 72) NpTitleSize = nts; break;
@@ -878,6 +1086,16 @@ namespace AudioQualityChecker.Services
                         case "NpArtistOffsetX": if (int.TryParse(val, out var naox) && naox >= -200 && naox <= 200) NpArtistOffsetX = naox; break;
                         case "NpArtistOffsetY": if (int.TryParse(val, out var naoy) && naoy >= -200 && naoy <= 200) NpArtistOffsetY = naoy; break;
                         case "NpVizOffsetY": if (int.TryParse(val, out var nvoy) && nvoy >= -200 && nvoy <= 200) NpVizOffsetY = nvoy; break;
+                        case "LoopMode": if (Enum.TryParse<LoopMode>(val, out var lm)) LoopMode = lm; break;
+                        case "RenamePatternIndex": if (int.TryParse(val, out var rpi) && rpi >= 0 && rpi <= 2) RenamePatternIndex = rpi; break;
+                        case "DefaultCopyFolder": DefaultCopyFolder = val; break;
+                        case "DefaultMoveFolder": DefaultMoveFolder = val; break;
+                        case "DefaultPlaylistFolder": DefaultPlaylistFolder = val; break;
+                        case "MainColorMatchEnabled": MainColorMatchEnabled = bool.TryParse(val, out var bcm) && bcm; break;
+                        case "OfflineModeEnabled": OfflineModeEnabled = bool.TryParse(val, out var bom) && bom; break;
+                        case "LastSettingsTab": if (int.TryParse(val, out var lst) && lst >= 0 && lst <= 7) LastSettingsTab = lst; break;
+                        case "CrossfadeOnManualSkip": CrossfadeOnManualSkip = !(bool.TryParse(val, out var bcoms) && !bcoms); break; // default true
+
                     }
                 }
             }

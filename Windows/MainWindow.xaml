@@ -18,6 +18,7 @@
         <converters:BitrateToColorConverter x:Key="BitrateToColor"/>
         <converters:MqaToColorConverter x:Key="MqaToColor"/>
         <converters:AiToColorConverter x:Key="AiToColor"/>
+        <converters:StarConverter x:Key="StarConverter"/>
 
         <!-- ═══ Scrollbar Styles ═══ -->
         <Style x:Key="ScrollBarThumb" TargetType="Thumb">
@@ -457,17 +458,64 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="MenuItem">
-                        <Border x:Name="bd" Background="{TemplateBinding Background}"
-                                Padding="{TemplateBinding Padding}" CornerRadius="3"
-                                Margin="0" SnapsToDevicePixels="True">
-                            <ContentPresenter ContentSource="Header"
-                                              HorizontalAlignment="Left"
-                                              VerticalAlignment="Center"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="HeaderBd"
+                                    Background="{TemplateBinding Background}"
+                                    Padding="{TemplateBinding Padding}"
+                                    CornerRadius="3" SnapsToDevicePixels="True">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="CheckGlyph" Grid.Column="0"
+                                               Text="&#xE73E;" FontFamily="Segoe MDL2 Assets"
+                                               Foreground="{DynamicResource AccentColor}"
+                                               FontSize="12" VerticalAlignment="Center"
+                                               Margin="0,0,6,0" Visibility="Collapsed"/>
+                                    <ContentPresenter ContentSource="Header" Grid.Column="1"
+                                                      VerticalAlignment="Center"/>
+                                    <Path x:Name="Arrow" Grid.Column="2"
+                                          Data="M 0,0 L 4,4 L 0,8"
+                                          Stroke="{DynamicResource TextMuted}"
+                                          StrokeThickness="1.5" StrokeLineJoin="Round"
+                                          VerticalAlignment="Center"
+                                          Margin="8,0,2,0" Visibility="Collapsed"/>
+                                </Grid>
+                            </Border>
+                            <Popup x:Name="PART_Popup"
+                                   IsOpen="{TemplateBinding IsSubmenuOpen}"
+                                   AllowsTransparency="True" Focusable="False"
+                                   Placement="Right" HorizontalOffset="-4" VerticalOffset="-6">
+                                <Border Background="{DynamicResource InputBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        BorderThickness="1" CornerRadius="6" Padding="4">
+                                    <Border.Effect>
+                                        <DropShadowEffect ShadowDepth="0" BlurRadius="12"
+                                                          Opacity="0.5" Color="Black"/>
+                                    </Border.Effect>
+                                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                                </Border>
+                            </Popup>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="bd" Property="Background"
+                                <Setter TargetName="HeaderBd" Property="Background"
                                         Value="{DynamicResource RowHoverBg}"/>
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="Arrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsSubmenuOpen" Value="True">
+                                <Setter TargetName="HeaderBd" Property="Background"
+                                        Value="{DynamicResource RowHoverBg}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckGlyph" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="HeaderBd" Property="Opacity" Value="0.4"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -671,6 +719,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="StatusText"
                            Text="Ready — Drag and drop audio files or folders to begin"
@@ -693,6 +742,14 @@
                     </TextBlock.ToolTip>
                 </TextBlock>
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button x:Name="AnalysisPauseButton" Content="⏸" FontSize="12"
+                            Visibility="Collapsed" Margin="0,0,6,0"
+                            Padding="4,1" MinWidth="28"
+                            Background="{DynamicResource ButtonBg}"
+                            Foreground="{DynamicResource TextPrimary}"
+                            BorderBrush="{DynamicResource ButtonBorder}"
+                            Click="AnalysisPause_Click"
+                            ToolTip="Pause / Resume scanning"/>
                     <Grid x:Name="AnalysisProgressPanel" Width="200" Height="14" Visibility="Collapsed" Margin="0,0,10,0">
                         <ProgressBar x:Name="AnalysisProgress"
                                      Foreground="{DynamicResource AccentColor}"
@@ -720,6 +777,14 @@
                         <ToolTip Content="Click to open your Last.fm profile"/>
                     </TextBlock.ToolTip>
                 </TextBlock>
+                <!-- Offline mode badge — shown only when offline mode is active -->
+                <TextBlock Grid.Column="4" x:Name="TxtOfflineBadge"
+                           Text="● OFFLINE"
+                           Foreground="{DynamicResource Bad}"
+                           FontSize="11" FontFamily="Segoe UI" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Margin="10,0,0,0"
+                           Visibility="Collapsed"
+                           ToolTip="Offline mode is active — network features are disabled. Change in Settings."/>
             </Grid>
         </Border>
 
@@ -859,19 +924,49 @@
 
                 <!-- Context Menu -->
                 <DataGrid.ContextMenu>
-                    <ContextMenu>
+                    <ContextMenu Opened="ContextMenu_Opened">
                         <MenuItem Header="Play" Click="PlayFile_Click"/>
                         <MenuItem Header="Add to Queue" Click="AddToQueue_Click"/>
                         <Separator/>
-                        <MenuItem Header="Edit Metadata..." Click="EditMetadata_Click"/>
-                        <MenuItem Header="Strip Metadata..." Click="StripMetadata_Click"/>
-                        <MenuItem Header="Batch Rename..." Click="BatchRename_Click"/>
-                        <MenuItem Header="Compare Waveforms" Click="CompareWaveforms_Click"/>
-                        <MenuItem Header="Find Duplicates..." Click="FindDuplicates_Click"/>
-                        <MenuItem Header="Write Replay Gain" Click="WriteReplayGain_Click"/>
-                        <MenuItem Header="Identify with AcoustID" Click="AcoustIdIdentify_Click"/>
-                        <MenuItem Header="Save Spectrogram..." Click="SaveSpectrogram_Click"/>
-                        <MenuItem Header="View Album Cover" Click="ViewAlbumCover_Click"/>
+                        <!-- Favorites submenu -->
+                        <MenuItem x:Name="MenuFavoritesGroup" Header="Favorites">
+                            <MenuItem x:Name="MenuToggleFavorite" Header="Add to Favorites" Click="ToggleFavorite_Click"/>
+                            <Separator/>
+                            <MenuItem x:Name="MenuFavMoveUp" Header="Move Up in Favorites" Click="MoveFavoriteUp_Click"/>
+                            <MenuItem x:Name="MenuFavMoveDown" Header="Move Down in Favorites" Click="MoveFavoriteDown_Click"/>
+                        </MenuItem>
+                        <Separator/>
+                        <!-- Metadata submenu -->
+                        <MenuItem Header="Metadata">
+                            <MenuItem Header="Edit Metadata..." Click="EditMetadata_Click"/>
+                            <MenuItem Header="Strip Metadata..." Click="StripMetadata_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Batch Rename..." Click="BatchRename_Click"/>
+                            <MenuItem Header="Quick Rename (Selected Pattern)" Click="QuickRename_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Write Replay Gain" Click="WriteReplayGain_Click"/>
+                        </MenuItem>
+                        <!-- Analyze &amp; Identify submenu -->
+                        <MenuItem Header="Analyze / Identify">
+                            <MenuItem Header="Identify with AcoustID" Click="AcoustIdIdentify_Click"/>
+                            <MenuItem Header="Compare Waveforms" Click="CompareWaveforms_Click"/>
+                            <MenuItem Header="Compare Spectrograms" Click="CompareSpectrograms_Click"/>
+                            <MenuItem Header="Find Duplicates..." Click="FindDuplicates_Click"/>
+                        </MenuItem>
+                        <!-- Spectrogram submenu -->
+                        <MenuItem Header="Spectrogram">
+                            <MenuItem Header="View Spectrogram" Click="ViewSpectrogram_Click"/>
+                            <MenuItem Header="Save Spectrogram..." Click="SaveSpectrogram_Click"/>
+                            <Separator/>
+                            <MenuItem Header="View Album Cover" Click="ViewAlbumCover_Click"/>
+                        </MenuItem>
+                        <!-- File Operations submenu -->
+                        <MenuItem Header="File Operations">
+                            <MenuItem Header="Copy to Folder..." Click="CopyToFolder_Click"/>
+                            <MenuItem Header="Move to Folder..." Click="MoveToFolder_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Save to Playlist..." Click="SaveToPlaylist_Click"/>
+                        </MenuItem>
                         <Separator/>
                         <MenuItem Header="Open File Location" Click="OpenFileLocation_Click"/>
                         <MenuItem Header="Copy Path" Click="CopyPath_Click"/>
@@ -883,6 +978,19 @@
 
                 <!-- ═══ Columns ═══ -->
                 <DataGrid.Columns>
+                    <!-- Favorites star column -->
+                    <DataGridTemplateColumn Header="★" Width="30" CanUserSort="True"
+                                            SortMemberPath="IsFavorite">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding IsFavorite, Converter={StaticResource StarConverter}}"
+                                           FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Foreground="#FFD700" Cursor="Hand"
+                                           MouseLeftButtonDown="StarCell_Click"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
                     <DataGridTemplateColumn Header="Status" Width="100" SortMemberPath="Status">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
@@ -945,7 +1053,7 @@
                     <DataGridTextColumn Header="Format" Binding="{Binding FormatDisplay}" Width="90"/>
                     <DataGridTextColumn Header="Max Freq" Binding="{Binding EffectiveFrequencyDisplay}" Width="100"/>
 
-                    <DataGridTemplateColumn Header="Clipping" Width="250" SortMemberPath="HasClipping">
+                    <DataGridTemplateColumn Header="Clipping" Width="120" SortMemberPath="HasClipping">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding ClippingDisplay}"
@@ -993,10 +1101,10 @@
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding AiDisplay}"
-                                           Foreground="{Binding IsAnyAiDetected, Converter={StaticResource AiToColor}}"
+                                           Foreground="{Binding AiVerdict, Converter={StaticResource AiToColor}}"
                                            FontWeight="SemiBold" FontSize="11" FontFamily="Segoe UI"
                                            HorizontalAlignment="Center"
-                                           ToolTip="{Binding AiDisplay}"/>
+                                           ToolTip="{Binding AiDetailTooltip}"/>
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -1068,7 +1176,7 @@
                     </DataGridTextColumn>
 
                     <!-- Rip Quality -->
-                    <DataGridTextColumn Header="Rip Quality (Experimental)" Width="200" Binding="{Binding RipQualityDisplay}" SortMemberPath="RipQuality" Visibility="Collapsed">
+                    <DataGridTextColumn Header="Rip Quality" Width="200" Binding="{Binding RipQualityDisplay}" SortMemberPath="RipQuality" Visibility="Visible">
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
                                 <Setter Property="HorizontalAlignment" Value="Center"/>
@@ -1102,6 +1210,7 @@
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
@@ -1120,7 +1229,22 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Grid.Column="1" x:Name="BtnPrevTrack"
+                            <Button Grid.Column="1" x:Name="BtnLoop"
+                                    Click="Loop_Click" Style="{StaticResource PlayerButton}"
+                                    ToolTip="Loop: Off" Margin="2,0,0,0">
+                                <Viewbox Width="14" Height="14" Margin="-1">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="LoopIcon"
+                                              Data="M 1,11 L 1,5 L 14,5 M 14,5 L 11,2 M 14,5 L 11,8 M 14,5 L 14,11 L 1,11 M 1,11 L 4,14 M 1,11 L 4,8"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
+                                              Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                        <TextBlock x:Name="LoopOneIndicator" Text="1" FontSize="6" FontWeight="Bold"
+                                                   Foreground="{DynamicResource TextMuted}" Visibility="Collapsed"
+                                                   Canvas.Left="5.5" Canvas.Top="3"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Button Grid.Column="2" x:Name="BtnPrevTrack"
                                     Click="PrevTrack_Click" Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Previous Track">
                                 <Viewbox Width="14" Height="14">
@@ -1130,7 +1254,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Grid.Column="2" Click="Rewind_Click"
+                            <Button Grid.Column="3" Click="Rewind_Click"
                                     Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Rewind 5s">
                                 <Viewbox Width="14" Height="14">
@@ -1140,7 +1264,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Grid.Column="3" x:Name="BtnPlayPause"
+                            <Button Grid.Column="4" x:Name="BtnPlayPause"
                                     Click="PlayPause_Click" Style="{StaticResource PlayerButton}" Margin="4,0,0,0">
                                 <Viewbox x:Name="PlayPauseIcon" Width="16" Height="16">
                                     <Canvas x:Name="PlayPauseCanvas" Width="16" Height="16">
@@ -1149,7 +1273,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Grid.Column="4" Click="Forward_Click"
+                            <Button Grid.Column="5" Click="Forward_Click"
                                     Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Forward 5s">
                                 <Viewbox Width="14" Height="14">
@@ -1159,7 +1283,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Grid.Column="5" x:Name="BtnNextTrack"
+                            <Button Grid.Column="6" x:Name="BtnNextTrack"
                                     Click="NextTrack_Click" Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Next Track">
                                 <Viewbox Width="14" Height="14">
@@ -1171,7 +1295,7 @@
                             </Button>
 
                             <!-- Seek bar + waveform + time -->
-                            <Grid Grid.Column="6" Margin="12,0">
+                            <Grid Grid.Column="7" Margin="12,0">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
@@ -1185,8 +1309,12 @@
                                             PreviewMouseLeftButtonDown="SeekSlider_PreviewMouseDown"
                                             PreviewMouseLeftButtonUp="SeekSlider_MouseUp"
                                             Thumb.DragCompleted="SeekSlider_DragCompleted"
+                                            MouseMove="SeekSlider_MouseMove"
                                             Style="{StaticResource SeekSlider}"
                                             VerticalAlignment="Center"/>
+                                    <Canvas x:Name="PlaybarAnimCanvas" IsHitTestVisible="False"
+                                            Height="8" VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                                            ClipToBounds="True" Margin="0"/>
                                 </Grid>
                                 <Grid Grid.Row="1">
                                     <TextBlock x:Name="PlayerTimeText" Text="0:00 / 0:00"
@@ -1198,7 +1326,7 @@
                             </Grid>
 
                             <!-- Volume -->
-                            <Viewbox Grid.Column="7" x:Name="VolumeIcon" Width="14" Height="14"
+                            <Viewbox Grid.Column="8" x:Name="VolumeIcon" Width="14" Height="14"
                                      VerticalAlignment="Center" Margin="0,0,4,0" Cursor="Hand"
                                      MouseLeftButtonDown="VolumeIcon_Click">
                                 <Canvas Width="16" Height="16">
@@ -1208,20 +1336,20 @@
                                           Stroke="{DynamicResource TextMuted}" StrokeThickness="0.5"/>
                                 </Canvas>
                             </Viewbox>
-                            <TextBlock Grid.Column="8" x:Name="VolumeLabel" Text="100%"
+                            <TextBlock Grid.Column="9" x:Name="VolumeLabel" Text="100%"
                                        Foreground="{DynamicResource TextMuted}" FontSize="11"
                                        FontFamily="Segoe UI"
                                        VerticalAlignment="Center" Margin="0,0,6,0" Width="32"
                                        Cursor="Hand"
                                        MouseLeftButtonDown="VolumeIcon_Click"/>
-                            <Slider Grid.Column="9" x:Name="VolumeSlider"
+                            <Slider Grid.Column="10" x:Name="VolumeSlider"
                                     Minimum="0" Maximum="100" Value="100"
                                     ValueChanged="VolumeSlider_ValueChanged"
                                     VerticalAlignment="Center"
                                     Style="{StaticResource VolumeSlider}"/>
 
                             <!-- EQ Toggle -->
-                            <Button Grid.Column="10" x:Name="BtnEqToggle" Click="EqToggle_Click"
+                            <Button Grid.Column="11" x:Name="BtnEqToggle" Click="EqToggle_Click"
                                     Style="{StaticResource PlayerButton}" Margin="8,0,0,0"
                                     ToolTip="Equalizer" Padding="6,4">
                                 <TextBlock Text="EQ" FontFamily="Segoe UI" FontSize="11"
@@ -1229,14 +1357,15 @@
                             </Button>
 
                             <!-- Now Playing -->
-                            <Button Grid.Column="11" Click="NowPlaying_Click"
+                            <Button Grid.Column="12" Click="NowPlaying_Click"
                                     Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Now Playing / Lyrics View" Padding="6,4">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="♫" FontSize="13" Foreground="{DynamicResource TextMuted}"
-                                               VerticalAlignment="Center" Margin="0,0,3,0"/>
-                                    <TextBlock Text="NP" FontSize="10" Foreground="{DynamicResource TextMuted}"
-                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text="♫" FontFamily="Segoe UI" FontSize="11"
+                                               FontWeight="Bold" VerticalAlignment="Center"
+                                               Margin="0,0,3,0"/>
+                                    <TextBlock Text="NP" FontFamily="Segoe UI" FontSize="11"
+                                               FontWeight="Bold" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </Button>
                         </Grid>
@@ -1518,6 +1647,7 @@
                                 ValueChanged="NpSeekSlider_ValueChanged"
                                 PreviewMouseLeftButtonDown="NpSeekSlider_PreviewMouseDown"
                                 PreviewMouseLeftButtonUp="NpSeekSlider_MouseUp"
+                                MouseMove="NpSeekSlider_MouseMove"
                                 Thumb.DragCompleted="NpSeekSlider_DragCompleted"/>
                         <TextBlock x:Name="NpTimeTotal" Grid.Column="2" Text="0:00"
                                    Foreground="{DynamicResource TextMuted}" FontSize="10"
@@ -1535,17 +1665,24 @@
 
                         <!-- Left: Track info + specs + tags -->
                         <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <TextBlock x:Name="NpSongTitle" Text="No track playing"
-                                       Foreground="{DynamicResource TextPrimary}" FontSize="14"
-                                       FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                       FontFamily="Segoe UI"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,1">
+                                <TextBlock x:Name="NpSongTitle" Text="No track playing"
+                                           Foreground="{DynamicResource TextPrimary}" FontSize="14"
+                                           FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center"
+                                           FontFamily="Segoe UI"/>
+                                <TextBlock Text=" — "
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="11"
+                                           VerticalAlignment="Center" Margin="4,0,4,0"
+                                           FontFamily="Segoe UI"/>
                                 <TextBlock x:Name="NpSongArtist" Text=""
                                            Foreground="{DynamicResource TextSecondary}" FontSize="11"
                                            TextTrimming="CharacterEllipsis" FontFamily="Segoe UI"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
                                 <TextBlock x:Name="NpSongSpecs" Text=""
                                            Foreground="{DynamicResource TextSecondary}" FontSize="10"
-                                           VerticalAlignment="Center" Margin="8,0,0,0"
+                                           VerticalAlignment="Center"
                                            FontFamily="Segoe UI" TextTrimming="CharacterEllipsis"/>
                                 <!-- MQA / AI tags area -->
                                 <StackPanel x:Name="NpTagsPanel" Orientation="Horizontal"
@@ -1564,6 +1701,20 @@
                                               Data="M 1,12 L 10,3 M 10,3 L 7,3 M 10,3 L 10,6 M 1,4 L 10,13 M 10,13 L 7,13 M 10,13 L 10,10"
                                               Stroke="{DynamicResource TextMuted}" StrokeThickness="2.2"
                                               Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Button x:Name="NpLoopBtn" Click="NpLoop_Click" ToolTip="Loop: Off"
+                                    Style="{StaticResource PlayerButton}" MinWidth="28" Padding="4,4" Margin="2,0,0,0">
+                                <Viewbox Width="14" Height="14">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpLoopIcon"
+                                              Data="M 1,11 L 1,5 L 14,5 M 14,5 L 11,2 M 14,5 L 11,8 M 14,5 L 14,11 L 1,11 M 1,11 L 4,14 M 1,11 L 4,8"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
+                                              Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                        <TextBlock x:Name="NpLoopOneIndicator" Text="1" FontSize="6" FontWeight="Bold"
+                                                   Foreground="{DynamicResource TextMuted}" Visibility="Collapsed"
+                                                   Canvas.Left="5.5" Canvas.Top="3"/>
                                     </Canvas>
                                 </Viewbox>
                             </Button>
@@ -1797,25 +1948,74 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <!-- Load .lrc file -->
-                            <Button Click="NpLoadLrcFile_Click" ToolTip="Load .lrc file"
+                            <!-- Lyric save options (load + save merged) -->
+                            <Button x:Name="NpSaveLyricsBtn" Click="NpSaveLyrics_Click" ToolTip="Lyric save options"
                                     Style="{StaticResource PlayerButton}"
                                     MinWidth="26" Padding="4,4">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="NpSaveLyricsMenu" Opened="NpSaveLyricsMenu_Opened"
+                                                 Background="{DynamicResource PanelBg}"
+                                                 Foreground="{DynamicResource TextPrimary}"
+                                                 BorderBrush="{DynamicResource ButtonBorder}">
+                                        <MenuItem x:Name="NpSaveLyricsNowItem" Header="Save lyrics as .lrc"
+                                                  Foreground="{DynamicResource TextPrimary}"
+                                                  Click="NpSaveLyricsNow_Click"/>
+                                        <MenuItem x:Name="NpAutoSaveLyricsToggleItem" Header="Auto-save each song"
+                                                  Foreground="{DynamicResource TextPrimary}"
+                                                  Click="NpAutoSaveLyricsToggle_Click"/>
+                                        <MenuItem x:Name="NpSaveAllLyricsItem" Header="Save all lyrics in folder"
+                                                  Foreground="{DynamicResource TextPrimary}"
+                                                  Click="NpSaveAllLyricsNow_Click"/>
+                                        <Separator Background="{DynamicResource ButtonBorder}" Height="1" Margin="4,3"/>
+                                        <MenuItem Header="Load .lrc file..."
+                                                  Foreground="{DynamicResource TextPrimary}"
+                                                  Click="NpLoadLrcFile_Click"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
                                 <Viewbox Width="12" Height="12">
                                     <Canvas Width="16" Height="16">
-                                        <Path x:Name="NpLoadLrcBody" Data="M 3,1 L 10,1 L 13,4 L 13,15 L 3,15 Z"
+                                        <!-- Page outline (same shape as before) -->
+                                        <Path x:Name="NpSaveLyricsIcon"
+                                              Data="M 3,1 L 10,1 L 13,4 L 13,15 L 3,15 Z M 10,1 L 10,4 L 13,4 M 5,8 L 11,8 M 8,5 L 8,11 M 6,11 L 8,13 L 10,11"
                                               Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
                                               Fill="Transparent" StrokeLineJoin="Round"/>
-                                        <Path x:Name="NpLoadLrcFold" Data="M 10,1 L 10,4 L 13,4"
-                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
-                                              Fill="Transparent"/>
                                     </Canvas>
                                 </Viewbox>
                             </Button>
+                            <!-- Queue -->
+                            <Button x:Name="NpQueueBtn" Click="NpQueue_Click" ToolTip="Queue"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <TextBlock x:Name="NpQueueIcon"
+                                               Text="&#xE90B;" FontFamily="Segoe MDL2 Assets"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpQueuePopup" StaysOpen="False"
+                                   Placement="Top" PlacementTarget="{Binding ElementName=NpQueueBtn}"
+                                   AllowsTransparency="True" PopupAnimation="Fade">
+                                <Border Background="{DynamicResource PanelBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        BorderThickness="1" CornerRadius="6"
+                                        Padding="14,10" Margin="0,0,0,4"
+                                        MinWidth="220" MaxWidth="320">
+                                    <Border.Effect>
+                                        <DropShadowEffect ShadowDepth="0" BlurRadius="20" Opacity="0.4" Color="Black"/>
+                                    </Border.Effect>
+                                    <StackPanel>
+                                        <TextBlock Text="Queue" FontSize="13" FontWeight="SemiBold"
+                                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                                   Margin="0,0,0,8"/>
+                                        <StackPanel x:Name="NpQueuePopupContent"/>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
                             <!-- Settings -->
                             <Button Click="NpSettings_Click" ToolTip="Settings"
                                     Style="{StaticResource PlayerButton}"
-                                    MinWidth="26" Padding="4,4">
+                                    MinWidth="26" Padding="4,3">
                                 <Viewbox Width="12" Height="12">
                                     <Canvas Width="16" Height="16">
                                         <Path x:Name="NpSettingsGear" Data="M 6.7,1 L 9.3,1 L 9.8,3.1 L 11.6,3.9 L 13.5,2.8 L 15.2,4.5 L 14.1,6.4 L 14.9,8.2 L 17,8.7 L 17,11.3 L 14.9,11.8 L 14.1,13.6 L 15.2,15.5 L 13.5,17.2 L 11.6,16.1 L 9.8,16.9 L 9.3,19 L 6.7,19 L 6.2,16.9 L 4.4,16.1 L 2.5,17.2 L 0.8,15.5 L 1.9,13.6 L 1.1,11.8 L -1,11.3 L -1,8.7 L 1.1,8.2 L 1.9,6.4 L 0.8,4.5 L 2.5,2.8 L 4.4,3.9 L 6.2,3.1 Z"
@@ -1864,8 +2064,8 @@
                                         <Slider x:Name="NpLayoutTitleSlider" Minimum="16" Maximum="56" Value="28"
                                                 Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
-                                        <!-- Artist / Up Next Size -->
-                                        <TextBlock Text="Artist / Up Next" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <!-- Artist / Queue Size -->
+                                        <TextBlock Text="Artist / Queue" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutSubSlider" Minimum="9" Maximum="24" Value="11"
                                                 Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
@@ -2596,7 +2796,7 @@
                            FontFamily="Segoe UI" HorizontalAlignment="Center"
                            Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,12"/>
 
-                <StackPanel HorizontalAlignment="Center" Margin="0,0,0,20">
+                <StackPanel HorizontalAlignment="Center" Margin="0,0,0,16">
                     <TextBlock x:Name="UpdateLatestText"
                                FontSize="13" FontFamily="Segoe UI"
                                Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold"
@@ -2608,13 +2808,27 @@
                                HorizontalAlignment="Center" TextAlignment="Center"/>
                 </StackPanel>
 
-                <Button Click="UpdateDownload_Click" Cursor="Hand" HorizontalAlignment="Center"
-                        Margin="0,0,0,16">
+                <!-- Progress bar (hidden until download starts) -->
+                <Border x:Name="UpdateProgressPanel" Visibility="Collapsed"
+                        Background="{DynamicResource InputBg}" CornerRadius="4"
+                        Height="8" Margin="0,0,0,16">
+                    <Grid>
+                        <Border x:Name="UpdateProgressBar" Background="{DynamicResource AccentColor}"
+                                CornerRadius="4" HorizontalAlignment="Left" Width="0"/>
+                    </Grid>
+                </Border>
+                <TextBlock x:Name="UpdateProgressText" Visibility="Collapsed"
+                           FontSize="11" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextMuted}"
+                           HorizontalAlignment="Center" Margin="0,-12,0,16"/>
+
+                <Button x:Name="BtnUpdateDownloadInstall" Click="UpdateDownloadInstall_Click" Cursor="Hand"
+                        HorizontalAlignment="Center" Margin="0,0,0,12">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border x:Name="updateDlBd" Background="{DynamicResource AccentColor}"
                                     CornerRadius="6" Padding="24,10">
-                                <TextBlock Text="Download Update" FontSize="14" FontWeight="SemiBold"
+                                <TextBlock Text="Download &amp; Install" FontSize="14" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="White"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
@@ -2627,10 +2841,28 @@
                     </Button.Template>
                 </Button>
 
+                <Button x:Name="BtnUpdateOpenBrowser" Click="UpdateDownload_Click" Cursor="Hand"
+                        HorizontalAlignment="Center" Margin="0,0,0,12">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <TextBlock x:Name="updateBrowserText" Text="Open in browser"
+                                       FontSize="12.5" FontFamily="Segoe UI"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Opacity="0.75"/>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="updateBrowserText" Property="Opacity" Value="1.0"/>
+                                    <Setter TargetName="updateBrowserText" Property="TextDecorations" Value="Underline"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <Button Click="UpdateDismiss_Click" Cursor="Hand" HorizontalAlignment="Center">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <TextBlock x:Name="updateDismissText" Text="Skip this version"
+                            <TextBlock x:Name="updateDismissText" Text="Later"
                                        FontSize="12.5" FontFamily="Segoe UI"
                                        Foreground="{DynamicResource TextSecondary}"
                                        Opacity="0.75"/>

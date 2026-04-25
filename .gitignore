@@ -24,6 +24,7 @@ archive/
 *_wpftmp.csproj
 Experimental-Builds/
 experimental-builds/
+icon-test/
 
 # NuGet
 packages/
@@ -82,6 +83,8 @@ session.dat
 # Dev / temp / personal files
 docs/
 to-do.txt
+.recovery/
+website-broken-backup/
 
 # Windows shortcuts (embed local paths)
 *.lnk
@@ -91,10 +94,22 @@ to-do.txt
 .claude/
 AGENTS.md
 angents.md
+.playwright-mcp/
+.playwright-mcp
+
+# Cloudflare worker caches
+contact-worker/.wrangler/
+
+# Temp plan files
+plan_temp.md
 
 # ═══ Cross-platform port (Avalonia NOT ready for release) ═══
 AudioAuditor.Avalonia/
 AVALONIA_PORT_PLAN.md
+
+# Unreleased web app (not yet public)
+website/app/
+website/app-dist/
 
 # SH Labs secrets (any location)
 **/SHLabsSecrets.cs
@@ -136,3 +151,5 @@ crashdumps/
 # Test results
 TestResults/
 *.trx
+contact-worker/wrangler.toml
+contact-worker/worker.js

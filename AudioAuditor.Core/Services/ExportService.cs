@@ -115,6 +115,7 @@ namespace AudioQualityChecker.Services
                 "IsMqa" or "MqaDisplay" => f.MqaDisplay,
                 "MqaEncoder" => f.MqaEncoder,
                 "IsAiGenerated" or "AiDisplay" => f.AiDisplay,
+                "IsAnyAiDetected" => f.AiDisplay,
                 "AiSource" => f.AiSource,
                 "FakeStereoDisplay" or "IsFakeStereo" => f.FakeStereoDisplay,
                 "SilenceDisplay" or "HasExcessiveSilence" => f.SilenceDisplay,

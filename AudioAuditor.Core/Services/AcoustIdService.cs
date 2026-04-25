@@ -73,6 +73,9 @@ namespace AudioQualityChecker.Services
             var existing = FindFpcalc();
             if (existing != null) return existing;
 
+            // Offline mode: don't attempt to download fpcalc
+            if (AudioAuditorSettings.OfflineMode) return null;
+
             await _downloadLock.WaitAsync(ct);
             try
             {
@@ -146,15 +149,18 @@ namespace AudioQualityChecker.Services
 
             try
             {
+                // Use ArgumentList (not Arguments string) to avoid quoting/injection issues
+                // with audio paths that contain quote characters
                 var psi = new ProcessStartInfo
                 {
                     FileName = fpcalc,
-                    Arguments = $"-json \"{audioPath}\"",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true
                 };
+                psi.ArgumentList.Add("-json");
+                psi.ArgumentList.Add(audioPath);
 
                 using var proc = Process.Start(psi);
                 if (proc == null) return null;

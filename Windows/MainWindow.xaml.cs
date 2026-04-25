@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -9,6 +9,9 @@ using SharpCompress.Archives;
 using SharpCompress.Common;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -51,6 +54,7 @@ namespace AudioQualityChecker
         private int _activeBatches;
         private SemaphoreSlim? _analysisSemaphore;
         private SemaphoreSlim? _shLabsSemaphore;
+        private ManualResetEventSlim _analysisPauseEvent = new(true); // signaled = not paused
 
         // Audio player
         private readonly AudioPlayer _player = new();
@@ -60,6 +64,10 @@ namespace AudioQualityChecker
 
         // SMTC (media session for FluentFlyout/Windows media overlay)
         private SmtcService? _smtc;
+
+        // System tray icon (minimize to tray)
+        private System.Windows.Forms.NotifyIcon? _trayIcon;
+        private bool _forceClose; // true when exiting via tray context menu
 
         // Search
         private string _searchText = "";
@@ -71,12 +79,32 @@ namespace AudioQualityChecker
 
         // Seek cooldown to prevent snap-back
         private DateTime _lastSeekTime = DateTime.MinValue;
+        private TimeSpan _lastSeekTargetPosition = TimeSpan.Zero;
 
         // Horizontal scroll tracking — suppress vertical drift during touchpad horizontal swipes
         private DateTime _lastHorizontalScrollTime = DateTime.MinValue;
 
         // Track the currently displayed spectrogram file
         private AudioFileInfo? _currentSpectrogramFile;
+
+        // In-memory spectrogram cache keyed by "filePath|linearScale|channel|magma|hifi"
+        // Cleared when spectrogram settings change or manually via settings
+        private readonly Dictionary<string, System.Windows.Media.Imaging.BitmapSource> _spectrogramCache =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly LinkedList<string> _spectrogramCacheLru = new();
+        private const int SpectrogramCacheMaxEntries = 30;
+
+        // In-memory NP album-art color cache (keyed by file path)
+        private readonly Dictionary<string, AlbumColorExtractor.DominantColors> _npColorCache =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly LinkedList<string> _npColorCacheLru = new();
+        private const int NpColorCacheMaxEntries = 50;
+
+        // Background color preload for the next track
+        private CancellationTokenSource? _npPreloadCts;
+
+        // Generation counter to prevent stale async color tasks from overwriting current track
+        private int _npColorGeneration;
 
         // Queue system
         private readonly ObservableCollection<AudioFileInfo> _queue = new();
@@ -97,6 +125,8 @@ namespace AudioQualityChecker
         private bool _npVisualizerEnabled;
         private bool _npColorMatchEnabled;
         private DateTime _lastTrackFinishedTime = DateTime.MinValue;
+        private volatile bool _crossfadeEarlyTriggered;
+        private DateTime _lastOfflineNoticeTime = DateTime.MinValue;
         private string? _npLastTrackPath; // track which song is loaded in NP to detect changes
         private int _npVisualizerStyle; // NP has its own style selection
         private bool _mainVizWasActive; // remember main visualizer state when NP takes over
@@ -105,6 +135,10 @@ namespace AudioQualityChecker
         private System.Windows.Media.Color _npAlbumPrimary;
         private System.Windows.Media.Color _npAlbumSecondary;
         private System.Windows.Media.Color _npAlbumBackground;
+
+        // Album colors for main-window color-match theming
+        private System.Windows.Media.Color _mainAlbumPrimary;
+        private System.Windows.Media.Color _mainAlbumSecondary;
         private System.Windows.Media.Color _npVizColorPrimary;   // for visualizer tinting
         private System.Windows.Media.Color _npVizColorSecondary; // for visualizer tinting
         private double _npVizBarHeight = 100; // default visualizer bar height
@@ -119,7 +153,8 @@ namespace AudioQualityChecker
         private List<string>? _npTranslatedLines; // cached translation of current lyrics
         private bool _npKaraokeEnabled;           // word-by-word karaoke mode
         private int _npLyricsVersion;              // incremented each track change to discard stale lyrics
-        private bool _npSubCoverShowArtist = true; // true = Artist (default), false = Up Next
+        private bool _npLyricsNeedCatchUp;         // force one immediate highlight update on next tick
+        private bool _npSubCoverShowArtist = true; // true = Artist (default), false = Queue preview
         private bool _npPrefsLoaded;              // one-time load from ThemeManager
         private int _npCoverSize;                 // custom album cover size (0 = default)
         private int _npTitleSize;                 // custom title font size (0 = default)
@@ -171,7 +206,7 @@ namespace AudioQualityChecker
         // Visualizer
         private bool _visualizerMode;
         private bool _visualizerActive;
-        private int _visualizerStyle; // 0=Classic Bars, 1=Mirrored Bars, 2=Particle Fountain, 3=Circle Rings, 4=Oscilloscope, 5=Abstract, 6=VU Meter
+        private int _visualizerStyle; // 0=Classic Bars, 1=Mirrored Bars, 2=Particle Fountain, 3=Circle Rings, 4=Oscilloscope, 5=VU Meter
 
         // Animation occlusion pause
         private bool _isPausedForOcclusion;
@@ -200,8 +235,23 @@ namespace AudioQualityChecker
 
         private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
+            // Common formats
             ".mp3", ".flac", ".wav", ".ogg", ".aac", ".m4a", ".wma",
-            ".aiff", ".aif", ".ape", ".wv", ".opus", ".alac", ".dsf", ".dff"
+            ".aiff", ".aif", ".ape", ".wv", ".opus", ".alac", ".dsf", ".dff",
+            // Previously added rare formats
+            ".tta", ".mpc", ".spx", ".mp+",
+            // Additional rare/uncommon formats
+            ".mp2",           // MPEG Layer II (broadcast/radio audio)
+            ".m4b",           // M4A audiobook container
+            ".m4r",           // iPhone ringtone (M4A)
+            ".mp4",           // MPEG-4 audio container
+            ".3gp", ".3g2",   // 3GPP/3GPP2 mobile audio
+            ".amr",           // Adaptive Multi-Rate (voice/mobile)
+            ".ac3",           // Dolby AC-3 / Dolby Digital
+            ".mka",           // Matroska audio container
+            ".webm",          // WebM audio (Opus/Vorbis)
+            ".tak",           // Tom's lossless Audio Kompressor (needs TAK codec)
+            ".au",  ".snd",   // Sun/NeXT audio (legacy Unix)
         };
 
         private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -236,6 +286,78 @@ namespace AudioQualityChecker
             }
             catch { /* never block startup */ }
 
+            // Welcome dialog — shown on first launch or version update
+            string currentVersion = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetName().Version is { } cv ? $"{cv.Major}.{cv.Minor}.{cv.Build}" : "0.0.0";
+            bool showWelcome = !ThemeManager.FirstLaunchComplete || ThemeManager.WelcomeVersionSeen != currentVersion;
+            if (showWelcome)
+            {
+                Dispatcher.InvokeAsync(() =>
+                {
+                    try
+                    {
+                        var dlg = new Windows.WelcomeDialog { Owner = this };
+                        // Pre-populate feature checkboxes from current settings
+                        dlg.ChkSilence.IsChecked = ThemeManager.SilenceDetectionEnabled;
+                        dlg.ChkFakeStereo.IsChecked = ThemeManager.FakeStereoDetectionEnabled;
+                        dlg.ChkDR.IsChecked = ThemeManager.DynamicRangeEnabled;
+                        dlg.ChkTruePeak.IsChecked = ThemeManager.TruePeakEnabled;
+                        dlg.ChkLufs.IsChecked = ThemeManager.LufsEnabled;
+                        dlg.ChkClipping.IsChecked = ThemeManager.ClippingDetectionEnabled;
+                        dlg.ChkBpm.IsChecked = ThemeManager.BpmDetectionEnabled;
+                        dlg.ChkMqa.IsChecked = ThemeManager.MqaDetectionEnabled;
+                        dlg.ChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
+                        dlg.ChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
+                        dlg.ChkRipQuality.IsChecked = ThemeManager.RipQualityEnabled;
+                        dlg.ChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
+                        if (dlg.ShowDialog() == true)
+                        {
+                            ThemeManager.OfflineModeEnabled = dlg.SelectedOffline;
+                            ThemeManager.FirstLaunchComplete = true;
+                            ThemeManager.SetRegistryFlag("FirstLaunchComplete", true);
+                            ThemeManager.WelcomeVersionSeen = currentVersion;
+
+                            // Apply feature toggles from welcome dialog
+                            ThemeManager.SilenceDetectionEnabled = dlg.EnableSilenceDetection;
+                            AudioAnalyzer.EnableSilenceDetection = dlg.EnableSilenceDetection;
+                            ThemeManager.FakeStereoDetectionEnabled = dlg.EnableFakeStereoDetection;
+                            AudioAnalyzer.EnableFakeStereoDetection = dlg.EnableFakeStereoDetection;
+                            ThemeManager.DynamicRangeEnabled = dlg.EnableDynamicRange;
+                            AudioAnalyzer.EnableDynamicRange = dlg.EnableDynamicRange;
+                            ThemeManager.TruePeakEnabled = dlg.EnableTruePeak;
+                            AudioAnalyzer.EnableTruePeak = dlg.EnableTruePeak;
+                            ThemeManager.LufsEnabled = dlg.EnableLufs;
+                            AudioAnalyzer.EnableLufs = dlg.EnableLufs;
+                            ThemeManager.ClippingDetectionEnabled = dlg.EnableClippingDetection;
+                            AudioAnalyzer.EnableClippingDetection = dlg.EnableClippingDetection;
+                            ThemeManager.BpmDetectionEnabled = dlg.EnableBpmDetection;
+                            AudioAnalyzer.EnableBpmDetection = dlg.EnableBpmDetection;
+                            ThemeManager.MqaDetectionEnabled = dlg.EnableMqaDetection;
+                            AudioAnalyzer.EnableMqaDetection = dlg.EnableMqaDetection;
+                            ThemeManager.DefaultAiDetectionEnabled = dlg.EnableDefaultAiDetection;
+                            AudioAnalyzer.EnableDefaultAiDetection = dlg.EnableDefaultAiDetection;
+                            ThemeManager.ExperimentalAiDetection = dlg.EnableExperimentalAi;
+                            AudioAnalyzer.EnableExperimentalAi = dlg.EnableExperimentalAi;
+                            ThemeManager.RipQualityEnabled = dlg.EnableRipQuality;
+                            AudioAnalyzer.EnableRipQuality = dlg.EnableRipQuality;
+                            ThemeManager.SHLabsAiDetection = dlg.EnableSHLabs;
+
+                            ThemeManager.SavePlayOptions();
+                            ApplyColumnVisibility();
+
+                            // If SH Labs was just enabled and privacy not yet accepted, show privacy notice
+                            if (dlg.EnableSHLabs && !ThemeManager.SHLabsPrivacyAccepted)
+                            {
+                                _shLabsPrivacyFromFeatureConfig = true;
+                                ShowSHLabsPrivacyOverlay();
+                            }
+                        }
+                        UpdateOfflineBadge();
+                    }
+                    catch { /* never block startup */ }
+                }, DispatcherPriority.Loaded);
+            }
+
             // Load scan cache if enabled
             if (ThemeManager.ScanCacheEnabled)
                 ScanCacheService.EnsureLoaded();
@@ -265,6 +387,7 @@ namespace AudioQualityChecker
 
             _player.PlaybackStopped += Player_PlaybackStopped;
             _player.TrackFinished += Player_TrackFinished;
+            _player.GaplessTrackChanged += Player_GaplessTrackChanged;
 
             _playerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
             _playerTimer.Tick += PlayerTimer_Tick;
@@ -289,6 +412,24 @@ namespace AudioQualityChecker
             ChkEqEnabled.IsChecked = ThemeManager.EqualizerEnabled;
             EqPanel.Visibility = Visibility.Collapsed;
 
+            // Load persisted NP color cache if enabled
+            LoadNpColorCacheFromDisk();
+
+            // Restore loop mode UI
+            UpdateLoopUI();
+
+            // Restore persisted volume so it survives across sessions
+            try
+            {
+                double savedVol = Math.Clamp(ThemeManager.Volume, 0, 100);
+                VolumeSlider.Value = savedVol;
+                if (NpVolumeSlider != null) NpVolumeSlider.Value = savedVol;
+                _player.Volume = (float)(savedVol / 100.0);
+            }
+            catch { /* slider not yet initialized — defaults will apply */ }
+
+            // Main color match is restored via ApplyMainColorMatch on track change
+
             // Initialize Discord Rich Presence
             if (ThemeManager.DiscordRpcEnabled && !string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
             {
@@ -306,22 +447,7 @@ namespace AudioQualityChecker
             // Animation occlusion pause
             this.Activated += OnWindowActivated;
             this.Deactivated += OnWindowDeactivated;
-            this.StateChanged += (s, args) =>
-            {
-                if (WindowState == WindowState.Minimized && !_isPausedForOcclusion)
-                {
-                    _isPausedForOcclusion = true;
-                    PauseAnimations();
-                }
-                else if (WindowState != WindowState.Minimized && _isPausedForOcclusion)
-                {
-                    _isPausedForOcclusion = false;
-                    ResumeAnimations();
-                }
-                // Re-apply NP layout margins for fullscreen vs normal
-                if (_npVisible)
-                    NpApplyVizPlacement();
-            };
+            this.StateChanged += OnWindowStateChanged;
 
             // Initialize footer support link visibility
             InitializeFooterSupport();
@@ -346,21 +472,11 @@ namespace AudioQualityChecker
             AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
             AudioAnalyzer.EnableRipQuality = ThemeManager.RipQualityEnabled;
 
-            // Feature config popup — shown once per app version on first install or update
-            {
-                string currentVersion = System.Reflection.Assembly.GetExecutingAssembly()
-                    .GetName().Version is { } cv ? $"{cv.Major}.{cv.Minor}.{cv.Build}" : "0.0.0";
-                if (ThemeManager.FeatureConfigVersion != currentVersion)
-                {
-                    Dispatcher.InvokeAsync(() =>
-                    {
-                        FcChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
-                        FcChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
-                        FcChkRipQuality.IsChecked = ThemeManager.RipQualityEnabled;
-                        ShowFeatureConfigOverlay();
-                    }, DispatcherPriority.Loaded);
-                }
-            }
+            // Feature config overlay is still available via Settings but no longer shown automatically.
+            // WelcomeDialog (above) now handles first-run and version-update feature configuration.
+
+            // Reflect offline mode in UI badge
+            Dispatcher.InvokeAsync(UpdateOfflineBadge, DispatcherPriority.Loaded);
 
             // Silent update check on startup
             if (ThemeManager.CheckForUpdates)
@@ -374,7 +490,7 @@ namespace AudioQualityChecker
                         bool hasUpdate = await UpdateChecker.CheckForUpdateAsync(currentVersion);
                         if (hasUpdate && UpdateChecker.LatestVersion != null)
                         {
-                            Dispatcher.Invoke(() =>
+                            Dispatcher.InvokeAsync(() =>
                             {
                                 UpdateLatestText.Text = $"AudioAuditor v{UpdateChecker.LatestVersion} is available!";
                                 UpdateCurrentText.Text = $"You're currently on v{currentVersion}";
@@ -385,6 +501,109 @@ namespace AudioQualityChecker
                     catch { /* silently ignore update check failures */ }
                 });
             }
+        }
+
+        // ── System tray setup ──
+        // ── Dark-themed tray context menu color table ──
+        private class DarkColorTable : System.Windows.Forms.ProfessionalColorTable
+        {
+            private readonly System.Drawing.Color _bg = System.Drawing.Color.FromArgb(30, 30, 46);      // PanelBg-ish
+            private readonly System.Drawing.Color _hover = System.Drawing.Color.FromArgb(58, 58, 74);   // ButtonBg-ish
+            private readonly System.Drawing.Color _accent = System.Drawing.Color.FromArgb(88, 101, 242); // AccentColor-ish
+            private readonly System.Drawing.Color _text = System.Drawing.Color.FromArgb(224, 224, 224);  // TextPrimary-ish
+            private readonly System.Drawing.Color _border = System.Drawing.Color.FromArgb(58, 58, 74);   // ButtonBorder-ish
+
+            public override System.Drawing.Color MenuBorder => _border;
+            public override System.Drawing.Color MenuItemBorder => System.Drawing.Color.Transparent;
+            public override System.Drawing.Color MenuItemSelected => _hover;
+            public override System.Drawing.Color MenuItemSelectedGradientBegin => _hover;
+            public override System.Drawing.Color MenuItemSelectedGradientEnd => _hover;
+            public override System.Drawing.Color MenuItemPressedGradientBegin => _accent;
+            public override System.Drawing.Color MenuItemPressedGradientEnd => _accent;
+            public override System.Drawing.Color ToolStripDropDownBackground => _bg;
+            public override System.Drawing.Color ImageMarginGradientBegin => _bg;
+            public override System.Drawing.Color ImageMarginGradientEnd => _bg;
+            public override System.Drawing.Color ImageMarginGradientMiddle => _bg;
+            public override System.Drawing.Color SeparatorDark => _border;
+            public override System.Drawing.Color SeparatorLight => _border;
+        }
+
+        private void InitializeTrayIcon()
+        {
+            if (_trayIcon != null) return;
+
+            _trayIcon = new System.Windows.Forms.NotifyIcon
+            {
+                Icon = new System.Drawing.Icon(
+                    System.Windows.Application.GetResourceStream(
+                        new Uri("pack://application:,,,/Resources/app.ico"))!.Stream),
+                Text = "AudioAuditor",
+                Visible = false
+            };
+
+            _trayIcon.DoubleClick += (_, _) => RestoreFromTray();
+
+            var menu = new System.Windows.Forms.ContextMenuStrip
+            {
+                Renderer = new System.Windows.Forms.ToolStripProfessionalRenderer(new DarkColorTable()),
+                BackColor = System.Drawing.Color.FromArgb(30, 30, 46),
+                ForeColor = System.Drawing.Color.FromArgb(224, 224, 224),
+                ShowImageMargin = false
+            };
+            menu.Items.Add("Show AudioAuditor", null, (_, _) => RestoreFromTray());
+            menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+            menu.Items.Add("Exit", null, (_, _) =>
+            {
+                _forceClose = true;
+                _trayIcon.Visible = false;
+                _trayIcon.Dispose();
+                _trayIcon = null;
+                Close();
+            });
+            _trayIcon.ContextMenuStrip = menu;
+        }
+
+        private void RestoreFromTray()
+        {
+            Show();
+            WindowState = WindowState.Normal;
+            Activate();
+            if (_trayIcon != null) _trayIcon.Visible = false;
+
+            // Re-apply theme and color-match after tray restore
+            ApplyThemeTitleBar();
+            ResumeAnimations();
+            if (_npColorMatchEnabled && _player.CurrentFile != null)
+                NpApplyColorMatchMode();
+        }
+
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            if (ThemeManager.CloseToTray && !_forceClose)
+            {
+                try
+                {
+                    e.Cancel = true;
+                    InitializeTrayIcon();
+                    _trayIcon!.Visible = true;
+                    PauseAnimations();
+                    Hide();
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    // If tray icon initialization fails, show error and fall through to normal close.
+                    MessageBox.Show(
+                        $"Could not minimize to system tray:\n{ex.Message}\n\nThe app will close normally.",
+                        "System Tray Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    e.Cancel = false;
+                }
+            }
+
+            _trayIcon?.Dispose();
+            base.OnClosing(e);
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -400,10 +619,10 @@ namespace AudioQualityChecker
             // Initialize SMTC for media overlay integration (FluentFlyout, etc.)
             _smtc = new SmtcService();
             _smtc.Initialize(hwnd);
-            _smtc.PlayRequested += (_, _) => Dispatcher.Invoke(() => { if (_player.IsPaused) _player.Resume(); });
-            _smtc.PauseRequested += (_, _) => Dispatcher.Invoke(() => { if (_player.IsPlaying) _player.Pause(); });
-            _smtc.NextRequested += (_, _) => Dispatcher.Invoke(() => NextTrack_Click(this, new RoutedEventArgs()));
-            _smtc.PreviousRequested += (_, _) => Dispatcher.Invoke(() => PrevTrack_Click(this, new RoutedEventArgs()));
+            _smtc.PlayRequested += (_, _) => Dispatcher.InvokeAsync(() => { if (_player.IsPaused) _player.Resume(); });
+            _smtc.PauseRequested += (_, _) => Dispatcher.InvokeAsync(() => { if (_player.IsPlaying) _player.Pause(); });
+            _smtc.NextRequested += (_, _) => Dispatcher.InvokeAsync(() => NextTrack_Click(this, new RoutedEventArgs()));
+            _smtc.PreviousRequested += (_, _) => Dispatcher.InvokeAsync(() => PrevTrack_Click(this, new RoutedEventArgs()));
         }
 
         private const int WM_MOUSEHWHEEL = 0x020E;
@@ -452,10 +671,24 @@ namespace AudioQualityChecker
             _playerTimer.Stop();
             _donationTimer?.Stop();
             _occlusionCheckTimer?.Stop();
+
+            this.Activated -= OnWindowActivated;
+            this.Deactivated -= OnWindowDeactivated;
+            this.StateChanged -= OnWindowStateChanged;
+            CompositionTarget.Rendering -= WaveformAnimation_Tick;
+            CompositionTarget.Rendering -= Visualizer_Tick;
+            if (_occlusionCheckTimer != null) _occlusionCheckTimer.Tick -= OcclusionCheckTimer_Tick;
+            if (_vizCycleTimer != null) _vizCycleTimer.Tick -= VizCycleTimer_Tick;
+            if (_npUpdateTimer != null) _npUpdateTimer.Tick -= NpUpdateTimer_Tick;
+            if (_npBgAnimTimer != null) _npBgAnimTimer.Tick -= NpBgAnim_Tick;
+            if (_npGlowPulseTimer != null) _npGlowPulseTimer.Tick -= NpGlowPulse_Tick;
+            NpLayoutPopup.Closed -= NpLayoutPopup_Closed;
+
             _player.Dispose();
             _discord.Dispose();
             _lastFm.Dispose();
             _smtc?.Dispose();
+            SaveNpColorCacheToDisk();
             base.OnClosed(e);
         }
 
@@ -545,21 +778,19 @@ namespace AudioQualityChecker
                 string header = col.Header?.ToString() ?? "";
 
                 // Feature-disabled columns should always be hidden
-                if (header.StartsWith("Rip Quality") && !ThemeManager.RipQualityEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "Rip Quality" && !ThemeManager.RipQualityEnabled) { col.Visibility = Visibility.Collapsed; continue; }
                 if (header == "DR" && !ThemeManager.DynamicRangeEnabled) { col.Visibility = Visibility.Collapsed; continue; }
                 if (header == "True Peak" && !ThemeManager.TruePeakEnabled) { col.Visibility = Visibility.Collapsed; continue; }
                 if (header == "LUFS" && !ThemeManager.LufsEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header.StartsWith("Clipping") && !ThemeManager.ClippingDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "Clipping" && !ThemeManager.ClippingDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
                 if (header == "MQA" && !ThemeManager.MqaDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
                 if (header == "AI" && !ThemeManager.DefaultAiDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
                 if (header == "Silence" && !ThemeManager.SilenceDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
                 if (header == "Fake Stereo" && !ThemeManager.FakeStereoDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
+                if (header == "BPM" && !ThemeManager.BpmDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
 
-                // Check if user has hidden this column (handle "Rip Quality" matching "Rip Quality (Experimental)")
+                // Check if user has hidden this column
                 bool isHidden = hidden.Contains(header);
-                if (!isHidden && header.StartsWith("Rip Quality"))
-                    isHidden = hidden.Contains("Rip Quality");
-
                 col.Visibility = isHidden ? Visibility.Collapsed : Visibility.Visible;
             }
         }
@@ -573,6 +804,8 @@ namespace AudioQualityChecker
         private void ShowAllColumns()
         {
             _sessionHiddenColumns.Clear();
+            ThemeManager.HiddenColumns = "";
+            ThemeManager.SavePlayOptions();
             ApplyColumnVisibility();
         }
 
@@ -734,12 +967,14 @@ namespace AudioQualityChecker
         private void ClearAll_Click(object sender, RoutedEventArgs e)
         {
             // Cancel any in-progress analysis so pending files stop loading
+            _analysisPauseEvent.Set(); // unblock paused tasks so they can observe cancellation
             _analysisCts?.Cancel();
             _isAnalyzing = false;
             _activeBatches = 0;
             _analysisTotal = 0;
             _analysisCompleted = 0;
             AnalysisProgressPanel.Visibility = Visibility.Collapsed;
+            AnalysisPauseButton.Visibility = Visibility.Collapsed;
 
             _player.Stop();
             _playerTimer.Stop();
@@ -766,6 +1001,28 @@ namespace AudioQualityChecker
             // Force a GC to release spectrogram bitmaps and audio data from memory
             GC.Collect();
             GC.WaitForPendingFinalizers();
+        }
+
+        private void AnalysisPause_Click(object sender, RoutedEventArgs e)
+        {
+            if (_analysisPauseEvent.IsSet)
+            {
+                // Currently running → pause
+                _analysisPauseEvent.Reset();
+                AnalysisPauseButton.Content = "▶";
+                AnalysisPauseButton.ToolTip = "Resume scanning";
+                int c = _analysisCompleted, t = _analysisTotal;
+                StatusText.Text = $"Pausing after current file(s)… {c} / {t}";
+            }
+            else
+            {
+                // Currently paused → resume
+                _analysisPauseEvent.Set();
+                AnalysisPauseButton.Content = "⏸";
+                AnalysisPauseButton.ToolTip = "Pause scanning";
+                int c = _analysisCompleted, t = _analysisTotal;
+                StatusText.Text = $"Analyzing {c} / {t} files...";
+            }
         }
 
         // ═══════════════════════════════════════════
@@ -860,7 +1117,7 @@ namespace AudioQualityChecker
                 {
                     try
                     {
-                        string tempDir = IOPath.Combine(IOPath.GetTempPath(), "AudioAuditor_" + Guid.NewGuid().ToString("N")[..8]);
+                        string tempDir = IOPath.Combine(IOPath.GetTempPath(), "AudioAuditor_" + Guid.NewGuid().ToString("N"));
                         Directory.CreateDirectory(tempDir);
 
                         if (ext.Equals(".zip", StringComparison.OrdinalIgnoreCase))
@@ -871,8 +1128,14 @@ namespace AudioQualityChecker
                         {
                             // Use SharpCompress for RAR, 7z, tar, gz, etc.
                             using var archive = ArchiveFactory.Open(path);
-                            foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
+                            string safeBase = Path.GetFullPath(tempDir) + Path.DirectorySeparatorChar;
+                            foreach (var entry in archive.Entries.Where(e => !e.IsDirectory && e.Key != null))
                             {
+                                // ZIP slip guard: skip entries that would escape tempDir
+                                string entryKey = entry.Key!.Replace('/', Path.DirectorySeparatorChar);
+                                string fullDest = Path.GetFullPath(Path.Combine(tempDir, entryKey));
+                                if (!fullDest.StartsWith(safeBase, StringComparison.OrdinalIgnoreCase))
+                                    continue;
                                 entry.WriteToDirectory(tempDir, new ExtractionOptions
                                 {
                                     ExtractFullPath = true,
@@ -905,7 +1168,10 @@ namespace AudioQualityChecker
 
             // Deduplicate against already-loaded files
             var existing = new HashSet<string>(_files.Select(f => f.FilePath), StringComparer.OrdinalIgnoreCase);
-            var newPaths = filePaths.Where(p => !existing.Contains(p)).ToArray();
+            var newPaths = filePaths
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(p => !existing.Contains(p))
+                .ToArray();
 
             if (newPaths.Length == 0) return;
 
@@ -981,6 +1247,10 @@ namespace AudioQualityChecker
                 _shLabsSemaphore = new SemaphoreSlim(3);
                 _isAnalyzing = true;
                 AnalysisProgressPanel.Visibility = Visibility.Visible;
+                AnalysisPauseButton.Visibility = Visibility.Visible;
+                AnalysisPauseButton.Content = "⏸";
+                _analysisPauseEvent.Set(); // ensure not paused from previous run
+                AudioAnalyzer.PauseEvent = _analysisPauseEvent;
                 AnalysisProgress.Value = 0;
                 AnalysisEtaText.Text = "";
             }
@@ -995,193 +1265,228 @@ namespace AudioQualityChecker
             var semaphore = _analysisSemaphore!;
             var shLabsSemaphore = _shLabsSemaphore!;
 
-            var tasks = newPaths.Select(async path =>
+            try
             {
-                AudioFileInfo? info = null;
-                bool acquired = false;
-
-                // ── Check scan cache first ──
-                if (ThemeManager.ScanCacheEnabled)
+                // Process in chunks to avoid creating 100k+ Task objects simultaneously.
+                // The semaphore still caps concurrent execution; chunking caps task allocation.
+                const int ChunkSize = 500;
+                for (int _chunkStart = 0; _chunkStart < newPaths.Length; _chunkStart += ChunkSize)
                 {
+                    if (ct.IsCancellationRequested) break;
+                    var chunk = newPaths.Skip(_chunkStart).Take(ChunkSize).ToArray();
+                    var chunkTasks = chunk.Select(async path =>
+                    {
+                    AudioFileInfo? info = null;
+                    bool acquired = false;
+
+                    // ── Check scan cache first ──
+                    if (ThemeManager.ScanCacheEnabled)
+                    {
+                        try
+                        {
+                            var fi = new System.IO.FileInfo(path);
+                            if (fi.Exists && ScanCacheService.TryGet(path, fi.Length, fi.LastWriteTimeUtc, out var cached) && cached != null)
+                            {
+                                var count = Interlocked.Increment(ref _analysisCompleted);
+                                await Dispatcher.InvokeAsync(() =>
+                                {
+                                    _files.Add(cached);
+                                    int t = _analysisTotal;
+                                    AnalysisProgress.Maximum = t;
+                                    StatusText.Text = $"Analyzed {count} / {t} files...";
+                                    AnalysisProgress.Value = count;
+                                    UpdateAnalysisEta(count, t);
+                                });
+                                return;
+                            }
+                        }
+                        catch { /* cache miss — fall through to normal analysis */ }
+                    }
+
                     try
                     {
-                        var fi = new System.IO.FileInfo(path);
-                        if (fi.Exists && ScanCacheService.TryGet(path, fi.Length, fi.LastWriteTimeUtc, out var cached) && cached != null)
-                        {
-                            var count = Interlocked.Increment(ref _analysisCompleted);
-                            await Dispatcher.InvokeAsync(() =>
-                            {
-                                _files.Add(cached);
-                                int t = _analysisTotal;
-                                AnalysisProgress.Maximum = t;
-                                StatusText.Text = $"Analyzed {count} / {t} files...";
-                                AnalysisProgress.Value = count;
-                                UpdateAnalysisEta(count, t);
-                            });
-                            return;
-                        }
-                    }
-                    catch { /* cache miss — fall through to normal analysis */ }
-                }
+                        // Wait if analysis is paused
+                        _analysisPauseEvent.Wait(ct);
+                        await semaphore.WaitAsync(ct);
+                        acquired = true;
+                        ct.ThrowIfCancellationRequested();
+                        // Wait if memory usage exceeds configured limit
+                        await ThemeManager.WaitForMemoryAsync();
+                        ct.ThrowIfCancellationRequested();
 
-                try
-                {
-                    await semaphore.WaitAsync(ct);
-                    acquired = true;
-                    ct.ThrowIfCancellationRequested();
-                    // Wait if memory usage exceeds configured limit
-                    await ThemeManager.WaitForMemoryAsync();
-                    ct.ThrowIfCancellationRequested();
-                    info = await Task.Run(() =>
-                    {
-                        // Lower thread priority to reduce CPU spikes during analysis
-                        Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
-                        try { return AudioAnalyzer.AnalyzeFile(path); }
-                        finally { Thread.CurrentThread.Priority = ThreadPriority.Normal; }
-                    }, ct);
-                    ct.ThrowIfCancellationRequested();
-                }
-                catch (OperationCanceledException) { return; }
-                catch
-                {
-                    var errCount = Interlocked.Increment(ref _analysisCompleted);
-                    if (!ct.IsCancellationRequested)
-                    {
-                        await Dispatcher.InvokeAsync(() =>
+                        // Per-file timeout: a hung TagLib or NAudio call cannot stall the scan forever
+                        var analysisTask = Task.Run(() => AudioAnalyzer.AnalyzeFile(path, ct), ct);
+                        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120));
+                        var winner = await Task.WhenAny(analysisTask, timeoutTask);
+                        if (winner == timeoutTask)
                         {
-                            _files.Add(new AudioFileInfo
+                            info = new AudioFileInfo
                             {
                                 FilePath = path,
                                 FileName = IOPath.GetFileName(path),
                                 FolderPath = IOPath.GetDirectoryName(path) ?? "",
                                 Extension = IOPath.GetExtension(path).ToLowerInvariant(),
                                 Status = AudioStatus.Corrupt,
-                                ErrorMessage = "Failed to open or analyze"
-                            });
-                            int t = _analysisTotal;
-                            AnalysisProgress.Maximum = t;
-                            AnalysisProgress.Value = errCount;
-                            StatusText.Text = $"Analyzed {errCount} / {t} files...";
-                            UpdateAnalysisEta(errCount, t);
-                        });
-                    }
-                    return;
-                }
-                finally
-                {
-                    if (acquired) semaphore.Release();
-                }
-
-                // ── SH Labs detection (runs outside analysis semaphore to avoid blocking local analysis) ──
-                if (info != null && shLabsTargets != null && shLabsTargets.Contains(path))
-                {
-                    try
-                    {
-                        await shLabsSemaphore.WaitAsync(ct);
-                        try
-                        {
-                            var shResult = await SHLabsDetectionService.AnalyzeAsync(path, ct);
-                            if (shResult != null)
-                            {
-                                info.SHLabsScanned = true;
-                                info.SHLabsPrediction = shResult.Prediction;
-                                info.SHLabsProbability = shResult.Probability;
-                                info.SHLabsConfidence = shResult.Confidence;
-                                info.SHLabsAiType = shResult.MostLikelyAiType;
-                            }
+                                ErrorMessage = "Analysis timed out (file may be corrupt)"
+                            };
                         }
-                        finally { shLabsSemaphore.Release(); }
+                        else
+                        {
+                            info = await analysisTask;
+                        }
+                        ct.ThrowIfCancellationRequested();
                     }
                     catch (OperationCanceledException) { return; }
-                    catch { /* SH Labs failure is non-fatal — other detectors still ran */ }
-                }
-
-                if (info != null)
-                {
-                    // Cache the result for future use
-                    if (ThemeManager.ScanCacheEnabled)
+                    catch
                     {
-                        try { ScanCacheService.Set(info); } catch { }
+                        var errCount = Interlocked.Increment(ref _analysisCompleted);
+                        if (!ct.IsCancellationRequested)
+                        {
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                _files.Add(new AudioFileInfo
+                                {
+                                    FilePath = path,
+                                    FileName = IOPath.GetFileName(path),
+                                    FolderPath = IOPath.GetDirectoryName(path) ?? "",
+                                    Extension = IOPath.GetExtension(path).ToLowerInvariant(),
+                                    Status = AudioStatus.Corrupt,
+                                    ErrorMessage = "Failed to open or analyze"
+                                });
+                                int t = _analysisTotal;
+                                AnalysisProgress.Maximum = t;
+                                AnalysisProgress.Value = errCount;
+                                StatusText.Text = $"Analyzed {errCount} / {t} files...";
+                                UpdateAnalysisEta(errCount, t);
+                            });
+                        }
+                        return;
+                    }
+                    finally
+                    {
+                        if (acquired) semaphore.Release();
                     }
 
-                    await Dispatcher.InvokeAsync(() =>
+                    // ── SH Labs detection (runs outside analysis semaphore to avoid blocking local analysis) ──
+                    if (info != null && shLabsTargets != null && shLabsTargets.Contains(path))
                     {
-                        _files.Add(info);
-                        var count = Interlocked.Increment(ref _analysisCompleted);
-                        int t = _analysisTotal;
-                        AnalysisProgress.Maximum = t;
-                        StatusText.Text = $"Analyzed {count} / {t} files...";
-                        AnalysisProgress.Value = count;
-                        UpdateAnalysisEta(count, t);
+                        try
+                        {
+                            await shLabsSemaphore.WaitAsync(ct);
+                            try
+                            {
+                                var shResult = await SHLabsDetectionService.AnalyzeAsync(path, ct);
+                                if (shResult != null)
+                                {
+                                    info.SHLabsScanned = true;
+                                    info.SHLabsPrediction = shResult.Prediction;
+                                    info.SHLabsProbability = shResult.Probability;
+                                    info.SHLabsConfidence = shResult.Confidence;
+                                    info.SHLabsAiType = shResult.MostLikelyAiType;
+                                }
+                            }
+                            finally { shLabsSemaphore.Release(); }
+                        }
+                        catch (OperationCanceledException) { /* SH Labs cancelled — file still added below */ }
+                        catch { /* SH Labs failure is non-fatal — other detectors still ran */ }
+                    }
+
+                    if (info != null && !ct.IsCancellationRequested)
+                    {
+                        // Cache the result for future use
+                        if (ThemeManager.ScanCacheEnabled)
+                        {
+                            try { ScanCacheService.Set(info); } catch { }
+                        }
+
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            _files.Add(info);
+                            var count = Interlocked.Increment(ref _analysisCompleted);
+                            int t = _analysisTotal;
+                            AnalysisProgress.Maximum = t;
+                            StatusText.Text = $"Analyzed {count} / {t} files...";
+                            AnalysisProgress.Value = count;
+                            UpdateAnalysisEta(count, t);
+                        });
+                    }
                     });
-                }
-            });
 
-            try { await Task.WhenAll(tasks); } catch (OperationCanceledException) { }
+                    try { await Task.WhenAll(chunkTasks); } catch (OperationCanceledException) { break; }
+                } // end chunk loop
 
-            // Save scan cache to disk after batch completes
-            if (ThemeManager.ScanCacheEnabled)
-            {
-                try { await Task.Run(() => ScanCacheService.SaveToDisk()); } catch { }
-            }
-
-            // ── Create virtual tracks from cue sheets ──
-            foreach (var (audioPath, sheet) in cueEntries)
-            {
-                // Find the analyzed parent file
-                var parent = _files.FirstOrDefault(f => f.FilePath.Equals(audioPath, StringComparison.OrdinalIgnoreCase));
-                if (parent == null) continue;
-
-                foreach (var track in sheet.Tracks)
+                // Save scan cache to disk after batch completes
+                if (ThemeManager.ScanCacheEnabled)
                 {
-                    var endTime = track.EndTime > TimeSpan.Zero ? track.EndTime : TimeSpan.FromSeconds(parent.DurationSeconds);
-                    var duration = endTime - track.StartTime;
-                    if (duration.TotalSeconds <= 0) continue;
+                    try { await Task.Run(() => ScanCacheService.SaveToDisk()); } catch { }
+                }
 
-                    string trackId = $"{audioPath}#CUE{track.TrackNumber}";
-                    if (existing.Contains(trackId)) continue;
+                // ── Create virtual tracks from cue sheets ──
+                foreach (var (audioPath, sheet) in cueEntries)
+                {
+                    // Find the analyzed parent file
+                    var parent = _files.FirstOrDefault(f => f.FilePath.Equals(audioPath, StringComparison.OrdinalIgnoreCase));
+                    if (parent == null) continue;
 
-                    var virtual_ = new AudioFileInfo
+                    foreach (var track in sheet.Tracks)
                     {
-                        FilePath = trackId,
-                        FileName = $"[{track.TrackNumber:D2}] {(string.IsNullOrEmpty(track.Title) ? IOPath.GetFileNameWithoutExtension(audioPath) : track.Title)}",
-                        FolderPath = parent.FolderPath,
-                        Title = track.Title,
-                        Artist = !string.IsNullOrEmpty(track.Performer) ? track.Performer : parent.Artist,
-                        Extension = parent.Extension,
-                        SampleRate = parent.SampleRate,
-                        BitsPerSample = parent.BitsPerSample,
-                        Channels = parent.Channels,
-                        ReportedBitrate = parent.ReportedBitrate,
-                        ActualBitrate = parent.ActualBitrate,
-                        EffectiveFrequency = parent.EffectiveFrequency,
-                        Duration = duration.TotalHours >= 1
-                            ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
-                            : $"{duration.Minutes}:{duration.Seconds:D2}",
-                        DurationSeconds = duration.TotalSeconds,
-                        FileSize = parent.FileSize,
-                        FileSizeBytes = parent.FileSizeBytes,
-                        DateModified = parent.DateModified,
-                        DateCreated = parent.DateCreated,
-                        Status = parent.Status,
-                        IsCueVirtualTrack = true,
-                        CueSheetPath = sheet.AudioFilePath,
-                        CueTrackNumber = track.TrackNumber,
-                        CueStartTime = track.StartTime,
-                        CueEndTime = endTime,
-                    };
-                    _files.Add(virtual_);
+                        var endTime = track.EndTime > TimeSpan.Zero ? track.EndTime : TimeSpan.FromSeconds(parent.DurationSeconds);
+                        var duration = endTime - track.StartTime;
+                        if (duration.TotalSeconds <= 0) continue;
+
+                        string trackId = $"{audioPath}#CUE{track.TrackNumber}";
+                        if (existing.Contains(trackId)) continue;
+
+                        var virtual_ = new AudioFileInfo
+                        {
+                            FilePath = trackId,
+                            FileName = $"[{track.TrackNumber:D2}] {(string.IsNullOrEmpty(track.Title) ? IOPath.GetFileNameWithoutExtension(audioPath) : track.Title)}",
+                            FolderPath = parent.FolderPath,
+                            Title = track.Title,
+                            Artist = !string.IsNullOrEmpty(track.Performer) ? track.Performer : parent.Artist,
+                            Extension = parent.Extension,
+                            SampleRate = parent.SampleRate,
+                            BitsPerSample = parent.BitsPerSample,
+                            Channels = parent.Channels,
+                            ReportedBitrate = parent.ReportedBitrate,
+                            ActualBitrate = parent.ActualBitrate,
+                            EffectiveFrequency = parent.EffectiveFrequency,
+                            Duration = duration.TotalHours >= 1
+                                ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
+                                : $"{duration.Minutes}:{duration.Seconds:D2}",
+                            DurationSeconds = duration.TotalSeconds,
+                            FileSize = parent.FileSize,
+                            FileSizeBytes = parent.FileSizeBytes,
+                            DateModified = parent.DateModified,
+                            DateCreated = parent.DateCreated,
+                            Status = parent.Status,
+                            IsCueVirtualTrack = true,
+                            CueSheetPath = sheet.AudioFilePath,
+                            CueTrackNumber = track.TrackNumber,
+                            CueStartTime = track.StartTime,
+                            CueEndTime = endTime,
+                        };
+                        _files.Add(virtual_);
+                    }
                 }
             }
-
-            if (Interlocked.Decrement(ref _activeBatches) == 0)
+            finally
             {
-                _isAnalyzing = false;
-                AnalysisProgressPanel.Visibility = Visibility.Collapsed;
-                AnalysisEtaText.Text = "";
+                if (Interlocked.Decrement(ref _activeBatches) == 0)
+                {
+                    _isAnalyzing = false;
+                    AudioAnalyzer.PauseEvent = null;
+                    AnalysisProgressPanel.Visibility = Visibility.Collapsed;
+                    AnalysisPauseButton.Visibility = Visibility.Collapsed;
+                    AnalysisEtaText.Text = "";
 
-                UpdateStatusSummary();
-                ScheduleDonationPopup();
+                    // Apply saved favorites to all loaded files, then sort favorites to top
+                    FavoritesService.Apply(_files);
+                    RefreshFavoriteSort();
+
+                    UpdateStatusSummary();
+                    ScheduleDonationPopup();
+                }
             }
         }
 
@@ -1294,6 +1599,107 @@ namespace AudioQualityChecker
         private void UpdateDismiss_Click(object sender, RoutedEventArgs e)
         {
             UpdateOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private async void UpdateDownloadInstall_Click(object sender, RoutedEventArgs e)
+        {
+            if (UpdateChecker.LatestDownloadUrl == null) return;
+
+            BtnUpdateDownloadInstall.IsEnabled = false;
+            BtnUpdateOpenBrowser.IsEnabled = false;
+            UpdateProgressPanel.Visibility = Visibility.Visible;
+            UpdateProgressText.Visibility = Visibility.Visible;
+            UpdateProgressText.Text = "Downloading update…";
+
+            string tempExe = Path.Combine(Path.GetTempPath(), "AudioAuditor_Update.exe");
+            var progress = new Progress<double>(p =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    UpdateProgressBar.Width = UpdateProgressPanel.ActualWidth * p;
+                    UpdateProgressText.Text = $"Downloading… {p * 100:0}%";
+                });
+            });
+
+            bool downloaded = await UpdateChecker.DownloadAssetAsync(tempExe, progress);
+            if (!downloaded)
+            {
+                UpdateProgressText.Text = "Download failed. Try opening in browser.";
+                BtnUpdateDownloadInstall.IsEnabled = true;
+                BtnUpdateOpenBrowser.IsEnabled = true;
+                return;
+            }
+
+            UpdateProgressText.Text = "Verifying download…";
+            bool verified = await UpdateChecker.VerifySha256Async(tempExe);
+            if (!verified)
+            {
+                // SHA256 verification failed — warn but still allow install
+                var result = MessageBox.Show(
+                    "The downloaded file could not be verified against the published SHA256 hash.\n\n" +
+                    "This may happen if the release was just published. You can still install, but it's safer to download from GitHub directly.\n\n" +
+                    "Install anyway?",
+                    "AudioAuditor — Verification Warning",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+                if (result != MessageBoxResult.Yes)
+                {
+                    UpdateProgressPanel.Visibility = Visibility.Collapsed;
+                    UpdateProgressText.Visibility = Visibility.Collapsed;
+                    BtnUpdateDownloadInstall.IsEnabled = true;
+                    BtnUpdateOpenBrowser.IsEnabled = true;
+                    return;
+                }
+            }
+
+            UpdateProgressText.Text = "Preparing to restart…";
+
+            string currentExe = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "";
+            if (string.IsNullOrEmpty(currentExe))
+            {
+                MessageBox.Show("Could not determine the current executable path. Please update manually.",
+                    "AudioAuditor — Update Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                UpdateOverlay.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            // Write a tiny batch script that waits for this process to exit,
+            // copies the new exe over the old one, then restarts.
+            string updaterBat = Path.Combine(Path.GetTempPath(), "AudioAuditor_Updater.bat");
+            string quotedCurrent = "\"" + currentExe.Replace("\"", "\\\"") + "\"";
+            string quotedTemp = "\"" + tempExe.Replace("\"", "\\\"") + "\"";
+            string batch = $@"@echo off
+chcp 65001 >nul
+title AudioAuditor Updater
+echo Waiting for AudioAuditor to close...
+:waitloop
+tasklist | findstr /I /C:""AudioAuditor"" >nul
+if %errorlevel% == 0 (
+    timeout /t 1 /nobreak >nul
+    goto waitloop
+)
+echo Installing update...
+copy /Y {quotedTemp} {quotedCurrent}
+if %errorlevel% neq 0 (
+    echo Update failed. Please download manually from GitHub.
+    pause
+    exit /b 1
+)
+echo Starting AudioAuditor...
+start "" {quotedCurrent}
+exit
+";
+            File.WriteAllText(updaterBat, batch);
+
+            // Launch the updater and exit
+            Process.Start(new ProcessStartInfo(updaterBat)
+            {
+                UseShellExecute = true,
+                CreateNoWindow = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+
+            Application.Current.Shutdown();
         }
 
         // ═══════════════════════════════════════════
@@ -1598,21 +2004,53 @@ namespace AudioQualityChecker
                 SpectrogramPanel.Visibility = Visibility.Collapsed;
             }
 
+            // Debounce: if a double-click happens within 200ms, skip spectrogram (user wants to play)
+            var fileAtSelection = selectedFile;
+            await Task.Delay(200);
+            if (FileGrid.SelectedItem != fileAtSelection) return;
+            if (DateTime.Now - _lastDoubleClickTime < TimeSpan.FromMilliseconds(300)) return;
+
             try
             {
-                // Serialize spectrogram generation to prevent concurrent file access
-                await _spectrogramSemaphore.WaitAsync(token);
+                // Check in-memory spectrogram cache first
+                string spectCacheKey = $"{fileAtSelection.FilePath}|{_spectrogramLinearScale}|{_spectrogramChannel}|{ThemeManager.SpectrogramMagmaColormap}|{ThemeManager.SpectrogramHiFiMode}|{_spectrogramEndZoom}";
                 BitmapSource? bitmap;
-                try
+                if (_spectrogramCache.TryGetValue(spectCacheKey, out var cachedBitmap))
                 {
-                    bitmap = await Task.Run(() =>
-                        SpectrogramGenerator.Generate(selectedFile.FilePath, 1200, 400,
-                            _spectrogramLinearScale, _spectrogramChannel,
-                            _spectrogramEndZoom ? 10 : 0), token);
+                    bitmap = cachedBitmap;
+                    // Bump to most-recently-used
+                    _spectrogramCacheLru.Remove(spectCacheKey);
+                    _spectrogramCacheLru.AddLast(spectCacheKey);
                 }
-                finally
+                else
                 {
-                    _spectrogramSemaphore.Release();
+                    // Serialize spectrogram generation to prevent concurrent file access
+                    await _spectrogramSemaphore.WaitAsync(token);
+                    try
+                    {
+                        bitmap = await Task.Run(() =>
+                            SpectrogramGenerator.Generate(selectedFile.FilePath, 1200, 400,
+                                _spectrogramLinearScale, _spectrogramChannel,
+                                _spectrogramEndZoom ? 10 : 0,
+                                ThemeManager.SpectrogramHiFiMode,
+                                ThemeManager.SpectrogramMagmaColormap,
+                                token), token);
+                    }
+                    finally
+                    {
+                        _spectrogramSemaphore.Release();
+                    }
+                    if (bitmap != null)
+                    {
+                        // Store in cache with LRU eviction
+                        if (_spectrogramCacheLru.Count >= SpectrogramCacheMaxEntries)
+                        {
+                            string? oldest = _spectrogramCacheLru.First?.Value;
+                            if (oldest != null) { _spectrogramCache.Remove(oldest); _spectrogramCacheLru.RemoveFirst(); }
+                        }
+                        _spectrogramCache[spectCacheKey] = bitmap;
+                        _spectrogramCacheLru.AddLast(spectCacheKey);
+                    }
                 }
 
                 if (token.IsCancellationRequested) return;
@@ -1787,12 +2225,13 @@ namespace AudioQualityChecker
             }
             else if (FileGrid.SelectedItem is AudioFileInfo file2)
             {
-                PlayFile(file2);
+                PlayFile(file2, isManualSkip: true);
             }
         }
 
         private void Stop_Click(object sender, RoutedEventArgs e)
         {
+            _crossfadeEarlyTriggered = false;
             _player.Stop();
             _playerTimer.Stop();
             StopWaveformAnimation();
@@ -1809,6 +2248,7 @@ namespace AudioQualityChecker
             {
                 _player.SeekRelative(-5);
                 _lastSeekTime = DateTime.UtcNow;
+                _lastSeekTargetPosition = _player.CurrentPosition;
                 // Immediately update the UI slider to reflect new position
                 if (_player.TotalDuration.TotalSeconds > 0)
                     SeekSlider.Value = _player.CurrentPosition.TotalSeconds;
@@ -1822,6 +2262,7 @@ namespace AudioQualityChecker
             {
                 _player.SeekRelative(5);
                 _lastSeekTime = DateTime.UtcNow;
+                _lastSeekTargetPosition = _player.CurrentPosition;
                 // Immediately update the UI slider to reflect new position
                 if (_player.TotalDuration.TotalSeconds > 0)
                     SeekSlider.Value = _player.CurrentPosition.TotalSeconds;
@@ -1839,6 +2280,80 @@ namespace AudioQualityChecker
                 _shuffleDeckIndex = 0;
             }
             UpdateShuffleUI();
+        }
+
+        private void Loop_Click(object sender, RoutedEventArgs e)
+        {
+            CycleLoopMode();
+        }
+
+        private void CycleLoopMode()
+        {
+            ThemeManager.LoopMode = ThemeManager.LoopMode switch
+            {
+                LoopMode.Off => LoopMode.All,
+                LoopMode.All => LoopMode.One,
+                _ => LoopMode.Off
+            };
+            ThemeManager.SavePlayOptions();
+            UpdateLoopUI();
+        }
+
+        private void UpdateLoopUI()
+        {
+            var mode = ThemeManager.LoopMode;
+            var accent = (System.Windows.Media.Brush)FindResource("PlaybarAccentColor");
+            var muted = (System.Windows.Media.Brush)FindResource("TextMuted");
+            bool active = mode != LoopMode.Off;
+
+            if (LoopIcon != null)
+            {
+                LoopIcon.Stroke = active ? accent : muted;
+                LoopIcon.StrokeThickness = active ? 2.0 : 1.6;
+            }
+            if (LoopOneIndicator != null)
+            {
+                LoopOneIndicator.Visibility = mode == LoopMode.One ? Visibility.Visible : Visibility.Collapsed;
+                LoopOneIndicator.Foreground = accent;
+            }
+            if (BtnLoop != null)
+            {
+                string tip = mode switch { LoopMode.All => "Loop: All", LoopMode.One => "Loop: One", _ => "Loop: Off" };
+                BtnLoop.ToolTip = tip;
+                if (active && accent is System.Windows.Media.SolidColorBrush scb)
+                {
+                    var glowColor = scb.Color;
+                    glowColor.A = 40;
+                    BtnLoop.Background = new System.Windows.Media.SolidColorBrush(glowColor);
+                }
+                else
+                {
+                    BtnLoop.Background = System.Windows.Media.Brushes.Transparent;
+                }
+            }
+
+            // NP panel
+            NpUpdateLoopIcon();
+        }
+
+        private void NpUpdateLoopIcon()
+        {
+            if (NpLoopIcon == null) return;
+            var mode = ThemeManager.LoopMode;
+            var activeColor = NpGetIconBrush(true);
+            var inactiveColor = NpGetIconBrush(false);
+            bool active = mode != LoopMode.Off;
+            NpLoopIcon.Stroke = active ? activeColor : inactiveColor;
+            if (NpLoopOneIndicator != null)
+            {
+                NpLoopOneIndicator.Visibility = mode == LoopMode.One ? Visibility.Visible : Visibility.Collapsed;
+                NpLoopOneIndicator.Foreground = activeColor;
+            }
+            if (NpLoopBtn != null)
+            {
+                NpLoopBtn.ToolTip = mode switch { LoopMode.All => "Loop: All", LoopMode.One => "Loop: One", _ => "Loop: Off" };
+                NpSetToggleBg(NpLoopBtn, active);
+            }
         }
 
         private void UpdateShuffleUI()
@@ -1932,6 +2447,7 @@ namespace AudioQualityChecker
 
         private void PrevTrack_Click(object sender, RoutedEventArgs e)
         {
+            _crossfadeEarlyTriggered = false;
             var now = DateTime.UtcNow;
             bool isPlaying = _player.IsPlaying || _player.IsPaused;
 
@@ -1959,7 +2475,7 @@ namespace AudioQualityChecker
                 if (prevFile.Status != AudioStatus.Corrupt)
                 {
                     _navigatingHistory = true;
-                    PlayFile(prevFile);
+                    PlayFile(prevFile, isManualSkip: true);
                     _navigatingHistory = false;
                 }
                 return;
@@ -1982,11 +2498,12 @@ namespace AudioQualityChecker
             FileGrid.SelectedItem = prevListFile;
             FileGrid.ScrollIntoView(prevListFile);
             if (prevListFile.Status != AudioStatus.Corrupt)
-                PlayFile(prevListFile);
+                PlayFile(prevListFile, isManualSkip: true);
         }
 
         private void NextTrack_Click(object sender, RoutedEventArgs e)
         {
+            _crossfadeEarlyTriggered = false;
             // Check queue first
             if (_queue.Count > 0)
             {
@@ -1996,7 +2513,7 @@ namespace AudioQualityChecker
                 {
                     FileGrid.SelectedItem = nextFile;
                     FileGrid.ScrollIntoView(nextFile);
-                    PlayFile(nextFile);
+                    PlayFile(nextFile, isManualSkip: true);
                     return;
                 }
             }
@@ -2012,7 +2529,7 @@ namespace AudioQualityChecker
                     FileGrid.SelectedItem = candidate;
                     FileGrid.ScrollIntoView(candidate);
                     if (candidate.Status != AudioStatus.Corrupt)
-                        PlayFile(candidate);
+                        PlayFile(candidate, isManualSkip: true);
                 }
                 return;
             }
@@ -2030,12 +2547,19 @@ namespace AudioQualityChecker
             FileGrid.SelectedItem = nextInList;
             FileGrid.ScrollIntoView(nextInList);
             if (nextInList.Status != AudioStatus.Corrupt)
-                PlayFile(nextInList);
+                PlayFile(nextInList, isManualSkip: true);
         }
 
         private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             _player.Volume = (float)(VolumeSlider.Value / 100.0);
+            // Persist volume so it's restored across sessions. Skip the save while muted
+            // (mute writes 0 to the slider — we want the user's pre-mute level to survive).
+            if (!_isMuted)
+            {
+                ThemeManager.Volume = VolumeSlider.Value;
+                ThemeManager.SavePlayOptions();
+            }
             if (VolumeLabel != null)
                 VolumeLabel.Text = $"{(int)VolumeSlider.Value}%";
             if (VolumeIconPath != null)
@@ -2081,17 +2605,29 @@ namespace AudioQualityChecker
 
         private void SeekSlider_MouseUp(object sender, MouseButtonEventArgs e)
         {
+            // If thumb was being dragged, DragCompleted handles the seek — skip here
+            var thumb = FindVisualChild<System.Windows.Controls.Primitives.Thumb>(SeekSlider);
+            if (thumb != null && thumb.IsDragging)
+            {
+                return;
+            }
+
             if (_player.TotalDuration.TotalSeconds > 0 && SeekSlider.Maximum > 0)
             {
                 double pos = SeekSlider.Value / SeekSlider.Maximum * _player.TotalDuration.TotalSeconds;
                 _player.Seek(pos);
                 _lastSeekTime = DateTime.UtcNow;
+                _lastSeekTargetPosition = TimeSpan.FromSeconds(pos);
 
                 // Sync NP slider
                 NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
                 if (NpSeekSlider.Maximum > 0)
                     NpSeekSlider.Value = pos;
                 NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+
+                // Force immediate lyric re-sync
+                _npCurrentLyricIndex = -1;
+                NpUpdateLyricHighlight(_lastSeekTargetPosition);
             }
             _isSeeking = false;
         }
@@ -2103,18 +2639,44 @@ namespace AudioQualityChecker
                 double pos = SeekSlider.Value / SeekSlider.Maximum * _player.TotalDuration.TotalSeconds;
                 _player.Seek(pos);
                 _lastSeekTime = DateTime.UtcNow;
+                _lastSeekTargetPosition = TimeSpan.FromSeconds(pos);
 
                 // Sync NP slider
                 NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
                 if (NpSeekSlider.Maximum > 0)
                     NpSeekSlider.Value = pos;
                 NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+
+                // Force immediate lyric re-sync
+                _npCurrentLyricIndex = -1;
+                NpUpdateLyricHighlight(_lastSeekTargetPosition);
             }
             _isSeeking = false;
         }
 
-        private void PlayFile(AudioFileInfo file)
+        private void SeekSlider_MouseMove(object sender, MouseEventArgs e)
         {
+            UpdateSeekTooltip(SeekSlider, e);
+        }
+
+        private void UpdateSeekTooltip(Slider slider, MouseEventArgs e)
+        {
+            if (_player.TotalDuration.TotalSeconds <= 0 || slider.ActualWidth <= 0) return;
+            double mouseX = e.GetPosition(slider).X;
+            double ratio = Math.Clamp(mouseX / slider.ActualWidth, 0, 1);
+            var hoverTime = TimeSpan.FromSeconds(ratio * _player.TotalDuration.TotalSeconds);
+            slider.ToolTip = FormatTime(hoverTime);
+        }
+
+        // Tracks consecutive PlayFile failures so a single bad file doesn't stop the queue
+        // and a queue full of bad files doesn't cause unbounded recursion.
+        private int _consecutiveFailedPlays;
+        private const int MaxConsecutiveFailedPlays = 3;
+
+        private void PlayFile(AudioFileInfo file, bool isManualSkip = false)
+        {
+            _crossfadeEarlyTriggered = false;
+            _npColorGeneration++;
             try
             {
                 // Track playback history for back-button navigation
@@ -2136,10 +2698,10 @@ namespace AudioQualityChecker
 
                 // ALWAYS stop current playback cleanly first to prevent audio bleed
                 // The crossfade path handles its own stop internally
-                if (crossfade && _player.IsPlaying)
+                // Respect manual-skip setting: skip crossfade on manual Next/Prev if disabled
+                if (crossfade && _player.IsPlaying && (!isManualSkip || ThemeManager.CrossfadeOnManualSkip))
                 {
-                    // Set the user volume first so the crossfade timer knows the target,
-                    // then start crossfade (which manages its own fade-in volume)
+                    _player.CrossfadeCurve = ThemeManager.CrossfadeCurve;
                     _player.SetUserVolume((float)(VolumeSlider.Value / 100.0));
                     _player.PlayWithCrossfade(file.FilePath, normalize);
                 }
@@ -2168,7 +2730,10 @@ namespace AudioQualityChecker
                 SpectrogramTitle.Text = BuildSpectrogramTitle(file);
 
                 // Update album cover for the playing track
-                UpdateAlbumCover();
+                UpdateAlbumCoverAsync();
+
+                // Main-window color match
+                LoadMainCoverColors(file.FilePath);
 
                 // Discord Rich Presence
                 _discord.UpdatePresence(file.Artist, file.Title, file.FileName,
@@ -2183,23 +2748,51 @@ namespace AudioQualityChecker
 
                 // Update Now Playing panel if visible
                 UpdateNowPlayingView();
+
+                // Successful playback — reset the failure counter
+                _consecutiveFailedPlays = 0;
+
+                // Preload next track's colors in the background for instant switching
+                PreloadNextTrackColors();
             }
             catch (Exception ex)
             {
-                ErrorDialog.Show("Playback Error", $"Cannot play this file:\n{ex.Message}", this);
+                _consecutiveFailedPlays++;
+                string fileName = file?.FileName ?? Path.GetFileName(file?.FilePath ?? "(unknown)");
+                string filePath = file?.FilePath ?? "";
+
+                if (_consecutiveFailedPlays < MaxConsecutiveFailedPlays)
+                {
+                    // Auto-advance past the bad file so a single unsupported track doesn't halt the queue.
+                    // Show a non-blocking warning in the status area instead of a modal dialog.
+                    System.Diagnostics.Debug.WriteLine($"[PlayFile] '{fileName}' failed ({ex.GetType().Name}: {ex.Message}) — auto-skipping ({_consecutiveFailedPlays}/{MaxConsecutiveFailedPlays})");
+                    Dispatcher.BeginInvoke(new Action(() => NextTrack_Click(this, new RoutedEventArgs())));
+                }
+                else
+                {
+                    // Too many consecutive failures — surface to the user with full filename and stop trying
+                    _consecutiveFailedPlays = 0;
+                    ErrorDialog.Show(
+                        "Playback Error",
+                        $"Cannot play this file:\n{fileName}\n\n{ex.Message}\n\nPath: {filePath}",
+                        this);
+                }
             }
         }
 
         private void PlayFile_Click(object sender, RoutedEventArgs e)
         {
             if (FileGrid.SelectedItem is AudioFileInfo file)
-                PlayFile(file);
+                PlayFile(file, isManualSkip: true);
         }
+
+        private DateTime _lastDoubleClickTime = DateTime.MinValue;
 
         private void FileGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
+            _lastDoubleClickTime = DateTime.Now;
             if (FileGrid.SelectedItem is AudioFileInfo file)
-                PlayFile(file);
+                PlayFile(file, isManualSkip: true);
         }
 
         /// <summary>
@@ -2275,11 +2868,42 @@ namespace AudioQualityChecker
                 _discord.UpdatePresence(discordFile?.Artist, discordFile?.Title, discordFile?.FileName,
                     _player.TotalDuration, _player.CurrentPosition, false);
             }
+
+            // Gapless pre-buffer: prepare next track when <3s remaining
+            if (_player.IsGaplessActive && !_player.IsGaplessPrepared
+                && _cachedDurationSec > 0 && _cachedDurationSec - _cachedPositionSec < 3.0
+                && _cachedDurationSec - _cachedPositionSec > 0.1
+                && ThemeManager.AutoPlayNext)
+            {
+                var nextTrack = GetNextTrackForGapless();
+                if (nextTrack != null)
+                {
+                    _ = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try { _player.PrepareGapless(nextTrack.FilePath, ThemeManager.AudioNormalization); }
+                        catch { /* gapless prep failed — normal TrackFinished will handle it */ }
+                    });
+                }
+            }
+
+            // Early crossfade: start next track before current one ends so there is real overlap
+            // Add 100ms safety buffer to avoid cutting off the end if the timer fires late
+            double remaining = _cachedDurationSec - _cachedPositionSec;
+            double crossfadeDuration = ThemeManager.CrossfadeDuration;
+            if (ThemeManager.Crossfade && ThemeManager.AutoPlayNext
+                && _player.IsPlaying && !_player.IsGaplessActive
+                && !_crossfadeEarlyTriggered
+                && _cachedDurationSec >= crossfadeDuration * 2  // track must be longer than 2× fade
+                && remaining > 0.5 && remaining <= crossfadeDuration + 0.1)
+            {
+                _crossfadeEarlyTriggered = true;
+                NextTrack_Click(this, new RoutedEventArgs());
+            }
         }
 
         private void Player_PlaybackStopped(object? sender, EventArgs e)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.InvokeAsync(() =>
             {
                 // Guard against spurious stop events while audio is still playing
                 if (_player.IsPlaying)
@@ -2297,18 +2921,47 @@ namespace AudioQualityChecker
                 }
                 _playerTimer.Stop();
                 UpdatePlayerUI();
+                if (!ThemeManager.MainColorMatchEnabled)
+                    RestoreMainColorMatch();
             });
         }
 
         private void Player_TrackFinished(object? sender, EventArgs e)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher.InvokeAsync(() =>
             {
                 // Debounce: prevent double-fire from NAudio race conditions
                 if ((DateTime.UtcNow - _lastTrackFinishedTime).TotalMilliseconds < 2000) return;
                 _lastTrackFinishedTime = DateTime.UtcNow;
 
+                // If gapless handled the transition, don't also do a normal play
+                if (_player.IsGaplessActive && _player.IsPlaying) return;
+
+                // If early crossfade already advanced to the next track, suppress double-advance
+                if (_crossfadeEarlyTriggered && _player.IsPlaying)
+                {
+                    _crossfadeEarlyTriggered = false;
+                    return;
+                }
+                _crossfadeEarlyTriggered = false;
+
                 if (!ThemeManager.AutoPlayNext) return;
+
+                // Loop One: replay the current track
+                if (ThemeManager.LoopMode == LoopMode.One)
+                {
+                    string? currentFile = _player.CurrentFile;
+                    if (currentFile != null)
+                    {
+                        var currentTrack = _files.FirstOrDefault(f =>
+                            string.Equals(f.FilePath, currentFile, StringComparison.OrdinalIgnoreCase));
+                        if (currentTrack != null && currentTrack.Status != AudioStatus.Corrupt)
+                        {
+                            PlayFile(currentTrack);
+                            return;
+                        }
+                    }
+                }
 
                 // If queue has items, play from queue first
                 if (_queue.Count > 0)
@@ -2354,7 +3007,14 @@ namespace AudioQualityChecker
                 }
 
                 int nextIdx = currentIdx + 1;
-                if (nextIdx >= items.Count) return; // end of list
+                if (nextIdx >= items.Count)
+                {
+                    // Loop All: wrap to beginning
+                    if (ThemeManager.LoopMode == LoopMode.All)
+                        nextIdx = 0;
+                    else
+                        return; // end of list
+                }
 
                 var nextInList = items[nextIdx];
                 if (nextInList.Status == AudioStatus.Corrupt) return;
@@ -2402,6 +3062,111 @@ namespace AudioQualityChecker
             return $"{ts.Minutes}:{ts.Seconds:D2}";
         }
 
+        // ─── Gapless Playback ───
+
+        /// <summary>
+        /// Determines the next track that gapless should pre-buffer, using the same
+        /// logic as Player_TrackFinished (queue → shuffle → sequential).
+        /// </summary>
+        private AudioFileInfo? GetNextTrackForGapless()
+        {
+            // Loop One: gapless should re-buffer the same track
+            if (ThemeManager.LoopMode == LoopMode.One)
+            {
+                string? currentFile = _player.CurrentFile;
+                if (currentFile != null)
+                {
+                    var current = _files.FirstOrDefault(f =>
+                        string.Equals(f.FilePath, currentFile, StringComparison.OrdinalIgnoreCase));
+                    return current?.Status != AudioStatus.Corrupt ? current : null;
+                }
+            }
+
+            // Queue takes priority
+            if (_queue.Count > 0)
+            {
+                var q = _queue[0];
+                return q.Status != AudioStatus.Corrupt ? q : null;
+            }
+
+            var items = _filteredView?.Cast<AudioFileInfo>().ToList();
+            if (items == null || items.Count == 0) return null;
+
+            if (_shuffleMode)
+                return PickRandomTrack(items);
+
+            string? currentPath = _player.CurrentFile;
+            if (currentPath == null) return null;
+
+            int currentIdx = items.FindIndex(f => string.Equals(f.FilePath, currentPath, StringComparison.OrdinalIgnoreCase));
+            int nextIdx = currentIdx + 1;
+            if (nextIdx >= items.Count)
+            {
+                // Loop All: wrap to first track
+                if (ThemeManager.LoopMode == LoopMode.All)
+                    nextIdx = 0;
+                else
+                    return null;
+            }
+
+            var next = items[nextIdx];
+            return next.Status != AudioStatus.Corrupt ? next : null;
+        }
+
+        private void Player_GaplessTrackChanged(object? sender, EventArgs e)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                _lastTrackFinishedTime = DateTime.UtcNow; // prevent TrackFinished from double-firing
+
+                // Dequeue if the gapless track came from the queue
+                if (_queue.Count > 0)
+                {
+                    var expected = _queue[0];
+                    if (string.Equals(expected.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
+                        _queue.RemoveAt(0);
+                }
+
+                // Find the new file in the grid and update UI
+                var newFile = _files.FirstOrDefault(f =>
+                    string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                if (newFile != null)
+                {
+                    FileGrid.SelectedItem = newFile;
+                    FileGrid.ScrollIntoView(newFile);
+                    _currentSpectrogramFile = newFile;
+                    SpectrogramTitle.Text = BuildSpectrogramTitle(newFile);
+
+                    // Reset seek sliders for new track duration
+                    SeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
+                    NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+                    NpSeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
+                    NpSeekSlider.Value = 0;
+                    NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+
+                    UpdatePlayerUI();
+                    DrawWaveformBackground();
+
+                    // Update Now Playing panel if it's open
+                    if (_npVisible)
+                    {
+                        NpSetTrack(newFile);
+                        NpUpdateQueuePopup();
+                    }
+
+                    // Main-window color match for gapless switch
+                    LoadMainCoverColors(newFile.FilePath);
+
+                    // Update integrations
+                    if (_lastFm.IsEnabled)
+                        _lastFm.TrackStarted(newFile.Artist, newFile.Title, _player.TotalDuration.TotalSeconds);
+                    if (_discord.IsEnabled)
+                        _discord.UpdatePresence(newFile.Artist, newFile.Title, newFile.FileName,
+                            _player.TotalDuration, TimeSpan.Zero, false);
+                }
+            });
+        }
+
         // ═══════════════════════════════════════════
         //  Drag & Drop (into the app)
         // ═══════════════════════════════════════════
@@ -2441,7 +3206,6 @@ namespace AudioQualityChecker
                         Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories)
                                  .Where(f => SupportedExtensions.Contains(IOPath.GetExtension(f))
                                           || ArchiveExtensions.Contains(IOPath.GetExtension(f))
-                                          || PlaylistExtensions.Contains(IOPath.GetExtension(f))
                                           || IOPath.GetExtension(f).Equals(".cue", StringComparison.OrdinalIgnoreCase)));
                 }
                 else if (File.Exists(path) && (SupportedExtensions.Contains(IOPath.GetExtension(path))
@@ -2512,7 +3276,7 @@ namespace AudioQualityChecker
         private void OpenFileLocation_Click(object sender, RoutedEventArgs e)
         {
             if (FileGrid.SelectedItem is AudioFileInfo file)
-                Process.Start("explorer.exe", $"/select,\"{file.FilePath}\"");
+                Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { "/select,", file.FilePath }, UseShellExecute = false });
         }
 
         private void CopyPath_Click(object sender, RoutedEventArgs e)
@@ -2529,7 +3293,9 @@ namespace AudioQualityChecker
 
         private void RemoveFromList_Click(object sender, RoutedEventArgs e)
         {
-            if (FileGrid.SelectedItem is AudioFileInfo file)
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0) return;
+            foreach (var file in selected)
                 _files.Remove(file);
         }
 
@@ -2588,6 +3354,19 @@ namespace AudioQualityChecker
             win.Show();
         }
 
+        private void CompareSpectrograms_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count != 2)
+            {
+                ErrorDialog.Show("Select Two Files", "Select exactly two files to compare their spectrograms.", this);
+                return;
+            }
+
+            var win = new SpectrogramCompareWindow(selected[0].FilePath, selected[1].FilePath) { Owner = this };
+            win.Show();
+        }
+
         private void FindDuplicates_Click(object sender, RoutedEventArgs e)
         {
             if (_files.Count < 2) return;
@@ -2598,6 +3377,11 @@ namespace AudioQualityChecker
 
         private async void AcoustIdIdentify_Click(object sender, RoutedEventArgs e)
         {
+            if (ThemeManager.OfflineModeEnabled)
+            {
+                ShowOfflineNotice("AcoustID fingerprinting");
+                return;
+            }
             if (FileGrid.SelectedItem is not AudioFileInfo file) return;
 
             // For cue virtual tracks, use the actual audio file referenced by the cue sheet
@@ -2712,7 +3496,7 @@ namespace AudioQualityChecker
                     if (result.HasValue)
                     {
                         var gain = result.Value.Gain;
-                        Dispatcher.Invoke(() =>
+                        Dispatcher.InvokeAsync(() =>
                         {
                             file.ReplayGain = gain;
                             file.HasReplayGain = true;
@@ -2748,7 +3532,7 @@ namespace AudioQualityChecker
             {
                 AlbumCoverColumn.Width = new GridLength(210);
                 AlbumCoverPanel.Visibility = Visibility.Visible;
-                UpdateAlbumCover();
+                UpdateAlbumCoverAsync();
             }
             else
             {
@@ -2758,11 +3542,12 @@ namespace AudioQualityChecker
             }
         }
 
-        private void UpdateAlbumCover()
+        private async void UpdateAlbumCoverAsync()
         {
+            try
+            {
             if (!_showAlbumCover) return;
 
-            // Prefer the currently playing file, fallback to selected
             AudioFileInfo? file = null;
             if (_player.CurrentFile != null)
                 file = _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
@@ -2777,13 +3562,15 @@ namespace AudioQualityChecker
 
             try
             {
-                var cover = ExtractAlbumCover(file.FilePath);
+                var cover = await Task.Run(() => ExtractAlbumCover(file.FilePath));
                 AlbumCoverImage.Source = cover;
             }
             catch
             {
                 AlbumCoverImage.Source = null;
             }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[UpdateAlbumCoverAsync] {ex}"); }
         }
 
         private void SaveAlbumCoverFromPanel_Click(object sender, RoutedEventArgs e)
@@ -2977,6 +3764,7 @@ namespace AudioQualityChecker
                 UpdateServiceButtonLabels();
                 ApplyThemeTitleBar();
                 UpdateShuffleUI();
+                UpdateLoopUI();
                 _eqSliderTemplateCache = null;
                 InitializeEqualizerSliders();
                 ChkEqEnabled.IsChecked = ThemeManager.EqualizerEnabled;
@@ -3030,17 +3818,51 @@ namespace AudioQualityChecker
 
         private void Queue_Click(object sender, RoutedEventArgs e)
         {
-            var queueWindow = new QueueWindow(_queue) { Owner = this };
+            var queueWindow = new QueueWindow(_queue) { Owner = this, UpNext = GetUpNextTracks() };
             queueWindow.ShowDialog();
+            if (_npVisible) NpUpdateQueuePopup();
         }
+
+        private List<AudioFileInfo> GetUpNextTracks()
+        {
+            var upcoming = new List<AudioFileInfo>();
+            for (int i = 0; i < Math.Min(_queue.Count, 3); i++)
+                upcoming.Add(_queue[i]);
+
+            if (upcoming.Count == 0 && _player.CurrentFile != null)
+            {
+                var current = _files.FirstOrDefault(f =>
+                    string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                if (current != null)
+                {
+                    int currentIdx = _files.IndexOf(current);
+                    AudioFileInfo? next = null;
+                    if (_shuffleMode && _shuffleDeck.Count > 0)
+                    {
+                        int deckIdx = _shuffleDeck.FindIndex(f => f.FilePath == current.FilePath);
+                        if (deckIdx >= 0 && deckIdx + 1 < _shuffleDeck.Count)
+                            next = _shuffleDeck[deckIdx + 1];
+                    }
+                    else if (currentIdx >= 0 && currentIdx + 1 < _files.Count)
+                    {
+                        next = _files[currentIdx + 1];
+                    }
+                    if (next != null) upcoming.Add(next);
+                }
+            }
+            return upcoming;
+        }
+
+
 
         private void AddToQueue_Click(object sender, RoutedEventArgs e)
         {
-            if (FileGrid.SelectedItem is AudioFileInfo file && file.Status != AudioStatus.Corrupt)
-            {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().Where(f => f.Status != AudioStatus.Corrupt).ToList();
+            if (selected.Count == 0) return;
+            foreach (var file in selected)
                 _queue.Add(file);
-                StatusText.Text = $"Added to queue: {file.FileName} ({_queue.Count} in queue)";
-            }
+            StatusText.Text = $"Added {selected.Count} file(s) to queue ({_queue.Count} in queue)";
+            if (_npVisible) NpUpdateQueuePopup();
         }
 
         // ═══════════════════════════════════════════
@@ -3412,8 +4234,15 @@ namespace AudioQualityChecker
 
         private void SaveSpectrogram_Click(object sender, RoutedEventArgs e)
         {
-            if (FileGrid.SelectedItem is AudioFileInfo file)
-                SaveSpectrogramForFile(file);
+            var selected = FileGrid.SelectedItems.OfType<AudioFileInfo>()
+                                .Where(f => f.Status != AudioStatus.Corrupt).ToList();
+            if (selected.Count == 0) return;
+            if (selected.Count == 1) { SaveSpectrogramForFile(selected[0]); return; }
+
+            // Multiple files — pick a folder
+            var dlg = new OpenFolderDialog { Title = "Select folder for spectrograms" };
+            if (dlg.ShowDialog() == true)
+                _ = SaveSpectrogramsToFolderAsync(selected, dlg.FolderName);
         }
 
         private void SpectrogramImage_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -3440,7 +4269,11 @@ namespace AudioQualityChecker
             {
                 try
                 {
-                    var bitmap = RenderSpectrogramWithLabels(file, 1800, 600);
+                    int exportWidth  = Math.Clamp((int)(file.DurationSeconds * 60.0), 800, 16000);
+                    int exportHeight = 800;
+                    var bitmap = RenderSpectrogramWithLabels(file, exportWidth, exportHeight,
+                        highFidelity: ThemeManager.SpectrogramHiFiMode,
+                        magmaColormap: ThemeManager.SpectrogramMagmaColormap);
                     if (bitmap != null)
                     {
                         using var stream = new FileStream(dialog.FileName, FileMode.Create);
@@ -3465,19 +4298,24 @@ namespace AudioQualityChecker
         /// Renders a spectrogram with Hz labels and title baked into the image.
         /// If preGenerated is provided, uses it instead of generating a new spectrogram.
         /// </summary>
-        private BitmapSource? RenderSpectrogramWithLabels(AudioFileInfo file, int spectWidth, int spectHeight, BitmapSource? preGenerated = null)
+        private BitmapSource? RenderSpectrogramWithLabels(AudioFileInfo file, int spectWidth, int spectHeight,
+            BitmapSource? preGenerated = null, bool highFidelity = false, bool magmaColormap = false)
         {
             var rawBitmap = preGenerated ?? SpectrogramGenerator.Generate(file.FilePath, spectWidth, spectHeight,
-                _spectrogramLinearScale, _spectrogramChannel, _spectrogramEndZoom ? 10 : 0);
+                _spectrogramLinearScale, _spectrogramChannel, _spectrogramEndZoom ? 10 : 0,
+                highFidelity, magmaColormap, default);
             if (rawBitmap == null) return null;
 
-            int leftMargin = 70;   // Hz labels
-            int topMargin = 28;    // Title bar
+            int leftMargin  = 70;   // Hz labels
+            int rightMargin = 30;   // dB scale strip
+            int topMargin   = 28;   // Title bar
             int bottomMargin = 4;
-            int rightMargin = 4;
 
-            int totalWidth = leftMargin + spectWidth + rightMargin;
-            int totalHeight = topMargin + spectHeight + bottomMargin;
+            int rawW = rawBitmap.PixelWidth;
+            int rawH = rawBitmap.PixelHeight;
+
+            int totalWidth  = leftMargin + rawW + rightMargin;
+            int totalHeight = topMargin + rawH + bottomMargin;
 
             var dv = new DrawingVisual();
             using (var dc = dv.RenderOpen())
@@ -3486,15 +4324,17 @@ namespace AudioQualityChecker
                 dc.DrawRectangle(Brushes.Black, null, new System.Windows.Rect(0, 0, totalWidth, totalHeight));
 
                 // Draw spectrogram
-                dc.DrawImage(rawBitmap, new System.Windows.Rect(leftMargin, topMargin, spectWidth, spectHeight));
+                dc.DrawImage(rawBitmap, new System.Windows.Rect(leftMargin, topMargin, rawW, rawH));
 
-                // Title
+                // Title — include bitrate and encoder info
+                string bitrateInfo = file.ReportedBitrate > 0 ? $"  —  {file.ReportedBitrate} kbps" : "";
+                string realBrInfo  = file.ActualBitrate > 0 ? $" (Real: {file.ActualBitrate} kbps)" : "";
                 var titleText = new FormattedText(
-                    $"{file.FileName}  —  {file.SampleRate:N0} Hz / {file.BitsPerSampleDisplay}  —  {file.Duration}  —  Status: {file.Status}",
+                    $"{file.FileName}  —  {file.SampleRate:N0} Hz / {file.BitsPerSampleDisplay}  —  {file.Duration}{bitrateInfo}{realBrInfo}  —  {file.Status}",
                     System.Globalization.CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight,
                     new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
-                    13, Brushes.White, 96);
+                    11, Brushes.White, 96);
                 dc.DrawText(titleText, new System.Windows.Point(leftMargin + 4, 6));
 
                 // Hz labels (5 labels)
@@ -3533,19 +4373,65 @@ namespace AudioQualityChecker
 
                 var ftUpperMid = new FormattedText(upperMidHz, System.Globalization.CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight, labelTypeFace, 11, labelBrush, 96);
-                dc.DrawText(ftUpperMid, new System.Windows.Point(leftMargin - ftUpperMid.Width - 6, topMargin + spectHeight * 0.25 - ftUpperMid.Height / 2));
+                dc.DrawText(ftUpperMid, new System.Windows.Point(leftMargin - ftUpperMid.Width - 6, topMargin + rawH * 0.25 - ftUpperMid.Height / 2));
 
                 var ftMid = new FormattedText(midHz, System.Globalization.CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight, labelTypeFace, 11, labelBrush, 96);
-                dc.DrawText(ftMid, new System.Windows.Point(leftMargin - ftMid.Width - 6, topMargin + spectHeight / 2 - ftMid.Height / 2));
+                dc.DrawText(ftMid, new System.Windows.Point(leftMargin - ftMid.Width - 6, topMargin + rawH / 2 - ftMid.Height / 2));
 
                 var ftLowerMid = new FormattedText(lowerMidHz, System.Globalization.CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight, labelTypeFace, 11, labelBrush, 96);
-                dc.DrawText(ftLowerMid, new System.Windows.Point(leftMargin - ftLowerMid.Width - 6, topMargin + spectHeight * 0.75 - ftLowerMid.Height / 2));
+                dc.DrawText(ftLowerMid, new System.Windows.Point(leftMargin - ftLowerMid.Width - 6, topMargin + rawH * 0.75 - ftLowerMid.Height / 2));
 
                 var ftBot = new FormattedText(botHz, System.Globalization.CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight, labelTypeFace, 11, labelBrush, 96);
-                dc.DrawText(ftBot, new System.Windows.Point(leftMargin - ftBot.Width - 6, topMargin + spectHeight - ftBot.Height - 2));
+                dc.DrawText(ftBot, new System.Windows.Point(leftMargin - ftBot.Width - 6, topMargin + rawH - ftBot.Height - 2));
+
+                // dB scale on the right margin (gradient strip + 4 labels)
+                int dbStripX = leftMargin + rawW + 2;
+                int dbStripW = 8;
+                for (int row = 0; row < rawH; row++)
+                {
+                    double t = 1.0 - (double)row / (rawH - 1);
+                    byte v = (byte)(t * 255);
+                    var dbBrush = new SolidColorBrush(Color.FromRgb(v, v, v));
+                    dc.DrawRectangle(dbBrush, null,
+                        new System.Windows.Rect(dbStripX, topMargin + row, dbStripW, 1));
+                }
+                string[] dbLabels = { "0", "-40", "-80", "-120" };
+                double[] dbPositions = { 0.0, 0.33, 0.67, 1.0 };
+                var dbTypeFace = labelTypeFace;
+                for (int di = 0; di < dbLabels.Length; di++)
+                {
+                    double py = topMargin + dbPositions[di] * rawH;
+                    var ft = new FormattedText(dbLabels[di], System.Globalization.CultureInfo.InvariantCulture,
+                        FlowDirection.LeftToRight, dbTypeFace, 9, labelBrush, 96);
+                    dc.DrawText(ft, new System.Windows.Point(dbStripX + dbStripW + 1, py - ft.Height / 2));
+                }
+
+                // HiFi mode: draw reference lines at 16k, 19k, 20k Hz (lossy artifact markers)
+                if (highFidelity && !_spectrogramLinearScale)
+                {
+                    var refPen = new Pen(new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)), 1);
+                    var refHz = new[] { 16000, 19000, 20000 };
+                    double logMinRef = Math.Log10(20.0);
+                    double logMaxRef = Math.Log10(nyquist);
+                    double logRangeRef = logMaxRef - logMinRef;
+                    foreach (int hz in refHz)
+                    {
+                        if (hz > nyquist) continue;
+                        double t = (Math.Log10(hz) - logMinRef) / logRangeRef;
+                        double py = topMargin + (1.0 - t) * rawH;
+                        dc.DrawLine(refPen,
+                            new System.Windows.Point(leftMargin, py),
+                            new System.Windows.Point(leftMargin + rawW, py));
+                        var ftRef = new FormattedText($"{hz / 1000}k",
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            FlowDirection.LeftToRight, labelTypeFace, 9,
+                            new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)), 96);
+                        dc.DrawText(ftRef, new System.Windows.Point(leftMargin + spectWidth - ftRef.Width - 2, py - ftRef.Height - 1));
+                    }
+                }
             }
 
             var rtb = new RenderTargetBitmap(totalWidth, totalHeight, 96, 96, PixelFormats.Pbgra32);
@@ -3619,7 +4505,10 @@ namespace AudioQualityChecker
                         {
                             return SpectrogramGenerator.Generate(fileRef.FilePath, 1800, 600,
                                 _spectrogramLinearScale, _spectrogramChannel,
-                                _spectrogramEndZoom ? 10 : 0);
+                                _spectrogramEndZoom ? 10 : 0,
+                                ThemeManager.SpectrogramHiFiMode,
+                                ThemeManager.SpectrogramMagmaColormap,
+                                default);
                         }
                         finally { Thread.CurrentThread.Priority = ThreadPriority.Normal; }
                     });
@@ -3664,6 +4553,326 @@ namespace AudioQualityChecker
                 ? $"Saved {completed - failed} / {total} spectrograms to {folder} ({failed} failed)"
                 : $"Saved {completed} spectrograms to {folder}";
             StatusText.Text = msg;
+        }
+
+        /// <summary>Public bridge used by SpectrogramViewWindow to render with labels.</summary>
+        public BitmapSource? RenderSpectrogramForViewer(AudioFileInfo file, int w, int h,
+            BitmapSource? preGenerated = null)
+            => RenderSpectrogramWithLabels(file, w, h, preGenerated,
+                ThemeManager.SpectrogramHiFiMode, ThemeManager.SpectrogramMagmaColormap);
+
+        public void ClearSpectrogramCache()
+        {
+            _spectrogramCache.Clear();
+            _spectrogramCacheLru.Clear();
+        }
+
+        public int SpectrogramCacheCount => _spectrogramCache.Count;
+
+        // ═══════════════════════════════════════════
+        //  Spectrogram View Window
+        // ═══════════════════════════════════════════
+
+        private void ViewSpectrogram_Click(object sender, RoutedEventArgs e)
+        {
+            if (FileGrid.SelectedItem is AudioFileInfo file && file.Status != AudioStatus.Corrupt)
+                new SpectrogramViewWindow(file, this) { Owner = this }.Show();
+        }
+
+        // ═══════════════════════════════════════════
+        //  Multi-file spectrogram export (folder)
+        // ═══════════════════════════════════════════
+
+        private async Task SaveSpectrogramsToFolderAsync(List<AudioFileInfo> files, string folder)
+        {
+            int total = files.Count;
+            int completed = 0;
+            int failed = 0;
+
+            int maxParallel = Math.Max(1, ThemeManager.MaxConcurrency / 2);
+            var sem = new SemaphoreSlim(maxParallel);
+
+            AnalysisProgressPanel.Visibility = Visibility.Visible;
+            AnalysisProgress.Maximum = total;
+            AnalysisProgress.Value = 0;
+            _analysisStartTime = DateTime.UtcNow;
+            StatusText.Text = $"Saving spectrograms 0 / {total}...";
+
+            var tasks = files.Select(async file =>
+            {
+                await sem.WaitAsync();
+                try
+                {
+                    await ThemeManager.WaitForMemoryAsync();
+                    int exportWidth  = Math.Clamp((int)(file.DurationSeconds * 60.0), 800, 16000);
+                    int exportHeight = 800;
+                    string outPath = IOPath.Combine(folder,
+                        $"{IOPath.GetFileNameWithoutExtension(file.FileName)}_spectrogram.png");
+                    int n = 1;
+                    while (File.Exists(outPath))
+                        outPath = IOPath.Combine(folder,
+                            $"{IOPath.GetFileNameWithoutExtension(file.FileName)}_spectrogram_{n++}.png");
+
+                    var raw = await Task.Run(() => SpectrogramGenerator.Generate(
+                        file.FilePath, exportWidth, exportHeight,
+                        _spectrogramLinearScale, _spectrogramChannel,
+                        _spectrogramEndZoom ? 10 : 0,
+                        ThemeManager.SpectrogramHiFiMode, ThemeManager.SpectrogramMagmaColormap, default));
+
+                    if (raw != null)
+                    {
+                        var bitmap = RenderSpectrogramWithLabels(file, exportWidth, exportHeight, raw,
+                            ThemeManager.SpectrogramHiFiMode, ThemeManager.SpectrogramMagmaColormap);
+                        if (bitmap != null)
+                        {
+                            string save = outPath;
+                            await Task.Run(() =>
+                            {
+                                using var stream = new FileStream(save, FileMode.Create);
+                                var enc = new PngBitmapEncoder();
+                                enc.Frames.Add(BitmapFrame.Create(bitmap));
+                                enc.Save(stream);
+                            });
+                        }
+                        else Interlocked.Increment(ref failed);
+                    }
+                    else Interlocked.Increment(ref failed);
+                }
+                catch { Interlocked.Increment(ref failed); }
+                finally { sem.Release(); }
+
+                int c = Interlocked.Increment(ref completed);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    AnalysisProgress.Value = c;
+                    StatusText.Text = $"Saving spectrograms {c} / {total}...";
+                    UpdateAnalysisEta(c, total);
+                });
+            });
+
+            await Task.WhenAll(tasks);
+            AnalysisProgressPanel.Visibility = Visibility.Collapsed;
+            AnalysisEtaText.Text = "";
+            StatusText.Text = failed > 0
+                ? $"Saved {total - failed} / {total} spectrograms to {folder} ({failed} failed)"
+                : $"Saved {total} spectrograms to {folder}";
+        }
+
+        // ═══════════════════════════════════════════
+        //  Favorites
+        // ═══════════════════════════════════════════
+
+        private void ContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0) return;
+
+            bool allFav = selected.All(f => f.IsFavorite);
+            bool anyFav = selected.Any(f => f.IsFavorite);
+
+            MenuToggleFavorite.Header = allFav ? "Remove from Favorites" : anyFav ? "Toggle Favorites" : "Add to Favorites";
+            MenuFavMoveUp.Visibility   = (selected.Count == 1 && selected[0].IsFavorite) ? Visibility.Visible : Visibility.Collapsed;
+            MenuFavMoveDown.Visibility = (selected.Count == 1 && selected[0].IsFavorite) ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void ToggleFavorite_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0) return;
+            foreach (var file in selected)
+                FavoritesService.Toggle(file);
+            RefreshFavoriteSort();
+        }
+
+        private void StarCell_Click(object sender, MouseButtonEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.DataContext is AudioFileInfo file)
+            {
+                FavoritesService.Toggle(file);
+                RefreshFavoriteSort();
+            }
+        }
+
+        private void MoveFavoriteUp_Click(object sender, RoutedEventArgs e)
+        {
+            if (FileGrid.SelectedItem is not AudioFileInfo file) return;
+            FavoritesService.MoveUp(file, _files);
+            RefreshFavoriteSort();
+        }
+
+        private void MoveFavoriteDown_Click(object sender, RoutedEventArgs e)
+        {
+            if (FileGrid.SelectedItem is not AudioFileInfo file) return;
+            FavoritesService.MoveDown(file, _files);
+            RefreshFavoriteSort();
+        }
+
+        public void RefreshFavoriteSort()
+        {
+            if (_filteredView == null) return;
+            _filteredView.SortDescriptions.Clear();
+            _filteredView.SortDescriptions.Add(new SortDescription(nameof(AudioFileInfo.IsFavorite),
+                ListSortDirection.Descending));
+            _filteredView.SortDescriptions.Add(new SortDescription(nameof(AudioFileInfo.FavoriteOrder),
+                ListSortDirection.Ascending));
+            _filteredView.Refresh();
+        }
+
+        // ═══════════════════════════════════════════
+        //  File Operations
+        // ═══════════════════════════════════════════
+
+        private void QuickRename_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.OfType<AudioFileInfo>().ToList();
+            int count = 0;
+            foreach (var file in selected)
+            {
+                if (file.IsCueVirtualTrack) continue;
+                string dir = IOPath.GetDirectoryName(file.FilePath) ?? "";
+                string name = IOPath.GetFileNameWithoutExtension(file.FilePath);
+                string ext = IOPath.GetExtension(file.FilePath);
+                string suffix;
+
+                string statusText = file.Status switch
+                {
+                    AudioStatus.Valid => "REAL",
+                    AudioStatus.Fake => "FAKE",
+                    AudioStatus.Corrupt => "CORRUPT",
+                    AudioStatus.Optimized => "OPTIMIZED",
+                    _ => "UNKNOWN"
+                };
+
+                switch (ThemeManager.RenamePatternIndex)
+                {
+                    case 0:
+                        if (file.ReportedBitrate <= 0) continue;
+                        suffix = $"[FAKE {file.ReportedBitrate}kbps]";
+                        break;
+                    case 1:
+                        if (file.ActualBitrate <= 0) continue;
+                        suffix = $"[{statusText} {file.ActualBitrate}kbps]";
+                        break;
+                    case 2:
+                        if (file.ReportedBitrate <= 0 || file.ActualBitrate <= 0) continue;
+                        suffix = $"[{statusText} {file.ReportedBitrate}kbps {file.ActualBitrate}kbps]";
+                        break;
+                    default:
+                        continue;
+                }
+
+                string newName = $"{name} {suffix}{ext}";
+                string newPath = IOPath.Combine(dir, newName);
+                if (File.Exists(newPath)) continue;
+                try
+                {
+                    File.Move(file.FilePath, newPath);
+                    file.FilePath = newPath;
+                    file.FileName = newName;
+                    count++;
+                }
+                catch { }
+            }
+            if (count > 0) StatusText.Text = $"Renamed {count} file(s).";
+        }
+
+        private void CopyToFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.OfType<AudioFileInfo>()
+                               .Where(f => !f.IsCueVirtualTrack).ToList();
+            if (selected.Count == 0) return;
+            var dlg = new OpenFolderDialog
+            {
+                Title = "Select destination folder",
+                FolderName = ThemeManager.DefaultCopyFolder
+            };
+            if (dlg.ShowDialog() != true) return;
+            string dest = dlg.FolderName;
+            int count = 0, failed = 0;
+            foreach (var file in selected)
+            {
+                try
+                {
+                    string target = IOPath.Combine(dest, IOPath.GetFileName(file.FilePath));
+                    if (!File.Exists(target))
+                    {
+                        File.Copy(file.FilePath, target);
+                        count++;
+                    }
+                }
+                catch { failed++; }
+            }
+            StatusText.Text = failed > 0
+                ? $"Copied {count} file(s) to {dest} ({failed} failed / already exists)"
+                : $"Copied {count} file(s) to {dest}";
+        }
+
+        private void MoveToFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.OfType<AudioFileInfo>()
+                               .Where(f => !f.IsCueVirtualTrack).ToList();
+            if (selected.Count == 0) return;
+            var dlg = new OpenFolderDialog
+            {
+                Title = "Select destination folder",
+                FolderName = ThemeManager.DefaultMoveFolder
+            };
+            if (dlg.ShowDialog() != true) return;
+            string dest = dlg.FolderName;
+            int count = 0, failed = 0;
+            foreach (var file in selected)
+            {
+                try
+                {
+                    string target = IOPath.Combine(dest, IOPath.GetFileName(file.FilePath));
+                    if (!File.Exists(target))
+                    {
+                        File.Move(file.FilePath, target);
+                        count++;
+                        _files.Remove(file);
+                    }
+                }
+                catch { failed++; }
+            }
+            StatusText.Text = failed > 0
+                ? $"Moved {count} file(s) to {dest} ({failed} failed / conflict)"
+                : $"Moved {count} file(s) to {dest}";
+            UpdateStatusSummary();
+        }
+
+        private void SaveToPlaylist_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.OfType<AudioFileInfo>()
+                               .Where(f => !f.IsCueVirtualTrack).ToList();
+            if (selected.Count == 0)
+                selected = _files.Where(f => !f.IsCueVirtualTrack).ToList();
+            if (selected.Count == 0) return;
+
+            var dlg = new SaveFileDialog
+            {
+                Title = "Save Playlist",
+                Filter = "M3U Playlist|*.m3u|Extended M3U|*.m3u8",
+                DefaultExt = "m3u"
+            };
+            if (!string.IsNullOrWhiteSpace(ThemeManager.DefaultPlaylistFolder) && Directory.Exists(ThemeManager.DefaultPlaylistFolder))
+                dlg.InitialDirectory = ThemeManager.DefaultPlaylistFolder;
+            if (dlg.ShowDialog() != true) return;
+
+            var lines = new List<string> { "#EXTM3U" };
+            foreach (var file in selected)
+            {
+                lines.Add($"#EXTINF:{(int)file.DurationSeconds},{file.Artist} - {file.Title}");
+                lines.Add(file.FilePath);
+            }
+            try
+            {
+                File.WriteAllLines(dlg.FileName, lines, System.Text.Encoding.UTF8);
+                StatusText.Text = $"Playlist saved: {dlg.FileName} ({selected.Count} tracks)";
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.Show("Save Error", $"Error saving playlist:\n{ex.Message}", this);
+            }
         }
 
         // ═══════════════════════════════════════════
@@ -3793,6 +5002,22 @@ namespace AudioQualityChecker
             _occlusionCheckTimer.Start();
         }
 
+        private void OnWindowStateChanged(object? sender, EventArgs e)
+        {
+            if (WindowState == WindowState.Minimized && !_isPausedForOcclusion)
+            {
+                _isPausedForOcclusion = true;
+                PauseAnimations();
+            }
+            else if (WindowState != WindowState.Minimized && _isPausedForOcclusion)
+            {
+                _isPausedForOcclusion = false;
+                ResumeAnimations();
+            }
+            if (_npVisible)
+                NpApplyVizPlacement();
+        }
+
         private void OcclusionCheckTimer_Tick(object? sender, EventArgs e)
         {
             if (IsActive) { _occlusionCheckTimer?.Stop(); return; }
@@ -3815,12 +5040,13 @@ namespace AudioQualityChecker
             StopVisualizer();
             StopWaveformAnimation();
 
-            // Pause NP panel animations when not visible
+            // Pause NP panel animations when minimized/hidden
             if (_npVisible)
             {
                 _npUpdateTimer?.Stop();
                 NpStopBgAnimation();
                 NpStopGlowPulse();
+                NpStopVisualizer(); // stop NP visualizer too — it runs independently of the main one
             }
         }
 
@@ -3833,9 +5059,9 @@ namespace AudioQualityChecker
                 NpStartBgAnimation();
                 NpStartGlowPulse();
 
-                // Resume the visualizer rendering (VizTarget already points to correct canvas)
+                // Resume the NP visualizer if it was running
                 if (_npVisualizerEnabled && _player.IsPlaying)
-                    StartVisualizer();
+                    NpStartVisualizer();
 
                 // Re-sync lyrics to current position immediately
                 if (_npCurrentLyrics.IsTimed && _player != null)
@@ -4056,6 +5282,47 @@ namespace AudioQualityChecker
                     WaveformCanvas.Children.Add(edgeLine);
                 }
             }
+
+            RenderPlaybarAnim();
+        }
+
+        private double GetCurrentBassEnergy()
+        {
+            if (_vizSmoothed == null || _vizSmoothed.Length == 0) return 0;
+            double sum = 0;
+            int cnt = Math.Min(5, _vizSmoothed.Length);
+            for (int i = 0; i < cnt; i++) sum += _vizSmoothed[i];
+            return sum / cnt;
+        }
+
+        private void RenderPlaybarAnim()
+        {
+            PlaybarAnimCanvas.Children.Clear();
+            double w = PlaybarAnimCanvas.ActualWidth;
+            double h = PlaybarAnimCanvas.ActualHeight;
+            if (w < 1 || h < 1 || SeekSlider.Maximum <= 0) return;
+
+            double pct = SeekSlider.Value / SeekSlider.Maximum;
+            double fillW = w * pct;
+
+            var accentBrush = TryFindResource("AccentColor") as SolidColorBrush ?? Brushes.CornflowerBlue;
+            Color accent = accentBrush.Color;
+
+            // Default playbar fill (was "Classic" style)
+            if (fillW >= 1)
+            {
+                var rect = new System.Windows.Shapes.Rectangle
+                {
+                    Width = fillW, Height = h,
+                    RadiusX = h / 2, RadiusY = h / 2
+                };
+                rect.Fill = new LinearGradientBrush(
+                    Color.FromArgb(55, accent.R, accent.G, accent.B),
+                    Color.FromArgb(15, accent.R, accent.G, accent.B),
+                    new Point(0, 0), new Point(1, 0));
+                Canvas.SetLeft(rect, 0);
+                PlaybarAnimCanvas.Children.Add(rect);
+            }
         }
 
         /// <summary>
@@ -4128,9 +5395,9 @@ namespace AudioQualityChecker
         // ── Visualizer Style Names ──
         private static readonly string[] _vizStyleNames =
         {
-            "Bars", "Mirror", "Particles", "Circles", "Scope", "Abstract", "VU Meter"
+            "Bars", "Mirror", "Particles", "Circles", "Scope", "VU Meter"
         };
-        private const int VizStyleCount = 7; // number of real styles (0-6)
+        private const int VizStyleCount = 6; // number of real styles (0-5)
 
         private void VisualizerStyle_Click(object sender, RoutedEventArgs e)
         {
@@ -4218,7 +5485,6 @@ namespace AudioQualityChecker
             _particleElements = null;
             _circleElements = null;
             _scopeLine = null;
-            _kaleidoPolys = null;
             _vuBlocks = null;
             VisualizerCanvas.Children.Clear();
         }
@@ -4419,6 +5685,8 @@ namespace AudioQualityChecker
         /// </summary>
         private async void RefreshSpectrogram()
         {
+            try
+            {
             if (_currentSpectrogramFile is not AudioFileInfo file) return;
             if (file.Status == AudioStatus.Corrupt) return;
 
@@ -4428,18 +5696,41 @@ namespace AudioQualityChecker
 
             try
             {
-                await _spectrogramSemaphore.WaitAsync(token);
+                string spectRefreshKey = $"{file.FilePath}|{_spectrogramLinearScale}|{_spectrogramChannel}|{ThemeManager.SpectrogramMagmaColormap}|{ThemeManager.SpectrogramHiFiMode}";
                 BitmapSource? bitmap;
-                try
+                if (_spectrogramCache.TryGetValue(spectRefreshKey, out var cachedRefresh))
                 {
-                    bitmap = await Task.Run(() =>
-                        SpectrogramGenerator.Generate(file.FilePath, 1200, 400,
-                            _spectrogramLinearScale, _spectrogramChannel,
-                            _spectrogramEndZoom ? 10 : 0), token);
+                    bitmap = cachedRefresh;
+                    _spectrogramCacheLru.Remove(spectRefreshKey);
+                    _spectrogramCacheLru.AddLast(spectRefreshKey);
                 }
-                finally
+                else
                 {
-                    _spectrogramSemaphore.Release();
+                    await _spectrogramSemaphore.WaitAsync(token);
+                    try
+                    {
+                        bitmap = await Task.Run(() =>
+                            SpectrogramGenerator.Generate(file.FilePath, 1200, 400,
+                                _spectrogramLinearScale, _spectrogramChannel,
+                                _spectrogramEndZoom ? 10 : 0,
+                                ThemeManager.SpectrogramHiFiMode,
+                                ThemeManager.SpectrogramMagmaColormap,
+                                token), token);
+                    }
+                    finally
+                    {
+                        _spectrogramSemaphore.Release();
+                    }
+                    if (bitmap != null)
+                    {
+                        if (_spectrogramCacheLru.Count >= SpectrogramCacheMaxEntries)
+                        {
+                            string? oldest = _spectrogramCacheLru.First?.Value;
+                            if (oldest != null) { _spectrogramCache.Remove(oldest); _spectrogramCacheLru.RemoveFirst(); }
+                        }
+                        _spectrogramCache[spectRefreshKey] = bitmap;
+                        _spectrogramCacheLru.AddLast(spectRefreshKey);
+                    }
                 }
 
                 if (token.IsCancellationRequested) return;
@@ -4488,6 +5779,8 @@ namespace AudioQualityChecker
             }
             catch (OperationCanceledException) { }
             catch { }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[RefreshSpectrogram] {ex}"); }
         }
 
         private void StartVisualizer()
@@ -4513,8 +5806,6 @@ namespace AudioQualityChecker
                 _circleElements = null;
                 _circleBrushes = null;
                 _scopeLine = null;
-                _kaleidoPolys = null;
-                _kaleidoBrushes = null;
                 _vuBlocks = null;
                 _vuBrushes = null;
                 StopVisualizerCycle();
@@ -4553,14 +5844,6 @@ namespace AudioQualityChecker
         // Oscilloscope system
         private System.Windows.Shapes.Polyline? _scopeLine;
 
-        // Abstract system — infinite zoom tunnel
-        private System.Windows.Shapes.Polygon[]? _kaleidoPolys;
-        private SolidColorBrush[]? _kaleidoBrushes;
-        private const int KaleidoRingCount = 14;   // concentric shape layers
-        private const int KaleidoSides = 8;        // sides per polygon ring
-        private double _kaleidoPhase;              // continuous zoom phase (0..1 wraps)
-        private double _kaleidoRotation;           // slow global spin
-
         // VU Meter system
         private System.Windows.Shapes.Rectangle[]? _vuBlocks;
         private SolidColorBrush[]? _vuBrushes;
@@ -4573,6 +5856,10 @@ namespace AudioQualityChecker
 
         private void Visualizer_Tick(object? sender, EventArgs e)
         {
+            // Skip rendering when window is minimized or hidden in tray
+            if (WindowState == WindowState.Minimized || !IsVisible)
+                return;
+
             if (!_player.IsPlaying && !_player.IsPaused)
             {
                 if (VizTarget.Children.Count > 0)
@@ -4582,7 +5869,7 @@ namespace AudioQualityChecker
                 _particleElements = null;
                 _circleElements = null;
                 _scopeLine = null;
-                _kaleidoPolys = null;
+               
                 _vuBlocks = null;
                 return;
             }
@@ -4684,15 +5971,14 @@ namespace AudioQualityChecker
                     RenderOscilloscope(width, height);
                     break;
                 case 5:
-                    RenderKaleidoscope(width, height, numBars);
-                    break;
-                case 6:
                     RenderVuMeter(width, height, numBars);
                     break;
                 default:
                     RenderClassicBars(width, height, numBars);
                     break;
             }
+
+            RenderPlaybarAnim();
         }
 
         // ── Classic Bars renderer ──
@@ -4705,14 +5991,14 @@ namespace AudioQualityChecker
 
             // Ensure we're in bars mode (clean up other styles)
             if (_particleElements != null || _circleElements != null || _scopeLine != null
-                || _kaleidoPolys != null || _vuBlocks != null)
+                || _vuBlocks != null)
             {
                 VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
                 _circleElements = null;
                 _scopeLine = null;
-                _kaleidoPolys = null;
+               
                 _vuBlocks = null;
                 _vizBars = null;
             }
@@ -4771,14 +6057,13 @@ namespace AudioQualityChecker
 
             // Ensure we're in mirrored mode (clean up other styles)
             if (_particleElements != null || _circleElements != null || _scopeLine != null
-                || _kaleidoPolys != null || _vuBlocks != null)
+                || _vuBlocks != null)
             {
                 VizTarget.Children.Clear();
                 _particleElements = null;
                 _particles = null;
                 _circleElements = null;
                 _scopeLine = null;
-                _kaleidoPolys = null;
                 _vuBlocks = null;
                 _vizBars = null;
                 _vizMirrorBars = null;
@@ -4866,14 +6151,13 @@ namespace AudioQualityChecker
 
             // Ensure we're in particle mode (clean up other styles)
             if (_vizBars != null || _circleElements != null || _scopeLine != null
-                || _kaleidoPolys != null || _vuBlocks != null)
+                || _vuBlocks != null)
             {
                 VizTarget.Children.Clear();
                 _vizBars = null;
                 _vizMirrorBars = null;
                 _circleElements = null;
                 _scopeLine = null;
-                _kaleidoPolys = null;
                 _vuBlocks = null;
                 _particleElements = null;
                 _particles = null;
@@ -5143,7 +6427,7 @@ namespace AudioQualityChecker
 
             // Clean up other mode elements
             if (_particleElements != null || _vizBars != null || _circleElements != null
-                || _kaleidoPolys != null || _vuBlocks != null)
+                || _vuBlocks != null)
             {
                 VizTarget.Children.Clear();
                 _particleElements = null;
@@ -5151,7 +6435,6 @@ namespace AudioQualityChecker
                 _vizBars = null;
                 _vizMirrorBars = null;
                 _circleElements = null;
-                _kaleidoPolys = null;
                 _vuBlocks = null;
                 _scopeLine = null;
             }
@@ -5212,154 +6495,6 @@ namespace AudioQualityChecker
             _scopeLine.Points = points;
         }
 
-        // ── Abstract renderer ──
-        // Infinite zoom tunnel: concentric polygon rings scale outward continuously
-        // Smoothed energy for organic, non-spazzy motion
-        private double _kaleidoSmoothedEnergy;
-        private void RenderKaleidoscope(double width, double height, int numBars)
-        {
-            var vizColors = ThemeManager.GetVisualizerColors();
-            var gradient = vizColors.ProgressGradient;
-            bool rainbow = ThemeManager.VisualizerRainbowEnabled;
-            double time = Environment.TickCount64 / 1000.0;
-
-            // Clean up other mode elements
-            if (_particleElements != null || _vizBars != null || _circleElements != null
-                || _scopeLine != null || _vuBlocks != null)
-            {
-                VizTarget.Children.Clear();
-                _particleElements = null;
-                _particles = null;
-                _vizBars = null;
-                _vizMirrorBars = null;
-                _circleElements = null;
-                _scopeLine = null;
-                _vuBlocks = null;
-                _kaleidoPolys = null;
-            }
-
-            // Initialize polygon ring elements
-            if (_kaleidoPolys == null || _kaleidoPolys.Length != KaleidoRingCount)
-            {
-                VizTarget.Children.Clear();
-                _kaleidoPolys = new System.Windows.Shapes.Polygon[KaleidoRingCount];
-                _kaleidoBrushes = new SolidColorBrush[KaleidoRingCount];
-                for (int i = 0; i < KaleidoRingCount; i++)
-                {
-                    _kaleidoBrushes[i] = new SolidColorBrush(Colors.White);
-                    _kaleidoPolys[i] = new System.Windows.Shapes.Polygon
-                    {
-                        Stroke = _kaleidoBrushes[i],
-                        StrokeThickness = 2.5,
-                        Fill = null,
-                        StrokeLineJoin = System.Windows.Media.PenLineJoin.Round,
-                        IsHitTestVisible = false
-                    };
-                    VizTarget.Children.Add(_kaleidoPolys[i]);
-                }
-                _kaleidoPhase = 0;
-                _kaleidoSmoothedEnergy = 0;
-            }
-
-            // Compute overall energy with heavy smoothing for organic feel
-            double rawEnergy = 0;
-            for (int b = 0; b < numBars; b++) rawEnergy += _vizSmoothed[b];
-            rawEnergy /= numBars;
-            // Heavy inertia: moderate attack, slow decay — responsive but smooth
-            if (rawEnergy > _kaleidoSmoothedEnergy)
-                _kaleidoSmoothedEnergy = rawEnergy * 0.25 + _kaleidoSmoothedEnergy * 0.75;
-            else
-                _kaleidoSmoothedEnergy = rawEnergy * 0.08 + _kaleidoSmoothedEnergy * 0.92;
-            double totalEnergy = _kaleidoSmoothedEnergy;
-
-            // Zoom speed: gentle base with moderate energy influence
-            double zoomSpeed = 0.14 + totalEnergy * 0.28;
-            _kaleidoPhase += zoomSpeed * (1.0 / 60.0);
-            if (_kaleidoPhase >= 1.0) _kaleidoPhase -= 1.0;
-
-            // Global rotation: smooth spin with energy push
-            _kaleidoRotation += (0.07 + totalEnergy * 0.18) * (1.0 / 60.0);
-
-            double cx = width / 2.0;
-            double cy = height / 2.0;
-            double maxRadius = Math.Sqrt(cx * cx + cy * cy) * 1.2;
-            double ringSpacing = 1.0 / KaleidoRingCount;
-
-            for (int ring = 0; ring < KaleidoRingCount; ring++)
-            {
-                double ringPhase = (_kaleidoPhase + ring * ringSpacing) % 1.0;
-
-                // Gentler exponential scale for smoother tunnel perspective
-                double scale = Math.Pow(2.0, ringPhase * 3.2) - 0.9;
-                double radius = scale * maxRadius * 0.08;
-
-                // Frequency band for this ring
-                int barIdx = Math.Clamp((int)((1.0 - ringPhase) * numBars), 0, numBars - 1);
-                double energy = _vizSmoothed[barIdx];
-
-                // Subtle radius pulse
-                radius *= (0.90 + energy * 0.20);
-
-                // Ring rotation with gentle per-ring variation
-                double ringRotation = _kaleidoRotation * (1.0 + ring * 0.04);
-                if (ring % 2 == 1) ringRotation = -ringRotation;
-
-                int sides = KaleidoSides + (ring % 3);
-
-                var points = new System.Windows.Media.PointCollection(sides);
-                for (int s = 0; s < sides; s++)
-                {
-                    double angle = ringRotation + s * 2 * Math.PI / sides;
-                    double r = radius;
-                    // Subtle star modulation
-                    if (s % 2 == 0)
-                        r *= (0.85 + energy * 0.25);
-
-                    points.Add(new System.Windows.Point(cx + Math.Cos(angle) * r, cy + Math.Sin(angle) * r));
-                }
-                _kaleidoPolys[ring].Points = points;
-
-                // Thickness: gentle scaling
-                double thickness = Math.Clamp(1.0 + scale * 0.3 + energy * 1.0, 1.0, 4.0);
-                _kaleidoPolys[ring].StrokeThickness = thickness;
-
-                Color color;
-                if (_npVisible && _npColorMatchEnabled && _npVizColorPrimary != default)
-                {
-                    color = GetBarColor(ring, KaleidoRingCount, energy, gradient, false, time);
-                }
-                else if (rainbow)
-                {
-                    double hue = (ringPhase + time * 0.05 + (double)ring / KaleidoRingCount * 0.3) % 1.0;
-                    color = HsvToColor(hue * 360, 0.8, 0.4 + energy * 0.5);
-                }
-                else
-                {
-                    double t = (ringPhase + time * 0.025) % 1.0;
-                    if (t < 0.5)
-                    {
-                        double f = t / 0.5;
-                        color = Color.FromRgb(
-                            (byte)(gradient[0].R + (gradient[1].R - gradient[0].R) * f),
-                            (byte)(gradient[0].G + (gradient[1].G - gradient[0].G) * f),
-                            (byte)(gradient[0].B + (gradient[1].B - gradient[0].B) * f));
-                    }
-                    else
-                    {
-                        double f = (t - 0.5) / 0.5;
-                        color = Color.FromRgb(
-                            (byte)(gradient[1].R + (gradient[2].R - gradient[1].R) * f),
-                            (byte)(gradient[1].G + (gradient[2].G - gradient[1].G) * f),
-                            (byte)(gradient[1].B + (gradient[2].B - gradient[1].B) * f));
-                    }
-                }
-
-                double fadeFactor = Math.Sin(ringPhase * Math.PI);
-                color.A = (byte)Math.Clamp(60 + fadeFactor * 160 + energy * 25, 30, 255);
-                _kaleidoBrushes![ring].Color = color;
-            }
-        }
-
         // ── VU Meter renderer ──
         // DJ-style blocky stacked blocks — classic retro stereo VU look
         private void RenderVuMeter(double width, double height, int numBars)
@@ -5373,7 +6508,7 @@ namespace AudioQualityChecker
 
             // Clean up other mode elements
             if (_particleElements != null || _vizBars != null || _circleElements != null
-                || _scopeLine != null || _kaleidoPolys != null)
+                || _scopeLine != null )
             {
                 VizTarget.Children.Clear();
                 _particleElements = null;
@@ -5382,7 +6517,7 @@ namespace AudioQualityChecker
                 _vizMirrorBars = null;
                 _circleElements = null;
                 _scopeLine = null;
-                _kaleidoPolys = null;
+               
                 _vuBlocks = null;
             }
 
@@ -5934,6 +7069,8 @@ namespace AudioQualityChecker
                 NpVolumeSlider.Value = VolumeSlider.Value;
                 NpUpdatePlayState();
                 NpUpdateShuffleIcon();
+                NpUpdateLoopIcon();
+                if (_npVisible) NpUpdateQueuePopup();
                 NpUpdateAutoPlayIcon();
                 NpUpdateVisualizerIcon();
                 NpUpdateColorMatchIcon();
@@ -5947,6 +7084,9 @@ namespace AudioQualityChecker
                 NpStartBgAnimation();
                 NpStartGlowPulse();
 
+                // Force lyric re-sync when reopening NP panel
+                _npLyricsNeedCatchUp = true;
+
                 if (_npVisualizerEnabled && _player.IsPlaying)
                     NpStartVisualizer();
                 else if (_visualizerActive && !_npVisualizerEnabled)
@@ -5956,6 +7096,8 @@ namespace AudioQualityChecker
                     StopVisualizer();
                     VisualizerCanvas.Children.Clear();
                 }
+
+
             }
             else
             {
@@ -5973,13 +7115,21 @@ namespace AudioQualityChecker
                     StartVisualizer();
                 }
 
-                // Restore slider accent to theme default when leaving NP
-                if (_npColorMatchEnabled)
+                // The NP panel may have written shared theme resources (PlaybarAccentColor,
+                // ButtonBg, ButtonHover, ButtonPressed, ButtonBorder) while it was visible.
+                // Decide who owns them on the main screen now:
+                //   main color match on  → re-apply main colors (overrides any NP residue)
+                //   main color match off → restore theme defaults (clears NP residue)
+                // The earlier "only when BOTH are off" guard left NP-tinted resources stuck
+                // on the main screen when only NP color match was enabled.
+                if (ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default)
+                {
+                    ApplyMainColorMatch();
+                }
+                else
                 {
                     var vizColors = ThemeManager.GetVisualizerColors();
                     Application.Current.Resources["PlaybarAccentColor"] = new SolidColorBrush(vizColors.ProgressGradient[0]);
-
-                    // Restore all button resources overridden by color match
                     ThemeManager.ApplyTheme(ThemeManager.CurrentTheme);
                     ApplyThemeTitleBar();
                 }
@@ -6051,14 +7201,34 @@ namespace AudioQualityChecker
                 NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run($"{file.Bpm} BPM") { Foreground = defaultBrush });
             }
 
+            // Add RIP quality inline (only if enabled and available)
+            if (ThemeManager.RipQualityEnabled && file.HasRipQuality)
+            {
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
+                var ripColor = file.RipQuality switch
+                {
+                    "Good" => System.Windows.Media.Color.FromRgb(0x4C, 0xC9, 0x4C),
+                    "Suspect" => System.Windows.Media.Color.FromRgb(0xFF, 0xA5, 0x00),
+                    "Bad" => System.Windows.Media.Color.FromRgb(0xFF, 0x5C, 0x5C),
+                    _ => System.Windows.Media.Color.FromRgb(0xFF, 0xA5, 0x00),
+                };
+                NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run(file.RipQualityDisplay)
+                {
+                    Foreground = new SolidColorBrush(ripColor),
+                    FontWeight = FontWeights.SemiBold
+                });
+            }
+
             // Build MQA / AI / quality tags
             NpTagsPanel.Children.Clear();
             if (file.IsMqa)
                 NpTagsPanel.Children.Add(NpCreateTag(file.IsMqaStudio ? "MQA Studio" : "MQA", "#00C2FF"));
             if (file.IsAlac)
                 NpTagsPanel.Children.Add(NpCreateTag("ALAC", "#7ACC52"));
-            if (file.IsAnyAiDetected)
+            if (file.AiVerdict == "Yes")
                 NpTagsPanel.Children.Add(NpCreateTag("AI", "#FF6B6B"));
+            else if (file.AiVerdict == "Possible")
+                NpTagsPanel.Children.Add(NpCreateTag("AI?", "#FFC107"));
             if (file.IsFakeStereo)
                 NpTagsPanel.Children.Add(NpCreateTag("Fake Stereo", "#FFA500"));
 
@@ -6075,11 +7245,12 @@ namespace AudioQualityChecker
                 _npTranslatedLines = null;
                 NpLyricsPanel.Children.Clear();
                 _npLyricsVersion++; // invalidate any in-flight lyrics fetch
+                _npLyricsNeedCatchUp = true;
             }
 
             if (!string.IsNullOrEmpty(file.FilePath))
             {
-                NpLoadCover(file.FilePath);
+                _ = NpLoadCoverAsync(file.FilePath);
                 if (!isSameTrack)
                     _ = NpLoadLyricsAsync(file.FilePath, file.Artist, file.Title);
             }
@@ -6110,44 +7281,90 @@ namespace AudioQualityChecker
             };
         }
 
-        private void NpLoadCover(string filePath)
+        private async Task NpLoadCoverAsync(string filePath)
         {
+            int gen = _npColorGeneration;
+            string cacheKey = HashPath(filePath);
             try
             {
-                var tagFile = TagLib.File.Create(filePath);
-                if (tagFile.Tag.Pictures.Length > 0)
+                // Check color cache first for instant application
+                if (ThemeManager.NpColorCacheEnabled && _npColorCache.TryGetValue(cacheKey, out var cachedColors))
                 {
-                    var pic = tagFile.Tag.Pictures[0];
-                    var imageData = pic.Data.Data;
-                    var bmp = new BitmapImage();
-                    bmp.BeginInit();
+                    _npColorCacheLru.Remove(cacheKey);
+                    _npColorCacheLru.AddLast(cacheKey);
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (gen != _npColorGeneration) return;
+                        // Still need to load the cover image
+                        try
+                        {
+                            using var tagFile = TagLib.File.Create(filePath);
+                            if (tagFile.Tag.Pictures.Length > 0)
+                            {
+                                var data = tagFile.Tag.Pictures[0].Data.Data;
+                                var b = new BitmapImage();
+                                b.BeginInit();
+                                using (var ms = new MemoryStream(data))
+                                {
+                                    b.StreamSource = ms;
+                                    b.CacheOption = BitmapCacheOption.OnLoad;
+                                    b.EndInit();
+                                }
+                                b.Freeze();
+                                NpCoverImage.Source = b;
+                                NpCoverImage.ClearValue(FrameworkElement.WidthProperty);
+                                NpCoverImage.ClearValue(FrameworkElement.HeightProperty);
+                                NpApplyFullscreenScaling(WindowState == WindowState.Maximized);
+                            }
+                        }
+                        catch { }
+                        ApplyNpExtractedColors(cachedColors);
+                    });
+                    return;
+                }
+
+                byte[]? imageData = await Task.Run(() =>
+                {
+                    using var tagFile = TagLib.File.Create(filePath);
+                    if (tagFile.Tag.Pictures.Length > 0)
+                        return tagFile.Tag.Pictures[0].Data.Data;
+                    return null;
+                });
+
+                if (imageData == null)
+                {
+                    Dispatcher.Invoke(() => { if (gen == _npColorGeneration) NpClearCover(); });
+                    return;
+                }
+
+                var bmp = await Task.Run(() =>
+                {
+                    var b = new BitmapImage();
+                    b.BeginInit();
                     using (var ms = new MemoryStream(imageData))
                     {
-                        bmp.StreamSource = ms;
-                        bmp.CacheOption = BitmapCacheOption.OnLoad;
-                        bmp.EndInit();
+                        b.StreamSource = ms;
+                        b.CacheOption = BitmapCacheOption.OnLoad;
+                        b.EndInit();
                     }
-                    bmp.Freeze();
+                    b.Freeze();
+                    return b;
+                });
 
+                Dispatcher.Invoke(() =>
+                {
+                    if (gen != _npColorGeneration) return;
                     NpCoverImage.Source = bmp;
-
-                    // Clear explicit dimensions — let MaxWidth/MaxHeight + Stretch="Uniform" handle sizing
                     NpCoverImage.ClearValue(FrameworkElement.WidthProperty);
                     NpCoverImage.ClearValue(FrameworkElement.HeightProperty);
-
-                    // Re-apply scaling constraints so MaxWidth/MaxHeight are current
                     NpApplyFullscreenScaling(WindowState == WindowState.Maximized);
+                });
 
-                    NpApplyGlow(imageData);
-                }
-                else
-                {
-                    NpClearCover();
-                }
+                await NpApplyGlowAsync(imageData, filePath, gen);
             }
             catch
             {
-                NpClearCover();
+                Dispatcher.Invoke(() => { if (gen == _npColorGeneration) NpClearCover(); });
             }
         }
 
@@ -6161,6 +7378,9 @@ namespace AudioQualityChecker
             NpBgGradient.Background = Brushes.Transparent;
             NpCoverShadow.Color = Colors.Black;
             NpCoverShadow.Opacity = 0.4;
+            _npAlbumPrimary = default;
+            _npAlbumSecondary = default;
+            _npAlbumBackground = default;
         }
 
         private void NpCoverBorder_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -6168,62 +7388,244 @@ namespace AudioQualityChecker
             NpCoverClip.Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
         }
 
-        private void NpApplyGlow(byte[] imageData)
+        /// <summary>
+        /// Pre-computes the next track's album-art colors in the background so
+        /// track switching feels instant. Cancelled automatically when the user
+        /// skips before the preload completes.
+        /// </summary>
+        private void PreloadNextTrackColors()
+        {
+            _npPreloadCts?.Cancel();
+            _npPreloadCts = new CancellationTokenSource();
+            var ct = _npPreloadCts.Token;
+
+            var nextTrack = GetNextTrackForGapless();
+            if (nextTrack == null) return;
+            string path = nextTrack.FilePath;
+
+            // If already cached, nothing to do
+            if (_npColorCache.ContainsKey(HashPath(path))) return;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    byte[]? imageData = null;
+                    await Task.Run(() =>
+                    {
+                        using var tagFile = TagLib.File.Create(path);
+                        if (tagFile.Tag.Pictures.Length > 0)
+                            imageData = tagFile.Tag.Pictures[0].Data.Data;
+                    }, ct);
+
+                    if (imageData == null || ct.IsCancellationRequested) return;
+
+                    var colors = await Task.Run(() =>
+                    {
+                        var bmp = new BitmapImage();
+                        bmp.BeginInit();
+                        using (var ms = new MemoryStream(imageData))
+                        {
+                            bmp.StreamSource = ms;
+                            bmp.CacheOption = BitmapCacheOption.OnLoad;
+                            bmp.EndInit();
+                        }
+                        bmp.Freeze();
+
+                        var converted = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
+                        int stride = converted.PixelWidth * 4;
+                        var pixels = new byte[stride * converted.PixelHeight];
+                        converted.CopyPixels(pixels, stride, 0);
+
+                        return AlbumColorExtractor.Extract(pixels, converted.PixelWidth, converted.PixelHeight, stride);
+                    }, ct);
+
+                    if (!ct.IsCancellationRequested)
+                        StoreNpColorInCache(path, colors);
+                }
+                catch { /* preload is best-effort */ }
+            });
+        }
+
+        private void StoreNpColorInCache(string filePath, AlbumColorExtractor.DominantColors colors)
+        {
+            if (!ThemeManager.NpColorCacheEnabled) return;
+            string key = HashPath(filePath);
+            if (_npColorCacheLru.Count >= NpColorCacheMaxEntries)
+            {
+                string? oldest = _npColorCacheLru.First?.Value;
+                if (oldest != null) { _npColorCache.Remove(oldest); _npColorCacheLru.RemoveFirst(); }
+            }
+            _npColorCache[key] = colors;
+            _npColorCacheLru.Remove(key);
+            _npColorCacheLru.AddLast(key);
+        }
+
+        private static string HashPath(string path)
+        {
+            using var sha = SHA256.Create();
+            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(path.ToLowerInvariant()));
+            return Convert.ToHexString(bytes);
+        }
+
+        private string NpColorCacheFilePath =>
+            System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "AudioAuditor", "np_color_cache.json");
+
+        private void LoadNpColorCacheFromDisk()
+        {
+            if (!ThemeManager.NpColorCachePersist) return;
+            try
+            {
+                var path = NpColorCacheFilePath;
+                if (!File.Exists(path)) return;
+                var json = File.ReadAllText(path);
+                var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("entries", out var entries)) return;
+                foreach (var entry in entries.EnumerateArray())
+                {
+                    if (!entry.TryGetProperty("key", out var keyEl)) continue;
+                    if (!entry.TryGetProperty("primary", out var pri)) continue;
+                    if (!entry.TryGetProperty("secondary", out var sec)) continue;
+                    if (!entry.TryGetProperty("background", out var bg)) continue;
+                    string key = keyEl.GetString() ?? "";
+                    if (string.IsNullOrEmpty(key)) continue;
+                    var colors = new AlbumColorExtractor.DominantColors(
+                        new AlbumColorExtractor.Color((byte)pri.GetProperty("r").GetInt32(), (byte)pri.GetProperty("g").GetInt32(), (byte)pri.GetProperty("b").GetInt32()),
+                        new AlbumColorExtractor.Color((byte)sec.GetProperty("r").GetInt32(), (byte)sec.GetProperty("g").GetInt32(), (byte)sec.GetProperty("b").GetInt32()),
+                        new AlbumColorExtractor.Color(0, 0, 0),
+                        new AlbumColorExtractor.Color((byte)bg.GetProperty("r").GetInt32(), (byte)bg.GetProperty("g").GetInt32(), (byte)bg.GetProperty("b").GetInt32()),
+                        new AlbumColorExtractor.Color(0, 0, 0)
+                    );
+                    _npColorCache[key] = colors;
+                    _npColorCacheLru.AddLast(key);
+                    if (_npColorCacheLru.Count > NpColorCacheMaxEntries)
+                    {
+                        string? oldest = _npColorCacheLru.First?.Value;
+                        if (oldest != null) { _npColorCache.Remove(oldest); _npColorCacheLru.RemoveFirst(); }
+                    }
+                }
+            }
+            catch { /* best effort */ }
+        }
+
+        private void SaveNpColorCacheToDisk()
+        {
+            if (!ThemeManager.NpColorCachePersist) return;
+            try
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("{\"entries\":[");
+                bool first = true;
+                foreach (var kvp in _npColorCache)
+                {
+                    if (!first) sb.AppendLine(",");
+                    first = false;
+                    var c = kvp.Value;
+                    sb.Append($"{{\"key\":\"{kvp.Key}\",\"primary\":{{\"r\":{c.Primary.R},\"g\":{c.Primary.G},\"b\":{c.Primary.B}}},\"secondary\":{{\"r\":{c.Secondary.R},\"g\":{c.Secondary.G},\"b\":{c.Secondary.B}}},\"background\":{{\"r\":{c.Background.R},\"g\":{c.Background.G},\"b\":{c.Background.B}}}}}");
+                }
+                sb.AppendLine();
+                sb.AppendLine("]}");
+                var path = NpColorCacheFilePath;
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, sb.ToString());
+            }
+            catch { /* best effort */ }
+        }
+
+        private void ApplyNpExtractedColors(AlbumColorExtractor.DominantColors colors)
+        {
+            var primaryColor = System.Windows.Media.Color.FromRgb(
+                colors.Primary.R, colors.Primary.G, colors.Primary.B);
+            var secondaryColor = System.Windows.Media.Color.FromRgb(
+                colors.Secondary.R, colors.Secondary.G, colors.Secondary.B);
+            var backgroundColor = System.Windows.Media.Color.FromRgb(
+                colors.Background.R, colors.Background.G, colors.Background.B);
+
+            _npAlbumPrimary = primaryColor;
+            _npAlbumSecondary = secondaryColor;
+            _npAlbumBackground = backgroundColor;
+
+            NpCoverGlow1.Background = new SolidColorBrush(primaryColor);
+            NpCoverGlow2.Background = new SolidColorBrush(secondaryColor);
+
+            NpCoverShadow.Color = primaryColor;
+            NpCoverShadow.Opacity = 0.6;
+
+            var bg1 = System.Windows.Media.Color.FromArgb(220,
+                colors.Background.R, colors.Background.G, colors.Background.B);
+            var bg2 = System.Windows.Media.Color.FromArgb(200,
+                (byte)(colors.Background.R / 4),
+                (byte)(colors.Background.G / 4),
+                (byte)(colors.Background.B / 4));
+            NpBgGradient.Background = new LinearGradientBrush(bg1, bg2, 45);
+
+            NpApplyColorMatchMode();
+
+            // Belt-and-suspenders: schedule a second re-apply at ContextIdle so any
+            // resource writes that race with this one (e.g. LoadMainCoverColors finishing
+            // in the same dispatch frame) get overridden by the album colors. The visible
+            // screen wins shared resources — when on main, main runs last; when on NP, NP runs last.
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_npVisible)
+                {
+                    if (ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default)
+                        ApplyMainColorMatch();
+                    if (_npColorMatchEnabled && _npAlbumPrimary != default)
+                        NpApplyColorMatchMode();
+                }
+                else
+                {
+                    if (_npColorMatchEnabled && _npAlbumPrimary != default)
+                        NpApplyColorMatchMode();
+                    if (ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default)
+                        ApplyMainColorMatch();
+                }
+            }), System.Windows.Threading.DispatcherPriority.ContextIdle);
+        }
+
+        private async Task NpApplyGlowAsync(byte[] imageData, string? cacheKey = null, int generation = -1)
         {
             try
             {
-                // Convert to BGRA32 for color extraction
-                var bmp = new BitmapImage();
-                bmp.BeginInit();
-                using (var ms = new MemoryStream(imageData))
+                var colors = await Task.Run(() =>
                 {
-                    bmp.StreamSource = ms;
-                    bmp.CacheOption = BitmapCacheOption.OnLoad;
-                    bmp.EndInit();
-                }
-                bmp.Freeze();
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    using (var ms = new MemoryStream(imageData))
+                    {
+                        bmp.StreamSource = ms;
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.EndInit();
+                    }
+                    bmp.Freeze();
 
-                var converted = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
-                int stride = converted.PixelWidth * 4;
-                var pixels = new byte[stride * converted.PixelHeight];
-                converted.CopyPixels(pixels, stride, 0);
+                    var converted = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
+                    int stride = converted.PixelWidth * 4;
+                    var pixels = new byte[stride * converted.PixelHeight];
+                    converted.CopyPixels(pixels, stride, 0);
 
-                var colors = AlbumColorExtractor.Extract(pixels, converted.PixelWidth, converted.PixelHeight, stride);
+                    return AlbumColorExtractor.Extract(pixels, converted.PixelWidth, converted.PixelHeight, stride);
+                });
 
-                var primaryColor = System.Windows.Media.Color.FromRgb(
-                    colors.Primary.R, colors.Primary.G, colors.Primary.B);
-                var secondaryColor = System.Windows.Media.Color.FromRgb(
-                    colors.Secondary.R, colors.Secondary.G, colors.Secondary.B);
+                if (cacheKey != null)
+                    StoreNpColorInCache(cacheKey, colors);
 
-                // Store album colors for color-match theming
-                _npAlbumPrimary = primaryColor;
-                _npAlbumSecondary = secondaryColor;
-                _npAlbumBackground = System.Windows.Media.Color.FromRgb(
-                    colors.Background.R, colors.Background.G, colors.Background.B);
-
-                // Glow borders use album colors
-                NpCoverGlow1.Background = new SolidColorBrush(primaryColor);
-                NpCoverGlow2.Background = new SolidColorBrush(secondaryColor);
-
-                // DropShadow colored from the album's primary color
-                NpCoverShadow.Color = primaryColor;
-                NpCoverShadow.Opacity = 0.6;
-
-                // Background gradient from album colors (fuller, more saturated)
-                var bg1 = System.Windows.Media.Color.FromArgb(220,
-                    colors.Background.R, colors.Background.G, colors.Background.B);
-                var bg2 = System.Windows.Media.Color.FromArgb(200,
-                    (byte)(colors.Background.R / 4),
-                    (byte)(colors.Background.G / 4),
-                    (byte)(colors.Background.B / 4));
-                NpBgGradient.Background = new LinearGradientBrush(bg1, bg2, 45);
-
-                // Apply color-match mode
-                NpApplyColorMatchMode();
+                Dispatcher.Invoke(() =>
+                {
+                    if (generation >= 0 && generation != _npColorGeneration) return;
+                    ApplyNpExtractedColors(colors);
+                });
             }
             catch
             {
-                NpBgGradient.Background = Brushes.Transparent;
+                Dispatcher.Invoke(() =>
+                {
+                    if (generation >= 0 && generation != _npColorGeneration) return;
+                    NpBgGradient.Background = Brushes.Transparent;
+                });
             }
         }
 
@@ -6252,8 +7654,35 @@ namespace AudioQualityChecker
             // If the track changed while we were fetching, discard stale results
             if (version != _npLyricsVersion) return;
 
+            // Normalize whitespace in fetched lyrics to prevent garbled display
+            if (result.HasLyrics)
+            {
+                var normalizedLines = result.Lines
+                    .Select(l => new LyricLine(l.Time,
+                        System.Text.RegularExpressions.Regex.Replace(l.Text, @"\s+", " ").Trim()))
+                    .ToList();
+                result = result with { Lines = normalizedLines };
+            }
+
             _npCurrentLyrics = result;
+            _npCurrentLyricIndex = -1;
             NpBuildLyricLines();
+            _npLyricsNeedCatchUp = true;
+
+            // Auto-save timed lyrics if enabled and no .lrc exists
+            if (_npCurrentLyrics.IsTimed && ThemeManager.NpAutoSaveLyricsEnabled && _player?.CurrentFile != null)
+            {
+                string lrcPath = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(_player.CurrentFile)!,
+                    System.IO.Path.GetFileNameWithoutExtension(_player.CurrentFile) + ".lrc");
+                if (!File.Exists(lrcPath))
+                {
+                    try { NpSaveLyricsToLrc(_player.CurrentFile); }
+                    catch { }
+                }
+            }
+
+            Dispatcher.InvokeAsync(() => NpUpdateSaveLyricsButton());
 
             // Force immediate lyric sync — the song may already be well into playback
             // by the time the async lyrics load completes, so kick the highlight now
@@ -6261,12 +7690,12 @@ namespace AudioQualityChecker
             if (_npCurrentLyrics.IsTimed && _player != null)
             {
                 _npCurrentLyricIndex = -1;
-                // Dispatch at Loaded priority so the layout pass completes first
+                // Dispatch at Render priority so the layout pass completes first
                 Dispatcher.InvokeAsync(() =>
                 {
                     if (version != _npLyricsVersion) return;
                     NpUpdateLyricHighlight(_player.CurrentPosition);
-                }, System.Windows.Threading.DispatcherPriority.Loaded);
+                }, System.Windows.Threading.DispatcherPriority.Render);
             }
         }
 
@@ -6284,6 +7713,16 @@ namespace AudioQualityChecker
                 Margin = new Thickness(0, 20, 0, 0)
             };
             NpLyricsPanel.Children.Add(status);
+
+            // Restore lyrics panel after 2 seconds
+            var restoreTimer = new System.Windows.Threading.DispatcherTimer
+                { Interval = TimeSpan.FromSeconds(2) };
+            restoreTimer.Tick += (_, _) =>
+            {
+                restoreTimer.Stop();
+                NpBuildLyricLines();
+            };
+            restoreTimer.Start();
         }
 
         private void NpBuildLyricLines()
@@ -6330,7 +7769,10 @@ namespace AudioQualityChecker
                 // Karaoke mode: build word-by-word Runs; otherwise plain text
                 if (_npKaraokeEnabled && _npCurrentLyrics.IsTimed)
                 {
-                    var words = line.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    // Split on whitespace and punctuation so words illuminate cleanly
+                    var words = System.Text.RegularExpressions.Regex.Split(line.Text, @"\s+|[,.\-—!?;:\(\)\[\]""]+")
+                        .Where(w => !string.IsNullOrEmpty(w))
+                        .ToArray();
                     foreach (var word in words)
                     {
                         var run = new System.Windows.Documents.Run(word + " ")
@@ -6353,20 +7795,26 @@ namespace AudioQualityChecker
                     var capturedLyrics = _npCurrentLyrics; // capture for closure safety
                     tb.MouseLeftButtonDown += (s, e) =>
                     {
-                        if (capturedLyrics != _npCurrentLyrics) return; // stale lyrics
-                        if (lineIndex < capturedLyrics.Lines.Count && _player != null)
+                        try
                         {
+                            if (capturedLyrics != _npCurrentLyrics) return; // stale lyrics
+                            if (lineIndex >= capturedLyrics.Lines.Count || _player == null) return;
                             var seekTime = capturedLyrics.Lines[lineIndex].Time;
+                            if (_player.TotalDuration.TotalSeconds <= 0) return;
                             _player.Seek(seekTime.TotalSeconds);
                             _lastSeekTime = DateTime.UtcNow;
+                            _lastSeekTargetPosition = seekTime;
 
                             // Update NP seek slider without triggering seek feedback
-                            NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
-                            NpSeekSlider.Value = seekTime.TotalSeconds;
-                            NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+                            if (NpSeekSlider != null)
+                            {
+                                NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+                                NpSeekSlider.Value = seekTime.TotalSeconds;
+                                NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+                            }
 
                             // Also update main seek slider
-                            if (SeekSlider.Maximum > 0)
+                            if (SeekSlider?.Maximum > 0)
                                 SeekSlider.Value = seekTime.TotalSeconds / _player.TotalDuration.TotalSeconds * SeekSlider.Maximum;
 
                             // Resume playback if paused
@@ -6377,7 +7825,32 @@ namespace AudioQualityChecker
                             _npCurrentLyricIndex = -1;
                             NpUpdateLyricHighlight(seekTime);
                         }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Lyric seek error: {ex.Message}");
+                        }
                     };
+
+                    // Right-click context menu
+                    var menu = new ContextMenu();
+                    var saveItem = new MenuItem { Header = "Save Lyrics as .lrc" };
+                    saveItem.Click += (_, _) =>
+                    {
+                        if (_player?.CurrentFile != null)
+                        {
+                            try
+                            {
+                                NpSaveLyricsToLrc(_player.CurrentFile);
+                                NpShowLyricStatus("Lyrics saved to .lrc");
+                            }
+                            catch (Exception ex)
+                            {
+                                NpShowLyricStatus($"Save failed: {ex.Message}");
+                            }
+                        }
+                    };
+                    menu.Items.Add(saveItem);
+                    tb.ContextMenu = menu;
                 }
 
                 _npLyricTextBlocks.Add(tb);
@@ -6417,16 +7890,21 @@ namespace AudioQualityChecker
 
         private void NpUpdateLyricHighlight(TimeSpan position)
         {
-            if (!_npCurrentLyrics.IsTimed || _npLyricTextBlocks.Count == 0) return;
+            var lyrics = _npCurrentLyrics; // capture reference to prevent mid-method replacement
+            if (!lyrics.IsTimed || _npLyricTextBlocks.Count == 0) return;
 
             // Use custom lyrics size if set, otherwise window-state default
             bool fs = WindowState == WindowState.Maximized;
             double baseLyricSize = _npLyricsSize > 0 ? _npLyricsSize : (fs ? 22 : 18);
 
+            // Add 120 ms lookahead to compensate for NAudio audio-buffer lag —
+            // the reported position trails actual playback by one buffer length (~50–200 ms)
+            var lookAhead = position + TimeSpan.FromMilliseconds(120);
+
             int newIdx = -1;
-            for (int i = _npCurrentLyrics.Lines.Count - 1; i >= 0; i--)
+            for (int i = lyrics.Lines.Count - 1; i >= 0; i--)
             {
-                if (position >= _npCurrentLyrics.Lines[i].Time)
+                if (lookAhead >= lyrics.Lines[i].Time)
                 {
                     newIdx = i;
                     break;
@@ -6436,7 +7914,8 @@ namespace AudioQualityChecker
             bool lineChanged = newIdx != _npCurrentLyricIndex;
 
             // In karaoke mode, update word progress on active line even without line change
-            if (!lineChanged && _npKaraokeEnabled && newIdx >= 0 && newIdx < _npLyricTextBlocks.Count)
+            if (!lineChanged && _npKaraokeEnabled && newIdx >= 0 && newIdx < _npLyricTextBlocks.Count
+                && _npLyricTextBlocks[newIdx] != null)
             {
                 NpAnimateKaraokeWords(_npLyricTextBlocks[newIdx], newIdx, position);
                 return;
@@ -6553,10 +8032,14 @@ namespace AudioQualityChecker
             var runs = tb.Inlines.OfType<System.Windows.Documents.Run>().ToList();
             if (runs.Count == 0) return;
 
+            // Capture reference to protect against concurrent lyrics replacement
+            var lyrics = _npCurrentLyrics;
+            if (lineIdx >= lyrics.Lines.Count) return;
+
             // Calculate how far through this line we are (0.0 to 1.0)
-            var lineStart = _npCurrentLyrics.Lines[lineIdx].Time;
-            var lineEnd = lineIdx + 1 < _npCurrentLyrics.Lines.Count
-                ? _npCurrentLyrics.Lines[lineIdx + 1].Time
+            var lineStart = lyrics.Lines[lineIdx].Time;
+            var lineEnd = lineIdx + 1 < lyrics.Lines.Count
+                ? lyrics.Lines[lineIdx + 1].Time
                 : lineStart + TimeSpan.FromSeconds(4); // default 4s for last line
 
             double lineDuration = (lineEnd - lineStart).TotalMilliseconds;
@@ -6564,14 +8047,26 @@ namespace AudioQualityChecker
             double elapsed = (position - lineStart).TotalMilliseconds;
             double progress = Math.Clamp(elapsed / lineDuration, 0, 1);
 
-            // Smooth gradient sweep: each word fades in over a soft transition zone
+            // Build character-count-proportional word start positions so longer words get more dwell time
+            var wordLengths = runs.Select(r => Math.Max(1, r.Text.Length)).ToArray();
+            int totalChars = wordLengths.Sum();
+            double[] wordStartFrac = new double[runs.Count];
+            double accumulated = 0;
+            for (int i = 0; i < runs.Count; i++)
+            {
+                wordStartFrac[i] = accumulated / totalChars;
+                accumulated += wordLengths[i];
+            }
+
             var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
             var dur = TimeSpan.FromMilliseconds(200);
-            double transitionWidth = 1.5 / runs.Count; // smooth zone spans ~1.5 words
+            double transitionWidth = Math.Max(0.05, 1.0 / runs.Count); // sharp zone spans ~1 word
 
             for (int w = 0; w < runs.Count; w++)
             {
-                double wordCenter = (w + 0.5) / runs.Count;
+                // Word center is halfway between its start and the next word's start
+                double wordEnd = w + 1 < runs.Count ? wordStartFrac[w + 1] : 1.0;
+                double wordCenter = (wordStartFrac[w] + wordEnd) / 2.0;
                 // Compute smooth illumination factor (0 = dim, 1 = fully lit)
                 double factor = Math.Clamp((progress - wordCenter + transitionWidth / 2) / transitionWidth, 0, 1);
 
@@ -6579,7 +8074,7 @@ namespace AudioQualityChecker
                 byte a = (byte)(90 + (255 - 90) * factor);
                 byte rgb = (byte)(180 + (255 - 180) * factor); // slight warmth when dim
                 var targetColor = System.Windows.Media.Color.FromArgb(a, 255, rgb, rgb);
-                if (factor >= 0.95) targetColor = Colors.White; // snap to pure white when nearly lit
+                if (factor >= 0.85) targetColor = Colors.White; // snap to pure white when mostly lit
 
                 var brush = runs[w].Foreground as SolidColorBrush;
                 if (brush == null || brush.IsFrozen)
@@ -6646,7 +8141,18 @@ namespace AudioQualityChecker
             }
 
             NpUpdatePlayState();
-            NpUpdateLyricHighlight(pos);
+
+            // During seek cooldown, use the last seek target for lyrics to avoid NAudio position lag
+            bool lyricSeekCooldown = (DateTime.UtcNow - _lastSeekTime).TotalMilliseconds < 500;
+            var lyricPos = lyricSeekCooldown ? _lastSeekTargetPosition : pos;
+            NpUpdateLyricHighlight(lyricPos);
+
+            if (_npLyricsNeedCatchUp)
+            {
+                _npLyricsNeedCatchUp = false;
+                _npCurrentLyricIndex = -1;
+                NpUpdateLyricHighlight(lyricPos);
+            }
         }
 
         private void NpUpdatePlayState()
@@ -6678,6 +8184,161 @@ namespace AudioQualityChecker
 
         // ─── NP Control Events ───
 
+        private void NpSaveLyricsToLrc(string audioFilePath)
+        {
+            if (!_npCurrentLyrics.HasLyrics) return;
+            string lrcPath = System.IO.Path.Combine(
+                System.IO.Path.GetDirectoryName(audioFilePath)!,
+                System.IO.Path.GetFileNameWithoutExtension(audioFilePath) + ".lrc");
+
+            var lines = new System.Collections.Generic.List<string>();
+            if (!string.IsNullOrEmpty(_npCurrentLyrics.Title))
+                lines.Add($"[ti:{_npCurrentLyrics.Title}]");
+            if (!string.IsNullOrEmpty(_npCurrentLyrics.Artist))
+                lines.Add($"[ar:{_npCurrentLyrics.Artist}]");
+            if (!string.IsNullOrEmpty(_npCurrentLyrics.Album))
+                lines.Add($"[al:{_npCurrentLyrics.Album}]");
+
+            if (_npCurrentLyrics.IsTimed)
+            {
+                foreach (var line in _npCurrentLyrics.Lines)
+                {
+                    int min = (int)line.Time.TotalMinutes;
+                    int sec = line.Time.Seconds;
+                    int cs = (int)(line.Time.Milliseconds / 10.0);
+                    string normalized = System.Text.RegularExpressions.Regex.Replace(line.Text, @"\s+", " ").Trim();
+                    lines.Add($"[{min:D2}:{sec:D2}.{cs:D2}]{normalized}");
+                }
+            }
+            else
+            {
+                foreach (var line in _npCurrentLyrics.Lines)
+                    lines.Add(System.Text.RegularExpressions.Regex.Replace(line.Text, @"\s+", " ").Trim());
+            }
+
+            File.WriteAllLines(lrcPath, lines);
+        }
+
+        private void NpSaveLyrics_Click(object sender, RoutedEventArgs e)
+        {
+            if (NpSaveLyricsBtn?.ContextMenu != null)
+                NpSaveLyricsBtn.ContextMenu.IsOpen = true;
+        }
+
+        private void NpSaveLyricsMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            bool hasLyrics = _player.CurrentFile != null && _npCurrentLyrics.HasLyrics;
+            if (NpSaveLyricsNowItem != null)
+                NpSaveLyricsNowItem.IsEnabled = hasLyrics;
+            if (NpAutoSaveLyricsToggleItem != null)
+                NpAutoSaveLyricsToggleItem.IsChecked = ThemeManager.NpAutoSaveLyricsEnabled;
+            if (NpSaveAllLyricsItem != null)
+                NpSaveAllLyricsItem.IsEnabled = _player.CurrentFile != null && _files.Count > 0;
+        }
+
+        private void NpSaveLyricsNow_Click(object sender, RoutedEventArgs e)
+        {
+            if (_player.CurrentFile == null || !_npCurrentLyrics.HasLyrics) return;
+            try
+            {
+                NpSaveLyricsToLrc(_player.CurrentFile);
+                NpShowLyricStatus("Lyrics saved to .lrc");
+            }
+            catch (Exception ex)
+            {
+                NpShowLyricStatus($"Save failed: {ex.Message}");
+            }
+        }
+
+        private void NpAutoSaveLyricsToggle_Click(object sender, RoutedEventArgs e)
+        {
+            ThemeManager.NpAutoSaveLyricsEnabled = !ThemeManager.NpAutoSaveLyricsEnabled;
+            ThemeManager.SavePlayOptions();
+            NpUpdateSaveLyricsButton();
+        }
+
+        private async void NpSaveAllLyricsNow_Click(object sender, RoutedEventArgs e)
+        {
+            if (_player.CurrentFile == null || _files.Count == 0) return;
+            string currentFolder = System.IO.Path.GetDirectoryName(_player.CurrentFile)!;
+            var folderFiles = _files.Where(f =>
+                string.Equals(System.IO.Path.GetDirectoryName(f.FilePath), currentFolder, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (folderFiles.Count == 0) return;
+
+            NpShowLyricStatus($"Saving lyrics for {folderFiles.Count} songs...");
+            int savedCount = 0;
+
+            await Task.Run(() =>
+            {
+                foreach (var file in folderFiles)
+                {
+                    string lrcPath = System.IO.Path.Combine(
+                        currentFolder,
+                        System.IO.Path.GetFileNameWithoutExtension(file.FilePath) + ".lrc");
+                    if (File.Exists(lrcPath)) continue;
+
+                    try
+                    {
+                        var lyrics = LyricService.GetLyrics(file.FilePath, _npLyricProvider);
+                        if (lyrics.HasLyrics)
+                        {
+                            var lines = new System.Collections.Generic.List<string>();
+                            if (!string.IsNullOrEmpty(lyrics.Title))
+                                lines.Add($"[ti:{lyrics.Title}]");
+                            if (!string.IsNullOrEmpty(lyrics.Artist))
+                                lines.Add($"[ar:{lyrics.Artist}]");
+                            if (!string.IsNullOrEmpty(lyrics.Album))
+                                lines.Add($"[al:{lyrics.Album}]");
+
+                            if (lyrics.IsTimed)
+                            {
+                                foreach (var line in lyrics.Lines)
+                                {
+                                    int min = (int)line.Time.TotalMinutes;
+                                    int sec = line.Time.Seconds;
+                                    int cs = (int)(line.Time.Milliseconds / 10.0);
+                                    string normalized = System.Text.RegularExpressions.Regex.Replace(line.Text, @"\s+", " ").Trim();
+                                    lines.Add($"[{min:D2}:{sec:D2}.{cs:D2}]{normalized}");
+                                }
+                            }
+                            else
+                            {
+                                foreach (var line in lyrics.Lines)
+                                    lines.Add(System.Text.RegularExpressions.Regex.Replace(line.Text, @"\s+", " ").Trim());
+                            }
+
+                            File.WriteAllLines(lrcPath, lines);
+                            savedCount++;
+                        }
+                    }
+                    catch { /* best-effort per file */ }
+                }
+            });
+
+            NpShowLyricStatus($"Saved {savedCount} lyric files");
+        }
+
+        private void NpUpdateSaveLyricsButton()
+        {
+            if (NpSaveLyricsBtn == null || NpSaveLyricsIcon == null) return;
+            bool hasLyrics = _player?.CurrentFile != null && _npCurrentLyrics.HasLyrics;
+            NpSaveLyricsBtn.IsEnabled = hasLyrics;
+            if (!hasLyrics)
+            {
+                NpSaveLyricsIcon.Stroke = (Brush)FindResource("TextMuted");
+                return;
+            }
+            if (ThemeManager.NpAutoSaveLyricsEnabled)
+            {
+                NpSaveLyricsIcon.Stroke = (Brush)FindResource("AccentColor");
+            }
+            else
+            {
+                NpSaveLyricsIcon.Stroke = (Brush)FindResource("TextMuted");
+            }
+        }
+
         private void NpPlayPause_Click(object sender, RoutedEventArgs e)
         {
             if (_player == null) return;
@@ -6698,6 +8359,11 @@ namespace AudioQualityChecker
             NpUpdateShuffleIcon();
         }
 
+        private void NpLoop_Click(object sender, RoutedEventArgs e)
+        {
+            CycleLoopMode();
+        }
+
         private void NpUpdateShuffleIcon()
         {
             if (NpShuffleIcon == null) return;
@@ -6705,10 +8371,12 @@ namespace AudioQualityChecker
             var inactiveColor = NpGetIconBrush(false);
             NpShuffleIcon.Stroke = _shuffleMode ? activeColor : inactiveColor;
             NpShuffleBtn.ToolTip = _shuffleMode ? "Shuffle: ON" : "Shuffle: OFF";
+            NpSetToggleBg(NpShuffleBtn, _shuffleMode);
         }
 
         private void NpLyricSource_Click(object sender, RoutedEventArgs e)
         {
+            _npLyricsVersion++; // invalidate any in-flight lyrics fetch from previous provider
             _npProviderIndex = (_npProviderIndex + 1) % NpLyricProviders.Length;
             _npLyricProvider = NpLyricProviders[_npProviderIndex].Provider;
             NpProviderBtn.ToolTip = $"Provider: {NpLyricProviders[_npProviderIndex].Name}";
@@ -6808,13 +8476,25 @@ namespace AudioQualityChecker
 
         private void NpSeekSlider_MouseUp(object sender, MouseButtonEventArgs e)
         {
+            // If thumb was being dragged, DragCompleted handles the seek — skip here
+            var thumb = FindVisualChild<System.Windows.Controls.Primitives.Thumb>(NpSeekSlider);
+            if (thumb != null && thumb.IsDragging)
+            {
+                return;
+            }
+
             if (_player != null && _player.TotalDuration.TotalSeconds > 0 && NpSeekSlider.Maximum > 0)
             {
                 _player.Seek(NpSeekSlider.Value);
                 _lastSeekTime = DateTime.UtcNow;
+                _lastSeekTargetPosition = TimeSpan.FromSeconds(NpSeekSlider.Value);
 
                 // Sync main slider
                 SeekSlider.Value = NpSeekSlider.Value / NpSeekSlider.Maximum * SeekSlider.Maximum;
+
+                // Force immediate lyric re-sync to seek target
+                _npCurrentLyricIndex = -1;
+                NpUpdateLyricHighlight(_lastSeekTargetPosition);
             }
             _npIsSeeking = false;
         }
@@ -6825,14 +8505,118 @@ namespace AudioQualityChecker
             {
                 _player.Seek(NpSeekSlider.Value);
                 _lastSeekTime = DateTime.UtcNow;
+                _lastSeekTargetPosition = TimeSpan.FromSeconds(NpSeekSlider.Value);
 
                 // Sync main slider
                 SeekSlider.Value = NpSeekSlider.Value / NpSeekSlider.Maximum * SeekSlider.Maximum;
+
+                // Force immediate lyric re-sync to seek target
+                _npCurrentLyricIndex = -1;
+                NpUpdateLyricHighlight(_lastSeekTargetPosition);
             }
             _npIsSeeking = false;
         }
 
+        private void NpSeekSlider_MouseMove(object sender, MouseEventArgs e)
+        {
+            UpdateSeekTooltip(NpSeekSlider, e);
+        }
+
         private void NpBack_Click(object sender, RoutedEventArgs e) => ToggleNowPlaying(false);
+
+        // ─── NP Queue ───
+
+        private void NpQueue_Click(object sender, RoutedEventArgs e)
+        {
+            var queueWindow = new QueueWindow(_queue) { Owner = this, UpNext = GetUpNextTracks() };
+            queueWindow.ShowDialog();
+            NpUpdateQueuePopup();
+        }
+
+        private void NpUpdateQueuePopup()
+        {
+            NpQueuePopupContent.Children.Clear();
+
+            var upcoming = new List<(int idx, string text)>();
+
+            // 1. Queue items
+            for (int i = 0; i < Math.Min(_queue.Count, 5); i++)
+            {
+                var q = _queue[i];
+                string title = !string.IsNullOrWhiteSpace(q.Title) ? q.Title : q.FileName ?? "Unknown";
+                string artist = !string.IsNullOrWhiteSpace(q.Artist) ? q.Artist : "";
+                upcoming.Add((i + 1, string.IsNullOrEmpty(artist) ? title : $"{title} — {artist}"));
+            }
+
+            // 2. If queue is empty, show next track from shuffle/sequential
+            if (upcoming.Count == 0 && _player.CurrentFile != null)
+            {
+                var current = _files.FirstOrDefault(f =>
+                    string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                if (current != null)
+                {
+                    int currentIdx = _files.IndexOf(current);
+                    AudioFileInfo? next = null;
+                    if (_shuffleMode && _shuffleDeck.Count > 0)
+                    {
+                        // Find current in shuffle deck and show next
+                        int deckIdx = _shuffleDeck.FindIndex(f => f.FilePath == current.FilePath);
+                        if (deckIdx >= 0 && deckIdx + 1 < _shuffleDeck.Count)
+                            next = _shuffleDeck[deckIdx + 1];
+                    }
+                    else if (currentIdx >= 0 && currentIdx + 1 < _files.Count)
+                    {
+                        next = _files[currentIdx + 1];
+                    }
+
+                    if (next != null)
+                    {
+                        string title = !string.IsNullOrWhiteSpace(next.Title) ? next.Title : next.FileName ?? "Unknown";
+                        string artist = !string.IsNullOrWhiteSpace(next.Artist) ? next.Artist : "";
+                        upcoming.Add((1, string.IsNullOrEmpty(artist) ? title : $"{title} — {artist}"));
+                    }
+                }
+            }
+
+            if (upcoming.Count == 0)
+            {
+                NpQueuePopupContent.Children.Add(new TextBlock
+                {
+                    Text = "No upcoming tracks.",
+                    FontSize = 12,
+                    FontFamily = new FontFamily("Segoe UI"),
+                    Foreground = (Brush)FindResource("TextMuted"),
+                    Margin = new Thickness(0, 4, 0, 0)
+                });
+                return;
+            }
+
+            foreach (var (idx, text) in upcoming)
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3, 0, 3) };
+                row.Children.Add(new TextBlock
+                {
+                    Text = $"{idx}.",
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    FontFamily = new FontFamily("Segoe UI"),
+                    Foreground = (Brush)FindResource("AccentColor"),
+                    Margin = new Thickness(0, 0, 8, 0),
+                    Width = 18,
+                    TextAlignment = TextAlignment.Right
+                });
+                row.Children.Add(new TextBlock
+                {
+                    Text = text,
+                    FontSize = 12,
+                    FontFamily = new FontFamily("Segoe UI"),
+                    Foreground = (Brush)FindResource("TextPrimary"),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxWidth = 260
+                });
+                NpQueuePopupContent.Children.Add(row);
+            }
+        }
 
         // ─── NP Auto-Play Toggle ───
 
@@ -6851,6 +8635,7 @@ namespace AudioQualityChecker
             NpAutoPlayIcon.Fill = brush;
             NpAutoPlayIcon.Stroke = brush;
             NpAutoPlayBtn.ToolTip = ThemeManager.AutoPlayNext ? "Auto-play: ON" : "Auto-play: OFF";
+            NpSetToggleBg(NpAutoPlayBtn, ThemeManager.AutoPlayNext);
         }
 
         // ─── NP Visualizer Toggle ───
@@ -6865,6 +8650,10 @@ namespace AudioQualityChecker
                 NpStartVisualizer();
             else
                 NpStopVisualizer();
+
+            // Re-scale cover/text proportions so a single slider setting looks consistent in both modes
+            NpApplyFullscreenScaling(WindowState == WindowState.Maximized);
+
             NpSavePreferences();
         }
 
@@ -6874,6 +8663,7 @@ namespace AudioQualityChecker
             var inactive = NpGetIconBrush(false);
             NpVisualizerIcon.Stroke = _npVisualizerEnabled ? active : inactive;
             NpVisualizerBtn.ToolTip = _npVisualizerEnabled ? "Visualizer: ON" : "Visualizer: OFF";
+            NpSetToggleBg(NpVisualizerBtn, _npVisualizerEnabled);
         }
 
         private void NpUpdateVizPlacementIcon()
@@ -6939,7 +8729,7 @@ namespace AudioQualityChecker
             _particleElements = null;
             _circleElements = null;
             _scopeLine = null;
-            _kaleidoPolys = null;
+           
             _vuBlocks = null;
         }
 
@@ -6982,6 +8772,8 @@ namespace AudioQualityChecker
             _npVisualizerStyle = style;
             // Apply the style to the shared visualizer renderer
             _visualizerStyle = style;
+            ThemeManager.VisualizerStyle = style;
+            UpdateVisualizerStyleText();
             ClearVisualizerCaches();
             NpVisualizerCanvas.Children.Clear();
             NpUnderCoverVizCanvas.Children.Clear();
@@ -7006,6 +8798,7 @@ namespace AudioQualityChecker
             NpColorMatchIcon.Stroke = _npColorMatchEnabled ? active : inactive;
             NpColorMatchFill.Fill = _npColorMatchEnabled ? active : inactive;
             NpColorMatchBtn.ToolTip = _npColorMatchEnabled ? "Color match: ON" : "Color match: OFF";
+            NpSetToggleBg(NpColorMatchBtn, _npColorMatchEnabled);
         }
 
         /// <summary>
@@ -7016,24 +8809,41 @@ namespace AudioQualityChecker
         {
             if (_npColorMatchEnabled && _npAlbumPrimary != default)
             {
+                // Active: white so it pops regardless of album color.
+                // Inactive: album color + small boost, clearly dimmer than active.
                 if (active)
-                    return new SolidColorBrush(System.Windows.Media.Color.FromRgb(
-                        (byte)Math.Min(255, _npAlbumPrimary.R + 120),
-                        (byte)Math.Min(255, _npAlbumPrimary.G + 120),
-                        (byte)Math.Min(255, _npAlbumPrimary.B + 120)));
+                    return new SolidColorBrush(Colors.White);
                 else
                     return new SolidColorBrush(System.Windows.Media.Color.FromRgb(
-                        (byte)Math.Min(255, _npAlbumPrimary.R + 80),
-                        (byte)Math.Min(255, _npAlbumPrimary.G + 80),
-                        (byte)Math.Min(255, _npAlbumPrimary.B + 80)));
+                        (byte)Math.Min(255, _npAlbumPrimary.R + 60),
+                        (byte)Math.Min(255, _npAlbumPrimary.G + 60),
+                        (byte)Math.Min(255, _npAlbumPrimary.B + 60)));
             }
             return (Brush)FindResource(active ? "TextPrimary" : "TextMuted");
         }
 
+        // Sets the background of a toggle button to a dim white pill when active, transparent when inactive.
+        private static void NpSetToggleBg(System.Windows.Controls.Button btn, bool active)
+        {
+            btn.Background = active
+                ? new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x28, 255, 255, 255))
+                : System.Windows.Media.Brushes.Transparent;
+        }
+
+        private System.Windows.Media.Color EnsureMinLuminance(System.Windows.Media.Color c, byte minLum)
+        {
+            double lum = 0.299 * c.R + 0.587 * c.G + 0.114 * c.B;
+            if (lum >= minLum) return c;
+            double factor = minLum / Math.Max(lum, 1);
+            return System.Windows.Media.Color.FromRgb(
+                (byte)Math.Min(255, (int)(c.R * factor)),
+                (byte)Math.Min(255, (int)(c.G * factor)),
+                (byte)Math.Min(255, (int)(c.B * factor)));
+        }
+
         private void NpApplyColorMatchMode()
         {
-            if (_npColorMatchEnabled && NpCoverImage.Source != null
-                && _npAlbumPrimary != default)
+            if (_npColorMatchEnabled && _npAlbumPrimary != default)
             {
                 // Background: stronger gradient, minimal dark overlay
                 NpBgGradient.Opacity = 1.0;
@@ -7072,7 +8882,7 @@ namespace AudioQualityChecker
                         (byte)Math.Min(255, _npAlbumPrimary.G + 60),
                         (byte)Math.Min(255, _npAlbumPrimary.B + 60)));
 
-                // Tint Up Next badge to match album colors
+                // Tint Queue badge to match album colors
                 NpNextTrackBorder.Background = new SolidColorBrush(
                     System.Windows.Media.Color.FromArgb(50,
                         _npAlbumPrimary.R, _npAlbumPrimary.G, _npAlbumPrimary.B));
@@ -7116,6 +8926,7 @@ namespace AudioQualityChecker
                 // Tint all option button icons in the bottom bar
                 // (use individual update methods so active/inactive state is respected)
                 NpUpdateShuffleIcon();
+                NpUpdateLoopIcon();
                 NpUpdateAutoPlayIcon();
                 NpUpdateVisualizerIcon();
                 NpUpdateVizPlacementIcon();
@@ -7128,12 +8939,12 @@ namespace AudioQualityChecker
                 NpVizStyleIcon.Stroke = iconTint;
                 NpProviderCircle.Stroke = iconTint;
                 NpProviderArc.Stroke = new SolidColorBrush(bright);
-                NpLoadLrcBody.Stroke = iconTint;
-                NpLoadLrcFold.Stroke = iconTint;
+                NpSaveLyricsIcon.Stroke = iconTint;
                 NpSettingsGear.Stroke = iconTint;
                 NpSettingsCenter.Stroke = iconTint;
                 NpTranslateSettingsIcon.Stroke = iconTint;
                 NpLayoutIcon.Stroke = iconTint;
+                NpQueueIcon.Foreground = iconTint;
 
                 // Seek and Volume sliders: tint the accent color
                 var sliderAccent = new SolidColorBrush(bright);
@@ -7175,8 +8986,9 @@ namespace AudioQualityChecker
                 catch { }
 
                 // Store colors for visualizer tinting (used by render methods)
-                _npVizColorPrimary = _npAlbumPrimary;
-                _npVizColorSecondary = _npAlbumSecondary;
+                // Boost to minimum luminance so bars are clearly visible
+                _npVizColorPrimary = EnsureMinLuminance(_npAlbumPrimary, 120);
+                _npVizColorSecondary = EnsureMinLuminance(_npAlbumSecondary, 120);
             }
             else
             {
@@ -7191,7 +9003,7 @@ namespace AudioQualityChecker
                 NpSongArtist.Foreground = (Brush)FindResource("TextSecondary");
                 NpSongSpecs.Foreground = (Brush)FindResource("TextSecondary");
 
-                // Restore Up Next badge to defaults
+                // Restore Queue badge to defaults
                 NpNextTrackBorder.Background = (Brush)FindResource("ButtonBg");
                 NpNextTrackLabel.Foreground = (Brush)FindResource("TextPrimary");
                 NpNextTrackText.Foreground = (Brush)FindResource("TextPrimary");
@@ -7209,6 +9021,7 @@ namespace AudioQualityChecker
 
                 // Restore option button icon colors (use individual methods for active/inactive state)
                 NpUpdateShuffleIcon();
+                NpUpdateLoopIcon();
                 NpUpdateAutoPlayIcon();
                 NpUpdateVisualizerIcon();
                 NpUpdateVizPlacementIcon();
@@ -7222,26 +9035,249 @@ namespace AudioQualityChecker
                 NpVizStyleIcon.Stroke = muted;
                 NpProviderCircle.Stroke = muted;
                 NpProviderArc.Stroke = (Brush)FindResource("AccentColor");
-                NpLoadLrcBody.Stroke = muted;
-                NpLoadLrcFold.Stroke = muted;
+                NpSaveLyricsIcon.Stroke = muted;
                 NpSettingsGear.Stroke = muted;
                 NpSettingsCenter.Stroke = muted;
                 NpTranslateSettingsIcon.Stroke = muted;
                 NpLayoutIcon.Stroke = muted;
+                NpQueueIcon.Foreground = muted;
 
-                // Restore slider accent to theme default
-                var vizColors = ThemeManager.GetVisualizerColors();
-                Application.Current.Resources["PlaybarAccentColor"] = new SolidColorBrush(vizColors.ProgressGradient[0]);
+                // Only nuke shared theme resources when BOTH color matches are off.
+                // If main-window color match is on, ApplyTheme would wipe its AccentColor /
+                // BorderColor / ButtonHover / SelectionBg / PlaybarAccentColor — which is
+                // exactly the "skipping a track reverts to default theme" bug, since the
+                // NP path runs synchronously on a cache hit, before LoadMainCoverColors
+                // finishes (or at all, if the new track has no album art).
+                if (!_npColorMatchEnabled && !ThemeManager.MainColorMatchEnabled)
+                {
+                    // Restore slider accent to theme default
+                    var vizColors = ThemeManager.GetVisualizerColors();
+                    Application.Current.Resources["PlaybarAccentColor"] = new SolidColorBrush(vizColors.ProgressGradient[0]);
 
-                // Restore button backgrounds/hover/pressed/border to theme defaults
-                ThemeManager.ApplyTheme(ThemeManager.CurrentTheme);
-
-                // Restore titlebar to theme default
-                ApplyThemeTitleBar();
+                    // Restore button backgrounds/hover/pressed/border to theme defaults
+                    ThemeManager.ApplyTheme(ThemeManager.CurrentTheme);
+                    // Restore titlebar to theme default
+                    ApplyThemeTitleBar();
+                }
 
                 _npVizColorPrimary = default;
                 _npVizColorSecondary = default;
             }
+        }
+
+        // ═══════════════════════════════════════════
+        //  Main Window Color Match
+        // ═══════════════════════════════════════════
+
+        private async void LoadMainCoverColors(string filePath)
+        {
+            int gen = _npColorGeneration;
+
+            // Fast-path: if colors are already cached, apply instantly so the main
+            // window doesn't flash the default theme while TagLib + image decode runs.
+            string cacheKey = HashPath(filePath);
+            if (ThemeManager.NpColorCacheEnabled && _npColorCache.TryGetValue(cacheKey, out var cachedColors))
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (gen != _npColorGeneration) return;
+                    _mainAlbumPrimary = System.Windows.Media.Color.FromRgb(cachedColors.Primary.R, cachedColors.Primary.G, cachedColors.Primary.B);
+                    _mainAlbumSecondary = System.Windows.Media.Color.FromRgb(cachedColors.Secondary.R, cachedColors.Secondary.G, cachedColors.Secondary.B);
+                    ApplyMainColorMatch();
+                });
+                // Fall through to re-extract and update cache in the background.
+            }
+
+            try
+            {
+            try
+            {
+                using var tagFile = await Task.Run(() => TagLib.File.Create(filePath));
+                if (tagFile.Tag.Pictures.Length == 0)
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (gen != _npColorGeneration) return;
+                        if (!ThemeManager.MainColorMatchEnabled)
+                        {
+                            _mainAlbumPrimary = default;
+                            _mainAlbumSecondary = default;
+                            RestoreMainColorMatch();
+                        }
+                        else if (_mainAlbumPrimary != default)
+                        {
+                            // Color match is on but new track has no art — re-apply the
+                            // previous track's colors so they survive any intervening
+                            // theme reset (e.g. NP cache-hit calling ApplyTheme).
+                            ApplyMainColorMatch();
+                        }
+                    });
+                    return;
+                }
+
+                var imageData = tagFile.Tag.Pictures[0].Data.Data;
+                var colors = await Task.Run(() =>
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    using (var ms = new MemoryStream(imageData))
+                    {
+                        bmp.StreamSource = ms;
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.EndInit();
+                    }
+                    bmp.Freeze();
+                    var converted = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
+                    int stride = converted.PixelWidth * 4;
+                    var pixels = new byte[stride * converted.PixelHeight];
+                    converted.CopyPixels(pixels, stride, 0);
+                    return AlbumColorExtractor.Extract(pixels, converted.PixelWidth, converted.PixelHeight, stride);
+                });
+
+                Dispatcher.Invoke(() =>
+                {
+                    if (gen != _npColorGeneration) return;
+                    _mainAlbumPrimary = System.Windows.Media.Color.FromRgb(colors.Primary.R, colors.Primary.G, colors.Primary.B);
+                    _mainAlbumSecondary = System.Windows.Media.Color.FromRgb(colors.Secondary.R, colors.Secondary.G, colors.Secondary.B);
+                    ApplyMainColorMatch();
+
+                    // Belt-and-suspenders: schedule a second re-apply at ContextIdle so that
+                    // anything that wrote theme resources during this same dispatch frame
+                    // (e.g. NP cache-hit path firing concurrently) gets overridden by the
+                    // album colors. Idempotent — safe to fire even if no reset happened.
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (gen != _npColorGeneration) return;
+                        if (ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default)
+                            ApplyMainColorMatch();
+                        if (_npColorMatchEnabled && _npAlbumPrimary != default)
+                            NpApplyColorMatchMode();
+                    }), System.Windows.Threading.DispatcherPriority.ContextIdle);
+                });
+            }
+            catch
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (gen != _npColorGeneration) return;
+                    if (!ThemeManager.MainColorMatchEnabled)
+                    {
+                        _mainAlbumPrimary = default;
+                        _mainAlbumSecondary = default;
+                        RestoreMainColorMatch();
+                    }
+                    else if (_mainAlbumPrimary != default)
+                    {
+                        // Same fallback as the no-pictures branch above.
+                        ApplyMainColorMatch();
+                    }
+                });
+            }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[LoadMainCoverColors] {ex}"); }
+        }
+
+        private void ApplyMainColorMatch()
+        {
+            if (!ThemeManager.MainColorMatchEnabled)
+            {
+                RestoreMainColorMatch();
+                return;
+            }
+            if (_mainAlbumPrimary == default)
+            {
+                // Keep previous track's colors until new ones are ready
+                return;
+            }
+
+            // Boost primary/secondary to minimum luminance 140 so they're always readable as accents
+            var brightPrimary = EnsureAccentReadable(_mainAlbumPrimary, 140);
+            var brightSecondary = EnsureAccentReadable(_mainAlbumSecondary, 110);
+
+            // Derive darker tints for theme resources
+            var accentBrush = new SolidColorBrush(brightPrimary);
+            var borderBrush = new SolidColorBrush(Darken(brightPrimary, 0.55));
+            var hoverBrush = new SolidColorBrush(Darken(brightPrimary, 0.40));
+            var selectionBrush = new SolidColorBrush(Darken(brightPrimary, 0.30));
+
+            Application.Current.Resources["AccentColor"] = accentBrush;
+            Application.Current.Resources["BorderColor"] = borderBrush;
+            Application.Current.Resources["ButtonHover"] = hoverBrush;
+            Application.Current.Resources["SelectionBg"] = selectionBrush;
+            Application.Current.Resources["PlaybarAccentColor"] = accentBrush;
+
+            // Tint main playback icons
+            PlayIcon.Fill = accentBrush;
+            PauseIcon.Fill = accentBrush;
+
+            // Tint shuffle / loop / volume icons
+            var secondaryBrush = new SolidColorBrush(brightSecondary);
+            ShuffleIcon.Stroke = secondaryBrush;
+            LoopIcon.Stroke = secondaryBrush;
+            VolumeIconPath.Fill = secondaryBrush;
+            VolumeIconPath.Stroke = secondaryBrush;
+
+            // Tint spectrogram title
+            SpectrogramTitle.Foreground = accentBrush;
+
+            NpUpdateSaveLyricsButton();
+        }
+
+        private void RestoreMainColorMatch()
+        {
+            if (ThemeManager.MainColorMatchEnabled) return;
+            ThemeManager.ApplyTheme(ThemeManager.CurrentTheme);
+
+            PlayIcon.Fill = (Brush)FindResource("TextPrimary");
+            PauseIcon.Fill = (Brush)FindResource("TextPrimary");
+            ShuffleIcon.Stroke = (Brush)FindResource("TextMuted");
+            LoopIcon.Stroke = (Brush)FindResource("TextMuted");
+            VolumeIconPath.Fill = (Brush)FindResource("TextMuted");
+            VolumeIconPath.Stroke = (Brush)FindResource("TextMuted");
+            SpectrogramTitle.Foreground = (Brush)FindResource("TextPrimary");
+
+            NpUpdateSaveLyricsButton();
+        }
+
+        internal void UpdateOfflineBadge()
+        {
+            if (TxtOfflineBadge == null) return;
+            TxtOfflineBadge.Visibility = ThemeManager.OfflineModeEnabled
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Shows a non-intrusive status message when the user tries to use an online feature while offline.
+        /// Uses a cooldown to avoid spamming the user.
+        /// </summary>
+        private void ShowOfflineNotice(string featureName)
+        {
+            if (!ThemeManager.OfflineModeEnabled) return;
+            var now = DateTime.UtcNow;
+            if ((now - _lastOfflineNoticeTime).TotalSeconds < 30) return;
+            _lastOfflineNoticeTime = now;
+            StatusText.Text = $"{featureName} is unavailable in offline mode. Enable online mode in Settings to use it.";
+        }
+
+        private static System.Windows.Media.Color EnsureAccentReadable(System.Windows.Media.Color c, int minLum)
+        {
+            double lum = 0.299 * c.R + 0.587 * c.G + 0.114 * c.B;
+            if (lum >= minLum) return c;
+            double factor = minLum / Math.Max(lum, 1);
+            return System.Windows.Media.Color.FromRgb(
+                (byte)Math.Min(255, (int)(c.R * factor)),
+                (byte)Math.Min(255, (int)(c.G * factor)),
+                (byte)Math.Min(255, (int)(c.B * factor)));
+        }
+
+        private static System.Windows.Media.Color Darken(System.Windows.Media.Color c, double factor)
+        {
+            // factor 0 = black, 1 = original color
+            return System.Windows.Media.Color.FromRgb(
+                (byte)(c.R * factor),
+                (byte)(c.G * factor),
+                (byte)(c.B * factor));
         }
 
         // ─── NP Layout Customization ───
@@ -7349,6 +9385,7 @@ namespace AudioQualityChecker
                 UpdateServiceButtonLabels();
                 ApplyThemeTitleBar();
                 UpdateShuffleUI();
+                UpdateLoopUI();
                 _eqSliderTemplateCache = null;
                 InitializeEqualizerSliders();
                 ChkEqEnabled.IsChecked = ThemeManager.EqualizerEnabled;
@@ -7356,7 +9393,7 @@ namespace AudioQualityChecker
                 // Sync Discord RPC state
                 if (ThemeManager.DiscordRpcEnabled && !string.IsNullOrWhiteSpace(ThemeManager.DiscordRpcClientId))
                 {
-                    if (!_discord.IsEnabled) _discord.Enable(); else _discord.Enable();
+                    if (!_discord.IsEnabled) _discord.Enable(); else _discord.Disable();
                 }
                 else if (_discord.IsEnabled) _discord.Disable();
 
@@ -7396,6 +9433,10 @@ namespace AudioQualityChecker
                 NpStopVisualizer();
                 NpStartVisualizer();
             }
+
+            // Different placements use different scale factors — re-apply
+            NpApplyFullscreenScaling(WindowState == WindowState.Maximized);
+
             NpSavePreferences();
         }
 
@@ -7421,14 +9462,14 @@ namespace AudioQualityChecker
                 NpVizPlacementIcon.Data = System.Windows.Media.Geometry.Parse("M 1,6 L 8,6 M 1,10 L 8,10");
             }
 
-            // Adjust title/UpNext spacing relative to album cover glow.
+            // Adjust title/Queue spacing relative to album cover glow.
             // Glow extends ~24px outside cover. When viz ON, push title UP
-            // (big bottom margin = gap above cover) and UpNext DOWN (big top margin)
+            // (big bottom margin = gap above cover) and Queue DOWN (big top margin)
             // so they sit outside the blur. When viz OFF, bring them back closer.
             bool fullscreen = WindowState == WindowState.Maximized;
             if (fullscreen)
             {
-                // Fullscreen: push title DOWN (big top margin) and UpNext UP (small top margin)
+                // Fullscreen: push title DOWN (big top margin) and Queue UP (small top margin)
                 NpBigTitleBorder.Margin = _npVisualizerEnabled
                     ? new Thickness(8, 80, 8, 36)
                     : new Thickness(8, 80, 8, 4);
@@ -7460,9 +9501,22 @@ namespace AudioQualityChecker
             int subSz = _npSubTextSize > 0 ? _npSubTextSize : defSub;
             int lyricsSz = _npLyricsSize > 0 ? _npLyricsSize : defLyrics;
 
-            // Album cover — MaxWidth/MaxHeight constrain size; clip handled by SizeChanged
-            NpCoverImage.MaxWidth = coverSz;
-            NpCoverImage.MaxHeight = coverSz;
+            // Auto-scale cover when visualizer is on so a single slider value looks proportional in both modes
+            // (without this, viz-OFF lets the cover stretch to fill freed grid space, viz-ON caps it smaller)
+            double vizScale = !_npVisualizerEnabled ? 1.0
+                            : (_npVizPlacement == 0 ? 0.78  // full-width viz bar consumes vertical room
+                                                    : 0.85); // under-cover viz row
+            int renderedCover = (int)Math.Round(coverSz * vizScale);
+
+            // Don't force a square box — let the image take its natural aspect ratio
+            // within renderedCover × renderedCover bounds. Stretch="Uniform" + MaxWidth/MaxHeight
+            // makes wide thumbnails (e.g. 16:9) render at their real ratio instead of being
+            // letterboxed inside a square. The wrapping Border sizes to the Image, so glows
+            // and the DropShadowEffect adopt the same aspect automatically.
+            NpCoverImage.ClearValue(FrameworkElement.WidthProperty);
+            NpCoverImage.ClearValue(FrameworkElement.HeightProperty);
+            NpCoverImage.MaxWidth = renderedCover;
+            NpCoverImage.MaxHeight = renderedCover;
 
             // Title/artist widths based on available column width (decoupled from cover size)
             double colWidth = Math.Max(300, (ActualWidth - 96) / 2); // 96 = margins 32+32+16+16
@@ -7528,6 +9582,25 @@ namespace AudioQualityChecker
             _npLyricsHidden = !_npLyricsHidden;
             NpApplyLyricsOffMode();
             NpUpdateLyricsOffIcon();
+
+            // Auto-switch visualizer placement to match context
+            if (_npVisualizerEnabled)
+            {
+                int newPlacement = _npLyricsHidden ? 0 : 1; // art-only → full-width, lyrics → under-cover
+                if (_npVizPlacement != newPlacement)
+                {
+                    _npVizPlacement = newPlacement;
+                    NpApplyVizPlacement();
+
+                    // Restart visualizer to re-route canvas target
+                    if (_player != null && _player.IsPlaying)
+                    {
+                        StopVisualizer();
+                        StartVisualizer();
+                    }
+                }
+            }
+
             NpSavePreferences();
         }
 
@@ -7551,11 +9624,9 @@ namespace AudioQualityChecker
 
         private void NpUpdateLyricsOffIcon()
         {
-            var active = _npColorMatchEnabled && _npAlbumPrimary != default
-                ? NpGetIconBrush(true) : (Brush)FindResource("AccentColor");
-            var inactive = NpGetIconBrush(false);
-            NpLyricsOffIcon.Stroke = _npLyricsHidden ? active : inactive;
+            NpLyricsOffIcon.Stroke = NpGetIconBrush(_npLyricsHidden);
             NpLyricsOffBtn.ToolTip = _npLyricsHidden ? "Show lyrics" : "Hide lyrics (art mode)";
+            NpSetToggleBg(NpLyricsOffBtn, _npLyricsHidden);
         }
 
         // ─── NP Translation ───
@@ -7567,6 +9638,13 @@ namespace AudioQualityChecker
 
             if (_npTranslateEnabled)
             {
+                if (ThemeManager.OfflineModeEnabled)
+                {
+                    ShowOfflineNotice("Lyric translation");
+                    _npTranslateEnabled = false;
+                    NpUpdateTranslateIcon();
+                    return;
+                }
                 NpTranslateSettingsBtn.Visibility = Visibility.Visible;
                 _ = NpTranslateLyricsAsync();
             }
@@ -7582,11 +9660,9 @@ namespace AudioQualityChecker
 
         private void NpUpdateTranslateIcon()
         {
-            var active = _npColorMatchEnabled && _npAlbumPrimary != default
-                ? NpGetIconBrush(true) : (Brush)FindResource("AccentColor");
-            var inactive = NpGetIconBrush(false);
-            NpTranslateIcon.Stroke = _npTranslateEnabled ? active : inactive;
+            NpTranslateIcon.Stroke = NpGetIconBrush(_npTranslateEnabled);
             NpTranslateBtn.ToolTip = _npTranslateEnabled ? "Translation: ON" : "Translate lyrics";
+            NpSetToggleBg(NpTranslateBtn, _npTranslateEnabled);
         }
 
         private void NpTranslateSettings_Click(object sender, RoutedEventArgs e)
@@ -7629,6 +9705,11 @@ namespace AudioQualityChecker
                 _npTranslateFrom = lang;
                 if (_npTranslateEnabled)
                 {
+                    if (ThemeManager.OfflineModeEnabled)
+                    {
+                        ShowOfflineNotice("Lyric translation");
+                        return;
+                    }
                     _npTranslatedLines = null;
                     _ = NpTranslateLyricsAsync();
                 }
@@ -7642,6 +9723,11 @@ namespace AudioQualityChecker
                 _npTranslateTo = lang;
                 if (_npTranslateEnabled)
                 {
+                    if (ThemeManager.OfflineModeEnabled)
+                    {
+                        ShowOfflineNotice("Lyric translation");
+                        return;
+                    }
                     _npTranslatedLines = null;
                     _ = NpTranslateLyricsAsync();
                 }
@@ -7650,10 +9736,11 @@ namespace AudioQualityChecker
 
         private async Task NpTranslateLyricsAsync()
         {
-            if (!_npCurrentLyrics.HasLyrics) return;
+            var lyrics = _npCurrentLyrics; // capture reference before async work
+            if (!lyrics.HasLyrics) return;
             int version = _npLyricsVersion; // snapshot to detect track change
 
-            var lines = _npCurrentLyrics.Lines.Select(l => l.Text).ToList();
+            var lines = lyrics.Lines.Select(l => l.Text).ToList();
             if (lines.Count == 0) return;
 
             // Detect source language if set to auto
@@ -7706,11 +9793,9 @@ namespace AudioQualityChecker
 
         private void NpUpdateKaraokeIcon()
         {
-            var active = _npColorMatchEnabled && _npAlbumPrimary != default
-                ? NpGetIconBrush(true) : (Brush)FindResource("AccentColor");
-            var inactive = NpGetIconBrush(false);
-            NpKaraokeIcon.Stroke = _npKaraokeEnabled ? active : inactive;
+            NpKaraokeIcon.Stroke = NpGetIconBrush(_npKaraokeEnabled);
             NpKaraokeBtn.ToolTip = _npKaraokeEnabled ? "Karaoke: ON" : "Karaoke word-by-word";
+            NpSetToggleBg(NpKaraokeBtn, _npKaraokeEnabled);
         }
 
         // ─── NP Double-click Album Art → Tag Editor ───
@@ -7768,7 +9853,7 @@ namespace AudioQualityChecker
                     NpNextTrackLabel.Text = "Artist:  ";
                     NpNextTrackText.Text = artist;
                     NpNextTrackBorder.Visibility = Visibility.Visible;
-                    NpNextTrackBorder.ToolTip = "Click to show Up Next";
+                    NpNextTrackBorder.ToolTip = "Click to show Queue";
                 }
                 else
                 {
@@ -7777,7 +9862,7 @@ namespace AudioQualityChecker
                 return;
             }
 
-            // Up Next mode
+            // Queue preview mode
             AudioFileInfo? nextTrack = null;
 
             try
@@ -7957,6 +10042,11 @@ namespace AudioQualityChecker
 
         private async void NpSearchLyrics_Click(object sender, RoutedEventArgs e)
         {
+            if (ThemeManager.OfflineModeEnabled)
+            {
+                ShowOfflineNotice("Online lyrics search");
+                return;
+            }
             if (_player.CurrentFile == null) return;
 
             var currentFile = _files.FirstOrDefault(f =>
@@ -8108,7 +10198,7 @@ namespace AudioQualityChecker
             }
             else if (e.Key == Key.Enter && FileGrid.SelectedItem is AudioFileInfo playFile)
             {
-                PlayFile(playFile);
+                PlayFile(playFile, isManualSkip: true);
                 e.Handled = true;
             }
             else if (e.Key == Key.Space && !SearchBox.IsFocused)

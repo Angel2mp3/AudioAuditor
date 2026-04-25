@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -40,9 +41,9 @@ namespace AudioQualityChecker
             // Populate playbar theme combo
             foreach (var pt in ThemeManager.AvailablePlaybarThemes)
                 PlaybarCombo.Items.Add(pt);
-            PlaybarCombo.SelectedItem = ThemeManager.CurrentPlaybarTheme;
-
-
+            PlaybarCombo.SelectedItem = ThemeManager.IsPlaybarFollowingTheme
+                ? "Follow Theme"
+                : ThemeManager.CurrentPlaybarTheme;
 
             // Populate visualizer theme combo
             foreach (var vt in ThemeManager.AvailableVisualizerThemes)
@@ -57,6 +58,12 @@ namespace AudioQualityChecker
             ChkCrossfade.IsChecked = ThemeManager.Crossfade;
             CrossfadeSlider.Value = ThemeManager.CrossfadeDuration;
             CrossfadeDurationLabel.Text = $"{ThemeManager.CrossfadeDuration}s";
+            ChkCrossfadeOnManualSkip.IsChecked = ThemeManager.CrossfadeOnManualSkip;
+            foreach (ComboBoxItem item in CrossfadeCurveCombo.Items)
+                if (item.Tag?.ToString() == ThemeManager.CrossfadeCurve.ToString())
+                    { CrossfadeCurveCombo.SelectedItem = item; break; }
+            if (CrossfadeCurveCombo.SelectedItem == null) CrossfadeCurveCombo.SelectedIndex = 0;
+            ChkGapless.IsChecked = ThemeManager.GaplessEnabled;
             ChkSpatialAudio.IsChecked = ThemeManager.SpatialAudioEnabled;
             // Rainbow mode is now driven by the "Rainbow Bars" playbar style
 
@@ -85,6 +92,13 @@ namespace AudioQualityChecker
 
             // Show/hide custom panels
             UpdateCustomPanelVisibility();
+
+            // Connection mode
+            ChkOfflineMode.IsChecked = ThemeManager.OfflineModeEnabled;
+
+            // Streaming region settings
+            ChkRegionAwareSearch.IsChecked = ThemeManager.RegionAwareSearchEnabled;
+            ComboStreamingRegion.SelectedItem = ThemeManager.StreamingRegion;
 
             // Discord RPC
             ChkDiscordRpc.IsChecked = ThemeManager.DiscordRpcEnabled;
@@ -141,8 +155,9 @@ namespace AudioQualityChecker
             for (int ci = 0; ci < ThemeManager.ConcurrencyPresets.Length; ci++)
             {
                 var (label, value) = ThemeManager.ConcurrencyPresets[ci];
-                string display = value == 0 ? $"{label} — {ThemeManager.DefaultConcurrency} threads"
-                    : value == -1 ? label : label;
+                string display = value == 0
+                    ? $"{label} — {ThemeManager.DefaultConcurrency} threads"
+                    : label;
                 ConcurrencyCombo.Items.Add(display);
                 if (value >= 0 && (value == ThemeManager.MaxConcurrency ||
                     (value == 0 && ThemeManager.MaxConcurrency == ThemeManager.DefaultConcurrency)))
@@ -160,7 +175,7 @@ namespace AudioQualityChecker
             }
             ConcurrencyCombo.SelectedIndex = selectedConcurrencyIdx;
             ConcurrencyInfoText.Text = $"Your system has {Environment.ProcessorCount} logical processors. " +
-                $"Lower values reduce CPU spikes when analyzing large folders or exporting spectrograms.";
+                $"Presets scale dynamically to your hardware. Lower values reduce CPU spikes.";
 
             // Memory limit
             int selectedMemoryIdx = 0;
@@ -168,8 +183,9 @@ namespace AudioQualityChecker
             for (int mi = 0; mi < ThemeManager.MemoryPresets.Length; mi++)
             {
                 var (label, valueMB) = ThemeManager.MemoryPresets[mi];
-                string display = valueMB == 0 ? $"{label} — {ThemeManager.DefaultMemoryMB} MB"
-                    : valueMB == -1 ? label : label;
+                string display = valueMB == 0
+                    ? $"{label} — {ThemeManager.DefaultMemoryMB:N0} MB"
+                    : label;
                 MemoryLimitCombo.Items.Add(display);
                 if (valueMB >= 0 && (valueMB == ThemeManager.MaxMemoryMB ||
                     (valueMB == 0 && ThemeManager.MaxMemoryMB == ThemeManager.DefaultMemoryMB)))
@@ -187,7 +203,7 @@ namespace AudioQualityChecker
             }
             MemoryLimitCombo.SelectedIndex = selectedMemoryIdx;
             MemoryInfoText.Text = $"Your system has {ThemeManager.TotalSystemMemoryMB:N0} MB total RAM. " +
-                $"Limits how much memory AudioAuditor uses during analysis and spectrogram export.";
+                $"Presets scale dynamically to your hardware. Limits memory used during analysis.";
 
             // Experimental AI detection
             ChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
@@ -200,12 +216,44 @@ namespace AudioQualityChecker
             // Visualizer full-volume
             ChkVisualizerFullVolume.IsChecked = ThemeManager.VisualizerFullVolume;
 
+            // NP color cache
+            ChkNpColorCache.IsChecked = ThemeManager.NpColorCacheEnabled;
+            ChkNpColorCachePersist.IsChecked = ThemeManager.NpColorCachePersist;
+            UpdateNpColorCacheStatus();
+
             // Scan cache
             ChkScanCache.IsChecked = ThemeManager.ScanCacheEnabled;
             UpdateCacheStatus();
 
+            // Close to tray
+            ChkCloseToTray.IsChecked = ThemeManager.CloseToTray;
+
             // Auto-update check
             ChkCheckForUpdates.IsChecked = ThemeManager.CheckForUpdates;
+
+            // Analysis options
+            ChkSilenceMinGap.IsChecked = ThemeManager.SilenceMinGapEnabled;
+            TxtSilenceMinGapSec.Text = ThemeManager.SilenceMinGapSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            ChkSilenceSkipEdges.IsChecked = ThemeManager.SilenceSkipEdgesEnabled;
+            TxtSilenceSkipEdgeSec.Text = ThemeManager.SilenceSkipEdgeSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            ChkAlwaysFullAnalysis.IsChecked = ThemeManager.AlwaysFullAnalysis;
+
+            // Rename pattern
+            switch (ThemeManager.RenamePatternIndex)
+            {
+                case 0: RbRenameFake.IsChecked = true; break;
+                case 1: RbRenameStatusActual.IsChecked = true; break;
+                case 2: RbRenameStatusBoth.IsChecked = true; break;
+            }
+
+            // Default folders
+            TxtDefaultCopy.Text = ThemeManager.DefaultCopyFolder;
+            TxtDefaultMove.Text = ThemeManager.DefaultMoveFolder;
+            TxtDefaultPlaylist.Text = ThemeManager.DefaultPlaylistFolder;
+
+            // Spectrogram export quality
+            ChkSpectHiFi.IsChecked = ThemeManager.SpectrogramHiFiMode;
+            ChkSpectMagma.IsChecked = ThemeManager.SpectrogramMagmaColormap;
 
             // Version info
             string currentVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?";
@@ -222,6 +270,7 @@ namespace AudioQualityChecker
                 foreach (var h in ThemeManager.HiddenColumns.Split(',', StringSplitOptions.RemoveEmptyEntries))
                     hidden.Add(h.Trim());
 
+            ColFavoriteCb.IsChecked = !hidden.Contains("★");
             ColStatusCb.IsChecked = !hidden.Contains("Status");
             ColTitleCb.IsChecked = !hidden.Contains("Title");
             ColArtistCb.IsChecked = !hidden.Contains("Artist");
@@ -250,7 +299,18 @@ namespace AudioQualityChecker
             ColLufsCb.IsChecked = !hidden.Contains("LUFS");
             ColRipQualityCb.IsChecked = !hidden.Contains("Rip Quality");
 
+            // Hz cutoff allow (F13)
+            ChkFreqCutoffAllow.IsChecked = ThemeManager.FrequencyCutoffAllowEnabled;
+            TxtFreqCutoffHz.Text = ThemeManager.FrequencyCutoffAllowHz.ToString();
+
+            // Restore last active tab
+            if (SettingsTabControl != null && ThemeManager.LastSettingsTab >= 0 && ThemeManager.LastSettingsTab < SettingsTabControl.Items.Count)
+                SettingsTabControl.SelectedIndex = ThemeManager.LastSettingsTab;
+
             _initializing = false;
+
+            UpdateSpectrogramCacheStatus();
+            UpdateFavoritesStatus();
         }
 
         private void UpdateCustomPanelVisibility()
@@ -289,8 +349,6 @@ namespace AudioQualityChecker
             }
         }
 
-
-
         private void VisualizerThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_initializing) return;
@@ -307,6 +365,20 @@ namespace AudioQualityChecker
             ThemeManager.AutoPlayNext = ChkAutoPlay.IsChecked == true;
             ThemeManager.AudioNormalization = ChkNormalization.IsChecked == true;
             ThemeManager.Crossfade = ChkCrossfade.IsChecked == true;
+            ThemeManager.GaplessEnabled = ChkGapless.IsChecked == true;
+
+            // Mutual exclusivity: enabling one disables the other
+            if (sender == ChkGapless && ThemeManager.GaplessEnabled && ThemeManager.Crossfade)
+            {
+                ThemeManager.Crossfade = false;
+                ChkCrossfade.IsChecked = false;
+            }
+            else if (sender == ChkCrossfade && ThemeManager.Crossfade && ThemeManager.GaplessEnabled)
+            {
+                ThemeManager.GaplessEnabled = false;
+                ChkGapless.IsChecked = false;
+            }
+
             ThemeManager.SpatialAudioEnabled = ChkSpatialAudio.IsChecked == true;
             ThemeManager.CheckForUpdates = ChkCheckForUpdates.IsChecked == true;
             ThemeManager.SavePlayOptions();
@@ -318,6 +390,24 @@ namespace AudioQualityChecker
             int val = (int)CrossfadeSlider.Value;
             CrossfadeDurationLabel.Text = $"{val}s";
             ThemeManager.CrossfadeDuration = val;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void CrossfadeCurve_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (CrossfadeCurveCombo.SelectedItem is ComboBoxItem item
+                && Enum.TryParse<CrossfadeType>(item.Tag?.ToString(), out var curve))
+            {
+                ThemeManager.CrossfadeCurve = curve;
+                ThemeManager.SavePlayOptions();
+            }
+        }
+
+        private void CrossfadeManualSkip_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.CrossfadeOnManualSkip = ChkCrossfadeOnManualSkip.IsChecked == true;
             ThemeManager.SavePlayOptions();
         }
 
@@ -347,7 +437,6 @@ namespace AudioQualityChecker
                 ChkCycleParticles.IsChecked = true;
                 ChkCycleCircles.IsChecked = true;
                 ChkCycleScope.IsChecked = true;
-                ChkCycleKaleido.IsChecked = true;
                 ChkCycleVU.IsChecked = true;
                 return;
             }
@@ -364,8 +453,7 @@ namespace AudioQualityChecker
             ChkCycleParticles.IsChecked = indices.Contains(2);
             ChkCycleCircles.IsChecked = indices.Contains(3);
             ChkCycleScope.IsChecked = indices.Contains(4);
-            ChkCycleKaleido.IsChecked = indices.Contains(5);
-            ChkCycleVU.IsChecked = indices.Contains(6);
+            ChkCycleVU.IsChecked = indices.Contains(5);
         }
 
         private void SaveCycleStyleChecks()
@@ -376,8 +464,7 @@ namespace AudioQualityChecker
             if (ChkCycleParticles.IsChecked == true) selected.Add(2);
             if (ChkCycleCircles.IsChecked == true) selected.Add(3);
             if (ChkCycleScope.IsChecked == true) selected.Add(4);
-            if (ChkCycleKaleido.IsChecked == true) selected.Add(5);
-            if (ChkCycleVU.IsChecked == true) selected.Add(6);
+            if (ChkCycleVU.IsChecked == true) selected.Add(5);
 
             ThemeManager.VisualizerCycleList = string.Join(",", selected);
             ThemeManager.SavePlayOptions();
@@ -409,6 +496,46 @@ namespace AudioQualityChecker
             }
         }
 
+        private void OfflineMode_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            bool wantsOffline = ChkOfflineMode.IsChecked == true;
+            if (wantsOffline == ThemeManager.OfflineModeEnabled) return;
+
+            string msg = wantsOffline
+                ? "Offline mode disables internet-dependent features such as lyrics fetching, update checks, SH Labs AI detection, Last.fm scrobbling, lyric translation, and Discord Rich Presence album art.\n\nNearly all other features — including local audio analysis, BPM detection, spectrogram generation, playback, metadata editing, and file management — work completely offline without any connection.\n\nEnable offline mode?"
+                : "Online mode allows AudioAuditor to use internet-connected features including lyrics lookup, update checks, AI detection, Last.fm scrobbling, lyric translation, and Discord Rich Presence album art.\n\nEnable online mode?";
+            string title = wantsOffline ? "Enable Offline Mode" : "Enable Online Mode";
+
+            if (MessageBox.Show(msg, title, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                ThemeManager.OfflineModeEnabled = wantsOffline;
+                ThemeManager.SavePlayOptions();
+                // Notify main window to update the badge
+                if (Owner is MainWindow mw)
+                    mw.Dispatcher.InvokeAsync(() => mw.UpdateOfflineBadge());
+            }
+            else
+            {
+                ChkOfflineMode.IsChecked = ThemeManager.OfflineModeEnabled; // revert
+            }
+        }
+
+        private void RegionAwareSearch_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.RegionAwareSearchEnabled = ChkRegionAwareSearch.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void StreamingRegion_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (ComboStreamingRegion.SelectedItem is string region)
+                ThemeManager.StreamingRegion = region;
+            ThemeManager.SavePlayOptions();
+        }
+
         private void BrowseIcon_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button btn || btn.Tag is not string tagStr) return;
@@ -437,6 +564,7 @@ namespace AudioQualityChecker
             var hidden = new List<string>();
             void Check(CheckBox cb, string header) { if (cb.IsChecked != true) hidden.Add(header); }
 
+            Check(ColFavoriteCb, "★");
             Check(ColStatusCb, "Status");
             Check(ColTitleCb, "Title");
             Check(ColArtistCb, "Artist");
@@ -481,6 +609,14 @@ namespace AudioQualityChecker
             ApplyApiKeyVisibility();
             ApplyDiscordIdVisibility();
             Close();
+        }
+
+        private void SettingsTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (e.Source is not System.Windows.Controls.TabControl tc) return;
+            ThemeManager.LastSettingsTab = tc.SelectedIndex;
+            ThemeManager.SavePlayOptions();
         }
 
         private async Task LoadLatestVersionAsync(string currentVersion)
@@ -584,6 +720,21 @@ namespace AudioQualityChecker
             ThemeManager.SavePlayOptions();
         }
 
+        private void NpColorCache_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.NpColorCacheEnabled = ChkNpColorCache.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void NpColorCachePersist_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.NpColorCachePersist = ChkNpColorCachePersist.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
+
         // ═══════════════════════════════════════════
         //  Scan Cache
         // ═══════════════════════════════════════════
@@ -596,10 +747,85 @@ namespace AudioQualityChecker
             UpdateCacheStatus();
         }
 
+        private void UpdateNpColorCacheStatus()
+        {
+            try
+            {
+                var path = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "AudioAuditor", "np_color_cache.json");
+                if (File.Exists(path))
+                {
+                    var fi = new FileInfo(path);
+                    NpColorCacheStatusText.Text = $"Persisted cache: {fi.Length / 1024.0:F1} KB on disk";
+                }
+                else
+                    NpColorCacheStatusText.Text = "No persisted cache file";
+            }
+            catch { }
+        }
+
+        private void CloseToTray_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.CloseToTray = ChkCloseToTray.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
         private void ClearCache_Click(object sender, RoutedEventArgs e)
         {
             ScanCacheService.Clear();
             UpdateCacheStatus();
+        }
+
+        // ═══════════════════════════════════════════
+        //  Analysis options (silence thresholds, always full scan)
+        // ═══════════════════════════════════════════
+
+        private void SilenceOption_Changed(object sender, RoutedEventArgs e) => SyncAnalysisSettings();
+        private void SilenceOption_Changed(object sender, System.Windows.Controls.TextChangedEventArgs e) => SyncAnalysisSettings();
+
+        private void SyncAnalysisSettings()
+        {
+            if (_initializing) return;
+
+            ThemeManager.SilenceMinGapEnabled = ChkSilenceMinGap.IsChecked == true;
+            if (double.TryParse(TxtSilenceMinGapSec.Text,
+                    System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var gapSec) && gapSec > 0)
+            {
+                ThemeManager.SilenceMinGapSeconds = gapSec;
+                AudioAnalyzer.SilenceMinGapSeconds = gapSec;
+            }
+
+            ThemeManager.SilenceSkipEdgesEnabled = ChkSilenceSkipEdges.IsChecked == true;
+            if (double.TryParse(TxtSilenceSkipEdgeSec.Text,
+                    System.Globalization.NumberStyles.Any,
+                    System.Globalization.CultureInfo.InvariantCulture, out var edgeSec) && edgeSec > 0)
+            {
+                ThemeManager.SilenceSkipEdgeSeconds = edgeSec;
+                AudioAnalyzer.SilenceSkipEdgeSeconds = edgeSec;
+            }
+
+            AudioAnalyzer.SilenceMinGapEnabled = ThemeManager.SilenceMinGapEnabled;
+            AudioAnalyzer.SilenceSkipEdgesEnabled = ThemeManager.SilenceSkipEdgesEnabled;
+
+            ThemeManager.AlwaysFullAnalysis = ChkAlwaysFullAnalysis.IsChecked == true;
+            AudioAnalyzer.AlwaysFullAnalysis = ThemeManager.AlwaysFullAnalysis;
+
+            ThemeManager.SavePlayOptions();
+        }
+
+        // ═══════════════════════════════════════════
+        //  Spectrogram export quality
+        // ═══════════════════════════════════════════
+
+        private void SpectOption_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.SpectrogramHiFiMode = ChkSpectHiFi.IsChecked == true;
+            ThemeManager.SpectrogramMagmaColormap = ChkSpectMagma.IsChecked == true;
+            ThemeManager.SavePlayOptions();
         }
 
         private void UpdateCacheStatus()
@@ -620,6 +846,18 @@ namespace AudioQualityChecker
             {
                 CacheStatusText.Text = "Disabled";
             }
+        }
+
+        private void UpdateFavoritesStatus()
+        {
+            int count = FavoritesService.Count;
+            long sizeBytes = FavoritesService.GetFileSizeBytes();
+            string sizeStr = sizeBytes < 1024 ? $"{sizeBytes} B"
+                : sizeBytes < 1024 * 1024 ? $"{sizeBytes / 1024.0:F1} KB"
+                : $"{sizeBytes / (1024.0 * 1024.0):F1} MB";
+            FavoritesStatusText.Text = count > 0
+                ? $"{count:N0} {(count == 1 ? "file" : "files")} ({sizeStr})"
+                : "No favorites saved";
         }
 
         // ═══════════════════════════════════════════
@@ -1088,6 +1326,152 @@ namespace AudioQualityChecker
             }
             catch { }
             e.Handled = true;
+        }
+
+        // ═══════════════════════════════════════════
+        //  F4 — Edit Cache
+        // ═══════════════════════════════════════════
+
+        private void EditCache_Click(object sender, RoutedEventArgs e)
+        {
+            string path = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "AudioAuditor", "scan_cache.json");
+            if (!File.Exists(path))
+            {
+                MessageBox.Show("Cache file not found. Scan some files first to create it.", "Edit Cache",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            try { Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { path }, UseShellExecute = true }); }
+            catch (Exception ex) { MessageBox.Show($"Could not open Notepad: {ex.Message}", "Edit Cache"); }
+        }
+
+        // ═══════════════════════════════════════════
+        //  F9 — Favorites management
+        // ═══════════════════════════════════════════
+
+        private void ClearFavorites_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show(
+                "This will permanently remove all starred files from your favorites list.\n\nAre you sure?",
+                "Clear All Favorites",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes) return;
+            FavoritesService.ClearAll();
+            (Owner as MainWindow)?.RefreshFavoriteSort();
+        }
+
+        private void OpenFavoritesFile_Click(object sender, RoutedEventArgs e)
+        {
+            string path = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "AudioAuditor", "favorites.json");
+            if (!File.Exists(path))
+            {
+                MessageBox.Show("No favorites saved yet.", "Favorites",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            try { Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { path }, UseShellExecute = true }); }
+            catch (Exception ex) { MessageBox.Show($"Could not open Notepad: {ex.Message}", "Favorites"); }
+        }
+
+        // ═══════════════════════════════════════════
+        //  F13 — Hz cutoff allow
+        // ═══════════════════════════════════════════
+
+        private void FreqCutoff_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.FrequencyCutoffAllowEnabled = ChkFreqCutoffAllow.IsChecked == true;
+            AudioAnalyzer.FrequencyCutoffAllowEnabled = ThemeManager.FrequencyCutoffAllowEnabled;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void FreqCutoffHz_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (int.TryParse(TxtFreqCutoffHz.Text, out int hz) && hz > 0 && hz <= 96000)
+            {
+                ThemeManager.FrequencyCutoffAllowHz = hz;
+                AudioAnalyzer.FrequencyCutoffAllowHz = hz;
+                ThemeManager.SavePlayOptions();
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        //  F14 — Clear spectrogram cache
+        // ═══════════════════════════════════════════
+
+        private void ClearSpectrogramCache_Click(object sender, RoutedEventArgs e)
+        {
+            (Owner as MainWindow)?.ClearSpectrogramCache();
+            UpdateSpectrogramCacheStatus();
+        }
+
+        private void UpdateSpectrogramCacheStatus()
+        {
+            int n = (Owner as MainWindow)?.SpectrogramCacheCount ?? 0;
+            SpectrogramCacheStatusText.Text = n > 0 ? $"{n} cached" : "Empty";
+        }
+
+
+
+        // ═══════════════════════════════════════════
+        //  Rename & Default Folders
+        // ═══════════════════════════════════════════
+
+        private void RenamePattern_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            if (RbRenameFake.IsChecked == true) ThemeManager.RenamePatternIndex = 0;
+            else if (RbRenameStatusActual.IsChecked == true) ThemeManager.RenamePatternIndex = 1;
+            else if (RbRenameStatusBoth.IsChecked == true) ThemeManager.RenamePatternIndex = 2;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void DefaultFolder_Changed(object sender, TextChangedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.DefaultCopyFolder = TxtDefaultCopy.Text ?? "";
+            ThemeManager.DefaultMoveFolder = TxtDefaultMove.Text ?? "";
+            ThemeManager.DefaultPlaylistFolder = TxtDefaultPlaylist.Text ?? "";
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void BrowseCopyFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenFolderDialog { Title = "Select default copy folder" };
+            if (dlg.ShowDialog() == true)
+            {
+                TxtDefaultCopy.Text = dlg.FolderName;
+                ThemeManager.DefaultCopyFolder = dlg.FolderName;
+                ThemeManager.SavePlayOptions();
+            }
+        }
+
+        private void BrowseMoveFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenFolderDialog { Title = "Select default move folder" };
+            if (dlg.ShowDialog() == true)
+            {
+                TxtDefaultMove.Text = dlg.FolderName;
+                ThemeManager.DefaultMoveFolder = dlg.FolderName;
+                ThemeManager.SavePlayOptions();
+            }
+        }
+
+        private void BrowsePlaylistFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenFolderDialog { Title = "Select default playlist folder" };
+            if (dlg.ShowDialog() == true)
+            {
+                TxtDefaultPlaylist.Text = dlg.FolderName;
+                ThemeManager.DefaultPlaylistFolder = dlg.FolderName;
+                ThemeManager.SavePlayOptions();
+            }
         }
     }
 }

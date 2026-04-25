@@ -48,7 +48,7 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public async Task<(string token, string authUrl)?> GetAuthTokenAsync()
         {
-            if (!HasApiKey) return null;
+            if (AudioAuditorSettings.OfflineMode || !HasApiKey) return null;
 
             try
             {
@@ -80,7 +80,7 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public async Task<string?> GetSessionKeyAsync(string token)
         {
-            if (!HasApiKey) return null;
+            if (AudioAuditorSettings.OfflineMode || !HasApiKey) return null;
 
             try
             {
@@ -131,6 +131,7 @@ namespace AudioQualityChecker.Services
             _playStartTime = DateTime.UtcNow;
             _scrobbled = false;
 
+            if (AudioAuditorSettings.OfflineMode) return;
             if (IsEnabled && !string.IsNullOrEmpty(artist) && !string.IsNullOrEmpty(title))
             {
                 _ = SendNowPlayingAsync(artist, title, (int)durationSeconds);
@@ -142,7 +143,7 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public void UpdatePlayback(double positionSeconds)
         {
-            if (_scrobbled || !IsEnabled) return;
+            if (AudioAuditorSettings.OfflineMode || _scrobbled || !IsEnabled) return;
             if (string.IsNullOrEmpty(_currentArtist) || string.IsNullOrEmpty(_currentTitle)) return;
 
             bool shouldScrobble = false;

@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: Angel.AudioAuditorCLI
+PackageVersion: 1.6.1
+PackageLocale: en-US
+Publisher: Angel
+PublisherUrl: https://audioauditor.org
+PublisherSupportUrl: https://github.com/Angel2mp3/AudioAuditor/issues
+PackageName: AudioAuditorCLI
+PackageUrl: https://github.com/Angel2mp3/AudioAuditor
+License: Apache-2.0
+LicenseUrl: https://github.com/Angel2mp3/AudioAuditor/blob/main/LICENSE
+Copyright: Copyright (c) Angel
+ShortDescription: Command-line audio quality analyzer — analyze, export, and inspect audio files
+Description: |-
+  AudioAuditorCLI is the command-line companion to AudioAuditor. Analyze individual files
+  or entire directories for fake lossless, clipping, MQA encoding, AI-generated audio, BPM,
+  metadata, and more. Supports CSV, TXT, PDF, XLSX, and DOCX export. Features animated spinner,
+  scanning word display, rotating tips, config file support, stdin pipe input, batch metadata
+  editing with dry-run preview, and a guided config wizard. Works cross-platform on Windows,
+  macOS, and Linux.
+Tags:
+  - audio
+  - music
+  - analysis
+  - cli
+  - lossless
+  - flac
+  - spectrogram
+  - audiophile
+ReleaseNotesUrl: https://github.com/Angel2mp3/AudioAuditor/blob/main/CHANGELOG.md
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

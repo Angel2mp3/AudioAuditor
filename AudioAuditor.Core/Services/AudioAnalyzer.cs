@@ -25,11 +25,11 @@ namespace AudioQualityChecker.Services
     public static class AudioAnalyzer
     {
         private const int FftSize = 4096;
-        private const int AnalysisSegments = 200;
+        private const int AnalysisSegments = 100;
         private const float ClippingThreshold = 0.9999f;
 
-        /// <summary>Set to true to enable experimental spectral AI detection.</summary>
-        public static bool EnableBpmDetection { get; set; } = true;
+        /// <summary>Set to true to enable BPM detection. Defaults to false for performance.</summary>
+        public static bool EnableBpmDetection { get; set; } = false;
         public static bool EnableExperimentalAi { get; set; }
         public static bool EnableRipQuality { get; set; }
         public static bool EnableSilenceDetection { get; set; } = true;
@@ -41,6 +41,22 @@ namespace AudioQualityChecker.Services
         public static bool EnableMqaDetection { get; set; } = true;
         public static bool EnableDefaultAiDetection { get; set; } = true;
 
+        // Silence detection fine-tuning (defaults mirror ThemeManager initial values)
+        public static bool SilenceMinGapEnabled { get; set; }
+        public static double SilenceMinGapSeconds { get; set; } = 0.5;
+        public static bool SilenceSkipEdgesEnabled { get; set; }
+        public static double SilenceSkipEdgeSeconds { get; set; } = 5.0;
+
+        // Forces the full-file audio pass even when all per-feature detectors are disabled
+        public static bool AlwaysFullAnalysis { get; set; }
+
+        /// <summary>When set, RunFullFilePass cooperatively pauses at safe checkpoints.</summary>
+        public static System.Threading.ManualResetEventSlim? PauseEvent { get; set; }
+
+        // Frequency cutoff allow-listing: skip quality downgrade for files above threshold
+        public static bool FrequencyCutoffAllowEnabled { get; set; }
+        public static int FrequencyCutoffAllowHz { get; set; } = 19600;
+
         // Runtime environment validation — checked once on first analysis
         private static volatile bool _envChecked;
 
@@ -48,7 +64,7 @@ namespace AudioQualityChecker.Services
         private static volatile bool _fftCalibrated;
         private static double _calibrationOffset;
 
-        public static AudioFileInfo AnalyzeFile(string filePath)
+        public static AudioFileInfo AnalyzeFile(string filePath, CancellationToken ct = default)
         {
             // Validate runtime environment on first analysis pass (silent, non-blocking)
             if (!_envChecked)
@@ -105,6 +121,7 @@ namespace AudioQualityChecker.Services
                 FolderPath = Path.GetDirectoryName(filePath) ?? ""
             };
 
+            TagLib.File? sharedTagFile = null;
             try
             {
                 var fi = new FileInfo(filePath);
@@ -113,28 +130,36 @@ namespace AudioQualityChecker.Services
                 info.DateModified = fi.LastWriteTime;
                 info.DateCreated = fi.CreationTime;
 
-                // ── Metadata via TagLib ──
+                // ── Metadata via TagLib (kept open for reuse by MQA + AI watermark detectors) ──
                 try
                 {
-                    using var tagFile = TagLib.File.Create(filePath);
-                    info.Artist = tagFile.Tag.FirstPerformer ?? tagFile.Tag.FirstAlbumArtist ?? "";
-                    info.Title = tagFile.Tag.Title ?? "";
-                    info.ReportedBitrate = tagFile.Properties.AudioBitrate;
-                    info.SampleRate = tagFile.Properties.AudioSampleRate;
-                    info.BitsPerSample = tagFile.Properties.BitsPerSample;
-                    info.Channels = tagFile.Properties.AudioChannels;
-                    info.Duration = FormatDuration(tagFile.Properties.Duration);
-                    info.DurationSeconds = tagFile.Properties.Duration.TotalSeconds;
+                    // TagLib can hang indefinitely on corrupted atoms — enforce a timeout
+                    var tagTask = System.Threading.Tasks.Task.Run(() => TagLib.File.Create(filePath));
+                    if (!tagTask.Wait(System.TimeSpan.FromSeconds(10)))
+                    {
+                        info.Status = AudioStatus.Corrupt;
+                        info.ErrorMessage = "Metadata read timed out (file may be corrupt)";
+                        return info;
+                    }
+                    sharedTagFile = tagTask.Result;
+                    info.Artist = sharedTagFile.Tag.FirstPerformer ?? sharedTagFile.Tag.FirstAlbumArtist ?? "";
+                    info.Title = sharedTagFile.Tag.Title ?? "";
+                    info.ReportedBitrate = sharedTagFile.Properties.AudioBitrate;
+                    info.SampleRate = sharedTagFile.Properties.AudioSampleRate;
+                    info.BitsPerSample = sharedTagFile.Properties.BitsPerSample;
+                    info.Channels = sharedTagFile.Properties.AudioChannels;
+                    info.Duration = FormatDuration(sharedTagFile.Properties.Duration);
+                    info.DurationSeconds = sharedTagFile.Properties.Duration.TotalSeconds;
 
                     // Frequency (sample rate is the audio frequency)
-                    info.Frequency = tagFile.Properties.AudioSampleRate;
+                    info.Frequency = sharedTagFile.Properties.AudioSampleRate;
 
                     // Extract BPM from tag first
-                    if (tagFile.Tag.BeatsPerMinute > 0)
-                        info.Bpm = (int)tagFile.Tag.BeatsPerMinute;
+                    if (sharedTagFile.Tag.BeatsPerMinute > 0)
+                        info.Bpm = (int)sharedTagFile.Tag.BeatsPerMinute;
 
                     // Extract Replay Gain from tags
-                    ExtractReplayGain(tagFile, info);
+                    ExtractReplayGain(sharedTagFile, info);
 
                     // If no BPM tag, detect algorithmically
                     if (EnableBpmDetection && info.Bpm <= 0)
@@ -147,7 +172,7 @@ namespace AudioQualityChecker.Services
                     {
                         try
                         {
-                            if (DetectAlacCodec(filePath, tagFile))
+                            if (DetectAlacCodec(filePath, sharedTagFile))
                                 info.IsAlac = true;
                         }
                         catch { /* ALAC detection is best-effort */ }
@@ -158,7 +183,7 @@ namespace AudioQualityChecker.Services
                     }
 
                     // Album cover detection (reuse the already-open TagLib instance)
-                    info.HasAlbumCover = tagFile.Tag.Pictures?.Length > 0;
+                    info.HasAlbumCover = sharedTagFile.Tag.Pictures?.Length > 0;
                 }
                 catch
                 {
@@ -189,11 +214,11 @@ namespace AudioQualityChecker.Services
 
                 // ── Combined full-file pass (Silence + DR + True Peak + LUFS + Rip Quality) ──
                 // These all need to read every sample, so we do it once instead of 5 separate opens.
-                if (EnableSilenceDetection || EnableDynamicRange || EnableTruePeak || EnableLufs || EnableRipQuality)
+                if (AlwaysFullAnalysis || EnableSilenceDetection || EnableDynamicRange || EnableTruePeak || EnableLufs || EnableRipQuality)
                 {
                     try
                     {
-                        RunFullFilePass(filePath, info);
+                        RunFullFilePass(filePath, info, ct);
                     }
                     catch { /* Full file pass is optional — individual features degrade gracefully */ }
                 }
@@ -209,11 +234,16 @@ namespace AudioQualityChecker.Services
                 DetermineQuality(info);
 
                 // ── MQA detection (runs after main analysis) ──
+                // Fast-skip: MQA only exists in stereo 44.1k/48k lossless. Skip the audio-decode +
+                // 8-pass bit scan for files that can't possibly be MQA — only check metadata.
                 if (EnableMqaDetection)
                 {
                     try
                     {
-                        var mqaResult = MqaDetector.Detect(filePath);
+                        bool mqaEligible = info.Channels == 2
+                                         && (info.SampleRate == 44100 || info.SampleRate == 48000)
+                                         && (info.Extension is ".flac" or ".wav" or ".alac" or ".m4a" or ".mp4" or ".aiff" or ".aif");
+                        var mqaResult = MqaDetector.Detect(filePath, sharedTagFile, mqaEligible);
                         if (mqaResult != null)
                         {
                             info.IsMqa = mqaResult.IsMqa;
@@ -230,7 +260,7 @@ namespace AudioQualityChecker.Services
                 {
                     try
                     {
-                        var aiResult = AiWatermarkDetector.Detect(filePath);
+                        var aiResult = AiWatermarkDetector.Detect(filePath, sharedTagFile);
                         if (aiResult != null && aiResult.IsAiDetected)
                         {
                             info.IsAiGenerated = true;
@@ -261,6 +291,10 @@ namespace AudioQualityChecker.Services
             {
                 info.Status = AudioStatus.Corrupt;
                 info.ErrorMessage = $"Error: {ex.Message}";
+            }
+            finally
+            {
+                sharedTagFile?.Dispose();
             }
 
             return info;
@@ -334,11 +368,11 @@ namespace AudioQualityChecker.Services
             const int PeakHistBins = 1000;
             const float PeakHistMin = 0.5f;
             const float PeakHistScale = PeakHistBins / (1.0f - PeakHistMin); // 2000
-            int[] peakHistogram = new int[PeakHistBins];
+            int[]? peakHistogram = EnableClippingDetection ? new int[PeakHistBins] : null;
 
             // Fake stereo detection: track L/R correlation for stereo files
             // Uses Pearson correlation: r = Σ(L*R) / sqrt(Σ(L²) * Σ(R²))
-            bool trackStereo = channels == 2;
+            bool trackStereo = channels == 2 && EnableFakeStereoDetection;
             double corrLR = 0, corrLL = 0, corrRR = 0;
             long stereoSamples = 0;
 
@@ -409,20 +443,23 @@ namespace AudioQualityChecker.Services
                         float s = readBuf[i * channels + ch];
                         float absSample = Math.Abs(s);
                         sum += s;
-                        if (absSample >= ClippingThreshold) clippingSamples++;
-                        if (absSample > maxAbsSample) maxAbsSample = absSample;
-                        // Track peak histogram for scaled clipping detection
-                        if (absSample >= PeakHistMin && absSample < 1.0f)
+                        if (EnableClippingDetection)
                         {
-                            int bin = (int)((absSample - PeakHistMin) * PeakHistScale);
-                            if (bin >= PeakHistBins) bin = PeakHistBins - 1;
-                            peakHistogram[bin]++;
+                            if (absSample >= ClippingThreshold) clippingSamples++;
+                            // Track peak histogram for scaled clipping detection
+                            if (absSample >= PeakHistMin && absSample < 1.0f)
+                            {
+                                int bin = (int)((absSample - PeakHistMin) * PeakHistScale);
+                                if (bin >= PeakHistBins) bin = PeakHistBins - 1;
+                                peakHistogram![bin]++;
+                            }
                         }
+                        if (absSample > maxAbsSample) maxAbsSample = absSample;
                         totalSamplesRead++;
                     }
 
                     // Track L/R correlation for fake stereo detection
-                    if (trackStereo)
+                    if (trackStereo && EnableFakeStereoDetection)
                     {
                         float l = readBuf[i * 2];
                         float r2 = readBuf[i * 2 + 1];
@@ -479,7 +516,7 @@ namespace AudioQualityChecker.Services
                     {
                         long scaledClipSamples = 0;
                         for (int b = scaledBin; b < PeakHistBins; b++)
-                            scaledClipSamples += peakHistogram[b];
+                            scaledClipSamples += peakHistogram![b];
                         if (totalSamplesRead > 0)
                         {
                             double pct = (double)scaledClipSamples / totalSamplesRead * 100.0;
@@ -635,7 +672,9 @@ namespace AudioQualityChecker.Services
         //  with a single sequential pass.
         // ═══════════════════════════════════════════════════════
 
-        private static void RunFullFilePass(string filePath, AudioFileInfo info)
+        private const int FullFilePassMaxSeconds = 180; // 3 minutes
+
+        private static void RunFullFilePass(string filePath, AudioFileInfo info, CancellationToken ct)
         {
             var (disposable, samples, format) = OpenAudioFile(filePath);
             if (disposable == null || samples == null || format == null) return;
@@ -661,6 +700,8 @@ namespace AudioQualityChecker.Services
                 int midGaps = 0;
                 double totalMidSilenceMs = 0;
                 long lastSilenceRunLength = 0;
+                double minMidGapMs = SilenceMinGapEnabled ? SilenceMinGapSeconds * 1000.0 : 500.0;
+                long edgeFrames = SilenceSkipEdgesEnabled ? (long)(SilenceSkipEdgeSeconds * sr) : 0;
 
                 // ── Dynamic Range state ──
                 int drBlockFrames = sr * 3; // 3-second blocks
@@ -710,27 +751,40 @@ namespace AudioQualityChecker.Services
                 long ripZeroRuns = 0;
                 int ripCurrentZeroRun = 0;
                 long ripTruncatedSamples = 0;
-                long ripTotalSamples = 0;
                 long ripStickyRuns = 0;
                 long ripPopClicks = 0;
                 float[] ripLastSample = new float[channels];
                 int[] ripConsecIdentical = new int[channels];
                 float[] ripPrevSample = new float[channels];
                 bool ripFirst = true;
-                int ripSectorFrames = sr switch
-                {
-                    <= 22050 => 128,
-                    <= 44100 => 588,
-                    <= 48000 => 640,
-                    <= 96000 => 1280,
-                    _ => 2560
-                };
-                float ripClickThreshold = 0.85f;
+                double dcSum = 0;
+                long dcCount = 0;
+                // Noise floor: track RMS of samples below a quiet threshold
+                double noiseSumSq = 0;
+                long noiseCount = 0;
+                const float noiseThreshold = 0.01f; // -40 dBFS
+                // Zero-gap threshold: 1 second of zeros (not just CD sector)
+                int ripZeroGapFrames = sr;
+                float ripClickThreshold = 0.90f; // slightly higher to reduce false positives from transients
 
                 // ── Main read loop ──
                 int read;
+                int frameCounter = 0;
+                long totalFramesRead = 0;
+                long maxFramesToRead = (long)sr * FullFilePassMaxSeconds;
                 while ((read = samples.Read(buf, 0, buf.Length)) > 0)
                 {
+                    // Cooperative pause check every ~1 second of audio
+                    frameCounter += read / channels;
+                    totalFramesRead += read / channels;
+                    if (frameCounter >= sr)
+                    {
+                        frameCounter = 0;
+                        PauseEvent?.Wait(ct);
+                        ct.ThrowIfCancellationRequested();
+                    }
+                    if (totalFramesRead >= maxFramesToRead)
+                        break;
                     int frames = read / channels;
                     for (int i = 0; i < frames; i++)
                     {
@@ -765,7 +819,14 @@ namespace AudioQualityChecker.Services
                                     {
                                         long runFrames = silCurrentPos - silRunStart;
                                         double runMs = (double)runFrames / sr * 1000.0;
-                                        if (runMs >= MinMidGapMs) { midGaps++; totalMidSilenceMs += runMs; }
+                                        if (runMs >= minMidGapMs)
+                                        {
+                                            // Edge-skip: only suppress gaps that start in the leading edge zone.
+                                            // silRunStart is relative to first audio; add leadingSamples for absolute file position.
+                                            // Trailing edge is handled by the separate trailing-silence pass.
+                                            bool inEdge = edgeFrames > 0 && (leadingSamples + silRunStart) < edgeFrames;
+                                            if (!inEdge) { midGaps++; totalMidSilenceMs += runMs; }
+                                        }
                                         silRunStart = -1;
                                     }
                                 }
@@ -851,21 +912,38 @@ namespace AudioQualityChecker.Services
                             for (int ch = 0; ch < channels; ch++)
                             {
                                 float s = buf[i * channels + ch];
-                                ripTotalSamples++;
                                 if (Math.Abs(s) >= 1e-7f) allZero = false;
 
-                                if (s == ripLastSample[ch] && Math.Abs(s) > 0.02f)
+                                // DC offset accumulation
+                                dcSum += s;
+                                dcCount++;
+
+                                // Noise floor accumulation for quiet samples
+                                float absS = Math.Abs(s);
+                                if (absS < noiseThreshold)
+                                {
+                                    noiseSumSq += s * s;
+                                    noiseCount++;
+                                }
+
+                                // Stuck sample detection: identical for 250+ samples (~5.7ms @ 44.1k)
+                                // Only count if signal is above noise floor to avoid counting silence
+                                if (s == ripLastSample[ch] && absS > 0.05f)
                                 {
                                     ripConsecIdentical[ch]++;
-                                    if (ripConsecIdentical[ch] == 200) ripStickyRuns++;
+                                    if (ripConsecIdentical[ch] == 250) ripStickyRuns++;
                                 }
                                 else ripConsecIdentical[ch] = 0;
                                 ripLastSample[ch] = s;
 
-                                if (!ripFirst)
+                                // Pop/click detection: large jump between adjacent samples
+                                // Ignore if signal is very quiet (prevents noise-floor false positives)
+                                if (!ripFirst && absS > 0.02f)
                                 {
                                     float diff = Math.Abs(s - ripPrevSample[ch]);
-                                    if (diff > ripClickThreshold) ripPopClicks++;
+                                    // Adaptive: require diff to be large relative to local signal level
+                                    if (diff > ripClickThreshold && diff > absS * 2.0f)
+                                        ripPopClicks++;
                                 }
                                 ripPrevSample[ch] = s;
                             }
@@ -874,7 +952,7 @@ namespace AudioQualityChecker.Services
                             if (allZero) ripCurrentZeroRun++;
                             else
                             {
-                                if (ripCurrentZeroRun >= ripSectorFrames) ripZeroRuns++;
+                                if (ripCurrentZeroRun >= ripZeroGapFrames) ripZeroRuns++;
                                 ripCurrentZeroRun = 0;
                             }
 
@@ -898,7 +976,9 @@ namespace AudioQualityChecker.Services
                     info.TrailingSilenceMs = Math.Round((double)lastSilenceRunLength / sr * 1000.0, 0);
                     info.MidTrackSilenceGaps = midGaps;
                     info.TotalMidSilenceMs = Math.Round(totalMidSilenceMs, 0);
-                    info.HasExcessiveSilence = info.LeadingSilenceMs > 5000 || info.TrailingSilenceMs > 10000 || midGaps > 0;
+                    bool leadingEx = !SilenceSkipEdgesEnabled && info.LeadingSilenceMs > 5000;
+                    bool trailingEx = !SilenceSkipEdgesEnabled && info.TrailingSilenceMs > 10000;
+                    info.HasExcessiveSilence = leadingEx || trailingEx || midGaps > 0;
                 }
 
                 // ── Finalize: Dynamic Range ──
@@ -944,38 +1024,11 @@ namespace AudioQualityChecker.Services
                 // ── Finalize: Rip Quality ──
                 if (doRip)
                 {
-                    if (ripCurrentZeroRun >= ripSectorFrames) ripZeroRuns++;
-
-                    var issues = new List<string>();
-                    string quality = "Good";
-                    double durationSec = ripTotalFrames > 0 ? (double)ripTotalFrames / sr : 0;
-
-                    if (ripZeroRuns > 0)
-                    {
-                        issues.Add($"{ripZeroRuns} zero gap{(ripZeroRuns > 1 ? "s" : "")}");
-                        quality = ripZeroRuns > 2 ? "Bad" : "Suspect";
-                    }
-                    if (ripStickyRuns > 3)
-                    {
-                        issues.Add($"{ripStickyRuns} glitch{(ripStickyRuns > 1 ? "es" : "")}");
-                        quality = ripStickyRuns > 15 ? "Bad" : (quality == "Good" ? "Suspect" : quality);
-                    }
-                    double popsPerSecond = durationSec > 0 ? ripPopClicks / (double)channels / durationSec : 0;
-                    if (popsPerSecond > 5)
-                    {
-                        issues.Add($"clicks/pops detected ({popsPerSecond:F1}/s)");
-                        quality = popsPerSecond > 20 ? "Bad" : (quality == "Good" ? "Suspect" : quality);
-                    }
-                    if (ripTotalSamples > 0 && info.BitsPerSample == 16 && IsLosslessFile(info))
-                    {
-                        long firstChannelSamples = ripTotalFrames;
-                        double truncPct = firstChannelSamples > 0 ? (double)ripTruncatedSamples / firstChannelSamples * 100 : 0;
-                        if (truncPct > 50) { issues.Add("possible bit truncation"); if (quality == "Good") quality = "Suspect"; }
-                    }
-
-                    info.RipQuality = quality;
-                    info.RipQualityDetail = issues.Count > 0 ? string.Join(", ", issues) : "";
-                    info.HasRipQuality = true;
+                    if (ripCurrentZeroRun >= ripZeroGapFrames) ripZeroRuns++;
+                    float dcOffset = dcCount > 0 ? (float)(dcSum / dcCount) : 0;
+                    float noiseRms = noiseCount > 0 ? (float)Math.Sqrt(noiseSumSq / noiseCount) : 0;
+                    FinalizeRipQuality(info, sr, channels, ripTotalFrames, ripZeroRuns, ripStickyRuns,
+                        ripPopClicks, ripTruncatedSamples, dcOffset, noiseRms);
                 }
             }
         }
@@ -989,7 +1042,6 @@ namespace AudioQualityChecker.Services
         // ═══════════════════════════════════════════════════════
 
         private const float SilenceThresholdLinear = 0.001f; // ~-60 dBFS
-        private const int MinMidGapMs = 500; // minimum mid-track gap to count
 
         private static void DetectSilence(string filePath, AudioFileInfo info)
         {
@@ -1002,6 +1054,12 @@ namespace AudioQualityChecker.Services
                 int channels = format.Channels;
                 int blockSize = 4096 * channels;
                 float[] buf = new float[blockSize];
+
+                // Configurable minimum mid-track gap (500ms hardcoded default, or user-set value)
+                double minMidGapMs = SilenceMinGapEnabled ? SilenceMinGapSeconds * 1000.0 : 500.0;
+
+                // Edge-skip: how many frames from start/end to exclude from gap counting
+                long edgeFrames = SilenceSkipEdgesEnabled ? (long)(SilenceSkipEdgeSeconds * sampleRate) : 0;
 
                 // ── Pass 1: Leading silence ──
                 long leadingSamples = 0;
@@ -1036,6 +1094,7 @@ namespace AudioQualityChecker.Services
                 int midGaps = 0;
                 double totalMidSilenceMs = 0;
                 long lastSilenceRunLength = 0;
+                long totalFrames = leadingSamples; // will accumulate
 
                 // Continue reading from where we left off (the sample provider is sequential)
                 while (true)
@@ -1043,6 +1102,7 @@ namespace AudioQualityChecker.Services
                     int read = samples.Read(buf, 0, blockSize);
                     if (read <= 0) break;
                     int frames = read / channels;
+                    totalFrames += frames;
                     for (int i = 0; i < frames; i++)
                     {
                         float maxCh = 0;
@@ -1065,10 +1125,17 @@ namespace AudioQualityChecker.Services
                             {
                                 long runFrames = currentPos - silenceRunStart;
                                 double runMs = (double)runFrames / sampleRate * 1000.0;
-                                if (runMs >= MinMidGapMs)
+                                if (runMs >= minMidGapMs)
                                 {
-                                    midGaps++;
-                                    totalMidSilenceMs += runMs;
+                                    // When edge-skip is on, only suppress gaps that start in the leading edge zone.
+                                    // Trailing edge is handled automatically: the final silent run at EOF
+                                    // becomes trailing silence and is never counted as a mid-gap.
+                                    bool inLeadEdge = edgeFrames > 0 && silenceRunStart < edgeFrames;
+                                    if (!inLeadEdge)
+                                    {
+                                        midGaps++;
+                                        totalMidSilenceMs += runMs;
+                                    }
                                 }
                                 silenceRunStart = -1;
                             }
@@ -1086,8 +1153,12 @@ namespace AudioQualityChecker.Services
                 info.MidTrackSilenceGaps = midGaps;
                 info.TotalMidSilenceMs = Math.Round(totalMidSilenceMs, 0);
 
-                // Flag excessive silence: >5s leading, >10s trailing, or any mid-track gap
-                info.HasExcessiveSilence = info.LeadingSilenceMs > 5000 || info.TrailingSilenceMs > 10000 || midGaps > 0;
+                // Determine excessive silence based on active settings:
+                // When SilenceMinGapEnabled is on: flag if any custom-threshold gap exists
+                // Otherwise use the classic thresholds (>5s leading, >10s trailing, or any 500ms+ mid gap)
+                bool leadingExcessive = !SilenceSkipEdgesEnabled && info.LeadingSilenceMs > 5000;
+                bool trailingExcessive = !SilenceSkipEdgesEnabled && info.TrailingSilenceMs > 10000;
+                info.HasExcessiveSilence = leadingExcessive || trailingExcessive || midGaps > 0;
             }
         }
 
@@ -1509,6 +1580,15 @@ namespace AudioQualityChecker.Services
             int nyquist = info.SampleRate / 2;
             bool isLossless = IsLosslessFile(info);
 
+            // ── Frequency cutoff allow-listing ──
+            // If enabled and the measured cutoff meets the threshold, treat the file as
+            // full-bandwidth — skip the upconvert/transcode check entirely.
+            if (FrequencyCutoffAllowEnabled && cutoff > 0 && cutoff >= FrequencyCutoffAllowHz)
+            {
+                info.Status = AudioStatus.Valid;
+                return;
+            }
+
             // ── Lossless ──
             if (isLossless)
             {
@@ -1850,7 +1930,8 @@ namespace AudioQualityChecker.Services
 
         private static bool IsLosslessExtension(string ext)
             => ext is ".flac" or ".wav" or ".aiff" or ".aif"
-                   or ".ape" or ".wv" or ".alac" or ".dsf" or ".dff";
+                   or ".ape" or ".wv" or ".alac" or ".dsf" or ".dff"
+                   or ".tak" or ".bwf";
 
         /// <summary>
         /// Checks if a file is lossless, accounting for ALAC codec inside M4A containers.
@@ -2388,6 +2469,15 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFile(string filePath)
         {
+            // NAudio reader initialization can hang on corrupted files (codec probing, COM init).
+            var openTask = System.Threading.Tasks.Task.Run(() => OpenAudioFileInner(filePath));
+            if (!openTask.Wait(System.TimeSpan.FromSeconds(15)))
+                throw new System.TimeoutException($"Opening audio file timed out: {System.IO.Path.GetFileName(filePath)}");
+            return openTask.Result;
+        }
+
+        private static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFileInner(string filePath)
+        {
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
 
             // ── Opus files: use OpusFileReader (Concentus) ──
@@ -2428,6 +2518,32 @@ namespace AudioQualityChecker.Services
                 }
                 catch { /* fall through */ }
             }
+
+#if !CROSS_PLATFORM
+            // TTA (True Audio) — MediaFoundation has a TTA codec on Win10+
+            if (ext is ".tta")
+            {
+                try
+                {
+                    var tta = new MediaFoundationReader(filePath);
+                    var ttaSample = new SampleChannel(tta, false);
+                    return (tta, ttaSample, ttaSample.WaveFormat);
+                }
+                catch { /* fall through */ }
+            }
+
+            // MPC (Musepack) — MediaFoundationReader may work if codec is installed
+            if (ext is ".mpc" or ".mp+")
+            {
+                try
+                {
+                    var mpc = new MediaFoundationReader(filePath);
+                    var mpcSample = new SampleChannel(mpc, false);
+                    return (mpc, mpcSample, mpcSample.WaveFormat);
+                }
+                catch { /* MPC codec likely not installed — TagLib# metadata still available */ }
+            }
+#endif
 
             // AudioFileReader handles: MP3, WAV, AIFF, WMA, FLAC (via MediaFoundation on Win10+)
             try
@@ -2792,161 +2908,85 @@ namespace AudioQualityChecker.Services
         //  Rip/Encode Quality Detection
         // ═══════════════════════════════════════════════════════
 
-        private static void DetectRipQuality(string filePath, AudioFileInfo info)
+        /// <summary>
+        /// Improved rip quality analysis with better-tuned thresholds and additional
+        /// signals (DC offset, noise floor) to reduce false positives.
+        /// </summary>
+        private static void FinalizeRipQuality(AudioFileInfo info, int sr, int channels,
+            long totalFrames, long zeroRuns, long stickyRuns, long popClicks, long truncatedSamples,
+            float dcOffset, float noiseFloorRms)
         {
-            var (disposable, samples, format) = OpenAudioFile(filePath);
-            if (disposable == null || samples == null || format == null) return;
+            var issues = new List<string>();
+            string quality = "Good";
+            double durationSec = totalFrames > 0 ? (double)totalFrames / sr : 0;
 
-            using (disposable)
+            // Zero gaps: only flag if > 2 occurrences or very long gaps (> 1s)
+            if (zeroRuns > 2)
             {
-                int channels = format.Channels;
-                int sr = format.SampleRate;
-                int blockSize = 4096;
-                float[] buf = new float[blockSize * channels];
-
-                long totalFrames = 0;
-                long zeroRuns = 0;       // runs of consecutive zero samples across ALL channels
-                int currentZeroRun = 0;
-                long truncatedSamples = 0;
-                long totalSamples = 0;
-                long stickyRuns = 0;     // runs of identical non-zero samples (stuck/glitch)
-                long popClicks = 0;      // sudden amplitude jumps (clicks/pops)
-
-                // Per-channel state for sticky detection
-                float[] lastSample = new float[channels];
-                int[] consecutiveIdentical = new int[channels];
-                float[] prevSample = new float[channels];
-                bool first = true;
-
-                // Adaptive sector size based on sample rate
-                int sectorFrames = sr switch
-                {
-                    <= 22050 => 128,
-                    <= 44100 => 588,   // CD sector
-                    <= 48000 => 640,
-                    <= 96000 => 1280,
-                    _ => 2560
-                };
-
-                // Click detection uses sample-rate-aware threshold
-                // Normal musical transients rarely exceed 0.8 sample-to-sample delta
-                float clickThreshold = 0.85f;
-
-                int read;
-                while ((read = samples.Read(buf, 0, buf.Length)) > 0)
-                {
-                    int frames = read / channels;
-                    for (int i = 0; i < frames; i++)
-                    {
-                        totalFrames++;
-
-                        // Check ALL channels for zero-run detection
-                        bool allZero = true;
-                        for (int ch = 0; ch < channels; ch++)
-                        {
-                            float s = buf[i * channels + ch];
-                            totalSamples++;
-
-                            if (Math.Abs(s) >= 1e-7f)
-                                allZero = false;
-
-                            // Stuck sample detection per channel
-                            if (s == lastSample[ch] && Math.Abs(s) > 0.02f)
-                            {
-                                consecutiveIdentical[ch]++;
-                                if (consecutiveIdentical[ch] == 200) // count once when threshold hit
-                                    stickyRuns++;
-                            }
-                            else
-                            {
-                                consecutiveIdentical[ch] = 0;
-                            }
-                            lastSample[ch] = s;
-
-                            // Pop/click detection per channel: large sudden jump
-                            if (!first)
-                            {
-                                float diff = Math.Abs(s - prevSample[ch]);
-                                if (diff > clickThreshold)
-                                    popClicks++;
-                            }
-                            prevSample[ch] = s;
-                        }
-
-                        first = false;
-
-                        // Zero-run: all channels must be zero simultaneously
-                        if (allZero)
-                        {
-                            currentZeroRun++;
-                        }
-                        else
-                        {
-                            if (currentZeroRun >= sectorFrames)
-                                zeroRuns++;
-                            currentZeroRun = 0;
-                        }
-
-                        // Bit truncation check: only for 16-bit lossless content
-                        // Check if the sample seems quantized to 8-bit (low 8 bits always zero)
-                        // Use first channel only — this is a statistical check
-                        if (info.BitsPerSample == 16 && IsLosslessFile(info))
-                        {
-                            float s = buf[i * channels];
-                            int intVal = (int)(s * 32768f);
-                            // Only flag if low byte is zero AND value is large enough to be meaningful
-                            if ((intVal & 0xFF) == 0 && Math.Abs(intVal) > 256)
-                                truncatedSamples++;
-                        }
-                    }
-                }
-
-                // Check final zero run
-                if (currentZeroRun >= sectorFrames)
-                    zeroRuns++;
-
-                // Build quality assessment
-                var issues = new List<string>();
-                string quality = "Good";
-
-                double durationSec = totalFrames > 0 ? (double)totalFrames / sr : 0;
-
-                if (zeroRuns > 0)
-                {
-                    issues.Add($"{zeroRuns} zero gap{(zeroRuns > 1 ? "s" : "")}");
-                    quality = zeroRuns > 2 ? "Bad" : "Suspect";
-                }
-
-                if (stickyRuns > 3)
-                {
-                    issues.Add($"{stickyRuns} glitch{(stickyRuns > 1 ? "es" : "")}");
-                    quality = stickyRuns > 15 ? "Bad" : (quality == "Good" ? "Suspect" : quality);
-                }
-
-                // Pops per second: popClicks / channels / duration  (normalize across channels)
-                double popsPerSecond = durationSec > 0 ? popClicks / (double)channels / durationSec : 0;
-                if (popsPerSecond > 5) // more than 5 hard clicks per second is suspicious
-                {
-                    issues.Add($"clicks/pops detected ({popsPerSecond:F1}/s)");
-                    quality = popsPerSecond > 20 ? "Bad" : (quality == "Good" ? "Suspect" : quality);
-                }
-
-                if (totalSamples > 0 && info.BitsPerSample == 16 && IsLosslessFile(info))
-                {
-                    // Only count samples from first channel for truncation check
-                    long firstChannelSamples = totalFrames;
-                    double truncPct = firstChannelSamples > 0 ? (double)truncatedSamples / firstChannelSamples * 100 : 0;
-                    if (truncPct > 50) // more than 50% suggests real truncation
-                    {
-                        issues.Add("possible bit truncation");
-                        if (quality == "Good") quality = "Suspect";
-                    }
-                }
-
-                info.RipQuality = quality;
-                info.RipQualityDetail = issues.Count > 0 ? string.Join(", ", issues) : "";
-                info.HasRipQuality = true;
+                issues.Add($"{zeroRuns} zero gaps");
+                quality = "Bad";
             }
+            else if (zeroRuns > 0)
+            {
+                issues.Add($"{zeroRuns} zero gap");
+                if (quality == "Good") quality = "Suspect";
+            }
+
+            // Glitches/stuck samples: require more occurrences, threshold tuned
+            if (stickyRuns > 10)
+            {
+                issues.Add($"{stickyRuns} glitches");
+                quality = "Bad";
+            }
+            else if (stickyRuns > 3)
+            {
+                issues.Add($"{stickyRuns} glitches");
+                if (quality == "Good") quality = "Suspect";
+            }
+
+            // Clicks/pops: adaptive threshold, normalized per channel
+            double popsPerSecond = durationSec > 0 ? popClicks / (double)channels / durationSec : 0;
+            if (popsPerSecond > 10)
+            {
+                issues.Add($"clicks {popsPerSecond:F0}/s");
+                quality = "Bad";
+            }
+            else if (popsPerSecond > 3)
+            {
+                issues.Add($"clicks {popsPerSecond:F1}/s");
+                if (quality == "Good") quality = "Suspect";
+            }
+
+            // Bit truncation: only for 16-bit lossless, flag if > 60%
+            if (totalFrames > 0 && info.BitsPerSample == 16 && IsLosslessFile(info))
+            {
+                double truncPct = (double)truncatedSamples / totalFrames * 100;
+                if (truncPct > 60)
+                {
+                    issues.Add("bit truncation");
+                    if (quality == "Good") quality = "Suspect";
+                }
+            }
+
+            // DC offset: indicates bad ADC or ripping hardware
+            float dcPct = Math.Abs(dcOffset) * 100;
+            if (dcPct > 1.0f)
+            {
+                issues.Add($"DC offset {dcPct:F1}%");
+                if (quality == "Good") quality = "Suspect";
+            }
+
+            // High noise floor in quiet sections
+            float noiseDb = noiseFloorRms > 0 ? (float)(20.0 * Math.Log10(noiseFloorRms)) : -120f;
+            if (noiseDb > -50f)
+            {
+                issues.Add($"high noise floor ({noiseDb:F0} dBFS)");
+                if (quality == "Good") quality = "Suspect";
+            }
+
+            info.RipQuality = quality;
+            info.RipQualityDetail = issues.Count > 0 ? string.Join(", ", issues) : "Clean";
+            info.HasRipQuality = true;
         }
 
         private static string FormatDuration(TimeSpan ts)

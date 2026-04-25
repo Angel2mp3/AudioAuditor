@@ -23,39 +23,47 @@ namespace AudioQualityChecker.Services
         public OpusFileReader(string filePath)
         {
             _stream = File.OpenRead(filePath);
-            int channels = 2;
-            int sampleRate = 48000;
+            try
+            {
+                int channels = 2;
+                int sampleRate = 48000;
 
-            _stream.Position = 0;
+                _stream.Position = 0;
 #pragma warning disable CS0618 // OpusDecoder constructor is obsolete but works fine
-            var decoder = new OpusDecoder(sampleRate, channels);
+                var decoder = new OpusDecoder(sampleRate, channels);
 #pragma warning restore CS0618
-            _waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
+                _waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
 
-            // Read all Opus packets and decode to short[], then convert to float
-            var oggReader = new OpusOggReadStream(decoder, _stream);
-            var allSamples = new List<float>();
-            while (oggReader.HasNextPacket)
-            {
-                short[]? pcm = oggReader.DecodeNextPacket();
-                if (pcm != null && pcm.Length > 0)
+                // Read all Opus packets and decode to short[], then convert to float
+                var oggReader = new OpusOggReadStream(decoder, _stream);
+                var allSamples = new List<float>();
+                while (oggReader.HasNextPacket)
                 {
-                    // Convert short samples to float (-1..1)
-                    for (int i = 0; i < pcm.Length; i++)
-                        allSamples.Add(pcm[i] / 32768f);
+                    short[]? pcm = oggReader.DecodeNextPacket();
+                    if (pcm != null && pcm.Length > 0)
+                    {
+                        // Convert short samples to float (-1..1)
+                        for (int i = 0; i < pcm.Length; i++)
+                            allSamples.Add(pcm[i] / 32768f);
+                    }
                 }
-            }
 
-            // Convert float list to byte array (IEEE float format)
-            _pcmData = new byte[allSamples.Count * 4];
-            for (int i = 0; i < allSamples.Count; i++)
-            {
-                byte[] bytes = BitConverter.GetBytes(allSamples[i]);
-                Buffer.BlockCopy(bytes, 0, _pcmData, i * 4, 4);
+                // Convert float list to byte array (IEEE float format)
+                _pcmData = new byte[allSamples.Count * 4];
+                for (int i = 0; i < allSamples.Count; i++)
+                {
+                    byte[] bytes = BitConverter.GetBytes(allSamples[i]);
+                    Buffer.BlockCopy(bytes, 0, _pcmData, i * 4, 4);
+                }
+                _totalBytes = _pcmData.Length;
+                _readOffset = 0;
+                _position = 0;
             }
-            _totalBytes = _pcmData.Length;
-            _readOffset = 0;
-            _position = 0;
+            catch
+            {
+                _stream.Dispose();
+                throw;
+            }
         }
 
         public override WaveFormat WaveFormat => _waveFormat;
@@ -125,7 +133,7 @@ namespace AudioQualityChecker.Services
                 // DSF format parsing
                 if (raw.Length < 92) throw new InvalidDataException("Invalid DSF file");
                 int fmtOffset = 28;
-                if (raw.Length > fmtOffset + 52)
+                if (raw.Length >= fmtOffset + 52)
                 {
                     int formatVersion = BitConverter.ToInt32(raw, fmtOffset + 8);
                     channels = BitConverter.ToInt32(raw, fmtOffset + 20);
@@ -136,7 +144,7 @@ namespace AudioQualityChecker.Services
 
                     long fmtSize = BitConverter.ToInt64(raw, fmtOffset + 4);
                     long dataChunkOffset = 28 + fmtSize;
-                    if (dataChunkOffset + 12 < raw.Length)
+                    if (dataChunkOffset >= 0 && dataChunkOffset + 12 < raw.Length)
                     {
                         long dataSize = BitConverter.ToInt64(raw, (int)dataChunkOffset + 4);
                         int dataStart = (int)dataChunkOffset + 12;

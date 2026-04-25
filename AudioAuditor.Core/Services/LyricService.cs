@@ -44,6 +44,11 @@ public static class LrcParser
         @"\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]",
         RegexOptions.Compiled);
 
+    // Enhanced LRC word-level timestamps: <mm:ss.xx>
+    private static readonly Regex WordTimeTagRegex = new(
+        @"<(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?>",
+        RegexOptions.Compiled);
+
     private static readonly Regex IdTagRegex = new(
         @"\[(\w+):(.+?)\]",
         RegexOptions.Compiled);
@@ -106,7 +111,9 @@ public static class LrcParser
             if (timeMatches.Count == 0) continue;
 
             // Strip all time tags to get the lyric text
-            string text = TimeTagRegex.Replace(line, "").Trim();
+            // Remove both line-level [mm:ss] and word-level <mm:ss> timestamps
+            string text = TimeTagRegex.Replace(line, "");
+            text = WordTimeTagRegex.Replace(text, "").Trim();
             if (string.IsNullOrEmpty(text)) continue;
 
             foreach (Match tm in timeMatches)
@@ -160,7 +167,7 @@ public static class EmbeddedLyricsProvider
     {
         try
         {
-            var tagFile = TagLib.File.Create(audioFilePath);
+            using var tagFile = TagLib.File.Create(audioFilePath);
 
             // Try synced lyrics first (ID3v2 SYLT frames)
             if (tagFile.Tag is TagLib.Id3v2.Tag id3Tag)
@@ -216,7 +223,10 @@ public static class EmbeddedLyricsProvider
                 };
             }
         }
-        catch { /* Not all formats support lyrics */ }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LyricService.embedded] {ex.GetType().Name}: {ex.Message}");
+        }
 
         return LyricsResult.Empty;
     }
@@ -261,7 +271,10 @@ public static class LyricService
                 var result = provider();
                 if (result.HasLyrics) return result;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LyricService.local] {ex.GetType().Name}: {ex.Message}");
+            }
         }
         return LyricsResult.Empty;
     }
@@ -292,17 +305,25 @@ public static class LyricService
         {
             try
             {
-                var tagFile = TagLib.File.Create(audioFilePath);
+                using var tagFile = TagLib.File.Create(audioFilePath);
+                if (tagFile?.Tag == null) throw new InvalidOperationException();
                 artist ??= tagFile.Tag.FirstPerformer;
                 title ??= tagFile.Tag.Title;
                 album ??= tagFile.Tag.Album;
                 if (durationSeconds <= 0)
                     durationSeconds = tagFile.Properties.Duration.TotalSeconds;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LyricService.tagRead] {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         if (string.IsNullOrEmpty(artist) || string.IsNullOrEmpty(title))
+            return local.HasLyrics ? local : LyricsResult.Empty;
+
+        // Offline mode: skip all network providers
+        if (AudioAuditorSettings.OfflineMode)
             return local.HasLyrics ? local : LyricsResult.Empty;
 
         // Build the list of online providers to try
@@ -315,7 +336,6 @@ public static class LyricService
             {
                 () => FetchFromLrcLib(artist, title, album, durationSeconds),
                 () => FetchFromNetease(artist, title),
-                () => FetchFromMusixmatch(artist, title),
             }
         };
 
@@ -326,7 +346,10 @@ public static class LyricService
                 var result = await provider();
                 if (result.HasLyrics) return result;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LyricService.online] {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         return local.HasLyrics ? local : LyricsResult.Empty;
@@ -368,7 +391,10 @@ public static class LyricService
                 });
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LyricService.SearchLrcLib] {ex.GetType().Name}: {ex.Message}");
+        }
         return results;
     }
 
@@ -446,7 +472,10 @@ public static class LyricService
                     return ApplySearchResult(best);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LyricService.LrcLib] {ex.GetType().Name}: {ex.Message}");
+        }
 
         return LyricsResult.Empty;
     }
@@ -454,9 +483,10 @@ public static class LyricService
     /// <summary>Fetch lyrics from Netease Music (music.163.com) — free API, supports synced lyrics.</summary>
     private static async Task<LyricsResult> FetchFromNetease(string artist, string title)
     {
-        // Search for the track
-        var searchUrl = $"https://music.163.com/api/search/get/web?s={Uri.EscapeDataString($"{artist} {title}")}&type=1&limit=5";
-        var request = new HttpRequestMessage(HttpMethod.Post, searchUrl);
+        // Search for the track (cloudsearch endpoint returns plain JSON; the legacy
+        // /api/search/get/web endpoint now returns encrypted payloads)
+        var searchUrl = $"https://music.163.com/api/cloudsearch/pc?s={Uri.EscapeDataString($"{artist} {title}")}&type=1&limit=5";
+        var request = new HttpRequestMessage(HttpMethod.Get, searchUrl);
         request.Headers.Add("Referer", "https://music.163.com");
         var searchResp = await Http.SendAsync(request);
         if (!searchResp.IsSuccessStatusCode) return LyricsResult.Empty;
@@ -498,45 +528,15 @@ public static class LyricService
         return LyricsResult.Empty;
     }
 
-    /// <summary>Fetch lyrics from Musixmatch via their matcher API — plain lyrics.</summary>
+    /// <summary>Fetch lyrics from Musixmatch — REMOVED: free API key revoked (401), only returned 30% of lyrics.</summary>
     private static async Task<LyricsResult> FetchFromMusixmatch(string artist, string title)
     {
-        var searchUrl = $"https://api.musixmatch.com/ws/1.1/matcher.lyrics.get?format=json&q_track={Uri.EscapeDataString(title)}&q_artist={Uri.EscapeDataString(artist)}&apikey=68b1811e517e5e1b4e1a122f3662e280";
-        var resp = await Http.GetAsync(searchUrl);
-        if (!resp.IsSuccessStatusCode) return LyricsResult.Empty;
-
-        var json = await resp.Content.ReadAsStringAsync();
-        using var doc = JsonDocument.Parse(json);
-
-        if (!doc.RootElement.TryGetProperty("message", out var msg) ||
-            !msg.TryGetProperty("body", out var body) ||
-            !body.TryGetProperty("lyrics", out var lyrics))
-            return LyricsResult.Empty;
-
-        if (!lyrics.TryGetProperty("lyrics_body", out var lyricsBody) ||
-            lyricsBody.ValueKind != JsonValueKind.String)
-            return LyricsResult.Empty;
-
-        var text = lyricsBody.GetString();
-        if (string.IsNullOrWhiteSpace(text)) return LyricsResult.Empty;
-
-        // Musixmatch free API includes a disclaimer footer — remove it
-        var cleanText = text;
-        var disclaimerIdx = cleanText.IndexOf("******* This Lyrics is NOT", StringComparison.OrdinalIgnoreCase);
-        if (disclaimerIdx >= 0) cleanText = cleanText[..disclaimerIdx].TrimEnd();
-        disclaimerIdx = cleanText.IndexOf("...", StringComparison.Ordinal);
-        if (disclaimerIdx >= 0 && disclaimerIdx > cleanText.Length - 20)
-            cleanText = cleanText[..disclaimerIdx].TrimEnd();
-
-        var lines = cleanText.Split('\n')
-            .Select(l => l.Trim())
-            .Where(l => !string.IsNullOrEmpty(l))
-            .Select(l => new LyricLine(TimeSpan.Zero, l))
-            .ToList();
-
-        return lines.Count > 0
-            ? new LyricsResult { Lines = lines, IsTimed = false, Source = "Musixmatch (plain)" }
-            : LyricsResult.Empty;
+        // Musixmatch matcher API required a valid API key. The previously hardcoded
+        // free-tier key has been revoked (returns 401). Even when it worked,
+        // the free tier only returned ~30% of lyrics with a disclaimer footer.
+        // Keeping this stub so the enum value doesn't break existing callers.
+        await Task.CompletedTask;
+        return LyricsResult.Empty;
     }
 
     private static Func<LyricsResult>[] BuildLocalProviders(string audioFilePath, LyricProvider preferred)
@@ -567,7 +567,10 @@ public static class LyricService
             if (candidates.Length > 0)
                 return LrcParser.ParseFile(candidates[0]);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LyricService.localFallback] {ex.GetType().Name}: {ex.Message}");
+        }
 
         return LyricsResult.Empty;
     }

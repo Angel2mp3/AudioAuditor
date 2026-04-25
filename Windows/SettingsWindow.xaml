@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None"
         ResizeMode="NoResize"
-        Height="720" Width="520"
+        Height="740" Width="540"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource WindowBg}"
         Foreground="{DynamicResource TextPrimary}"
@@ -168,6 +168,42 @@
             </Setter>
         </Style>
 
+        <!-- Themed TextBox Style — rounded corners matching ComboBox -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource InputBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="4,3"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="2,0"
+                                          VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Themed Crossfade Slider Style -->
         <Style x:Key="CrossfadeSlider" TargetType="Slider">
             <Setter Property="Template">
@@ -222,98 +258,162 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Themed ScrollBar Style (global) -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Background" Value="{DynamicResource ScrollBg}"/>
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid>
+                            <Border Background="{DynamicResource ScrollBg}" CornerRadius="4"/>
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton OverridesDefaultStyle="True" Background="Transparent" Focusable="False" IsTabStop="False" Command="ScrollBar.PageUpCommand">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Background="Transparent"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb OverridesDefaultStyle="True" IsTabStop="False">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border x:Name="thumbBd" Background="{DynamicResource ScrollThumb}" CornerRadius="4" Margin="2"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="thumbBd" Property="Background" Value="{DynamicResource ScrollThumbHover}"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton OverridesDefaultStyle="True" Background="Transparent" Focusable="False" IsTabStop="False" Command="ScrollBar.PageDownCommand">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Background="Transparent"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Themed TabItem Style -->
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="tabBd" Background="{TemplateBinding Background}"
+                                CornerRadius="4,4,0,0" Padding="{TemplateBinding Padding}" Margin="2,0,2,0">
+                            <ContentPresenter ContentSource="Header"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="tabBd" Property="Background" Value="{DynamicResource ButtonHover}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="tabBd" Property="Background" Value="{DynamicResource RowHoverBg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Themed TabControl Style -->
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="0,1,0,0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="0,0,0,1">
+                                <TabPanel IsItemsHost="True" Background="Transparent"/>
+                            </Border>
+                            <Border Grid.Row="1" Background="Transparent">
+                                <ContentPresenter ContentSource="SelectedContent"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Themed RadioButton Style -->
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Grid Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,6,0">
+                                <Ellipse Width="16" Height="16"
+                                         Fill="{DynamicResource InputBg}"
+                                         Stroke="{DynamicResource ButtonBorder}"
+                                         StrokeThickness="1"/>
+                                <Ellipse x:Name="checkMark" Width="8" Height="8"
+                                         Fill="{DynamicResource AccentColor}"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                                         Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="checkMark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="checkMark" Property="Fill" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Border Background="{DynamicResource PanelBg}"
             BorderBrush="{DynamicResource BorderColor}" BorderThickness="1" CornerRadius="6">
-        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0">
-            <ScrollViewer.Resources>
-                <Style TargetType="ScrollBar">
-                    <Setter Property="Background" Value="{DynamicResource ScrollBg}"/>
-                    <Setter Property="Width" Value="10"/>
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="ScrollBar">
-                                <Grid>
-                                    <Border Background="{DynamicResource ScrollBg}" CornerRadius="4"/>
-                                    <Track x:Name="PART_Track" IsDirectionReversed="True">
-                                        <Track.DecreaseRepeatButton>
-                                            <RepeatButton OverridesDefaultStyle="True" Background="Transparent" Focusable="False" IsTabStop="False" Command="ScrollBar.PageUpCommand">
-                                                <RepeatButton.Template>
-                                                    <ControlTemplate TargetType="RepeatButton">
-                                                        <Border Background="Transparent"/>
-                                                    </ControlTemplate>
-                                                </RepeatButton.Template>
-                                            </RepeatButton>
-                                        </Track.DecreaseRepeatButton>
-                                        <Track.Thumb>
-                                            <Thumb OverridesDefaultStyle="True" IsTabStop="False">
-                                                <Thumb.Template>
-                                                    <ControlTemplate TargetType="Thumb">
-                                                        <Border x:Name="thumbBd" Background="{DynamicResource ScrollThumb}" CornerRadius="4" Margin="2">
-                                                        </Border>
-                                                        <ControlTemplate.Triggers>
-                                                            <Trigger Property="IsMouseOver" Value="True">
-                                                                <Setter TargetName="thumbBd" Property="Background" Value="{DynamicResource ScrollThumbHover}"/>
-                                                            </Trigger>
-                                                        </ControlTemplate.Triggers>
-                                                    </ControlTemplate>
-                                                </Thumb.Template>
-                                            </Thumb>
-                                        </Track.Thumb>
-                                        <Track.IncreaseRepeatButton>
-                                            <RepeatButton OverridesDefaultStyle="True" Background="Transparent" Focusable="False" IsTabStop="False" Command="ScrollBar.PageDownCommand">
-                                                <RepeatButton.Template>
-                                                    <ControlTemplate TargetType="RepeatButton">
-                                                        <Border Background="Transparent"/>
-                                                    </ControlTemplate>
-                                                </RepeatButton.Template>
-                                            </RepeatButton>
-                                        </Track.IncreaseRepeatButton>
-                                    </Track>
-                                </Grid>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
-                </Style>
-            </ScrollViewer.Resources>
-        <Grid Margin="20">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="16"/>
+                <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <!-- Header with drag + close -->
-            <Grid Grid.Row="0" MouseLeftButtonDown="Header_MouseDown">
+            <!-- Header (drag area + close button) -->
+            <Grid Grid.Row="0" Margin="20,12,20,4" MouseLeftButtonDown="Header_MouseDown">
                 <TextBlock Text="Settings"
                            FontSize="18" FontWeight="Bold" FontFamily="Segoe UI"
                            Foreground="{DynamicResource TextPrimary}"
-                           VerticalAlignment="Center"/>
+                           VerticalAlignment="Top" HorizontalAlignment="Center"/>
                 <Button Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                         HorizontalAlignment="Right" VerticalAlignment="Top"
                         Click="Close_Click" Cursor="Hand"
@@ -334,1010 +434,1304 @@
                 </Button>
             </Grid>
 
-            <!-- Theme Section -->
-            <StackPanel Grid.Row="2">
-                <TextBlock Text="Appearance" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="8"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="8"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+            <!-- Tabbed content -->
+            <TabControl x:Name="SettingsTabControl" Grid.Row="1" Margin="8,0,8,0" SelectionChanged="SettingsTabControl_SelectionChanged">
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Color Theme:"
-                               FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ThemeCombo" FontSize="13"
-                              SelectionChanged="ThemeCombo_SelectionChanged"/>
+                <!-- ═══════════════════════════════════ APPEARANCE ═══════════════════════════════════ -->
+                <TabItem Header="Appearance">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,14,12,14">
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Playbar Style:"
-                               FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Row="2" Grid.Column="1" x:Name="PlaybarCombo" FontSize="13"
-                              SelectionChanged="PlaybarCombo_SelectionChanged"/>
+                            <TextBlock Text="Appearance" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,10"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="8"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="8"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="8"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Visualizer Style:"
-                               FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Row="4" Grid.Column="1" x:Name="VisualizerThemeCombo" FontSize="13"
-                              SelectionChanged="VisualizerThemeCombo_SelectionChanged"/>
-                </Grid>
-            </StackPanel>
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Color Theme:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ThemeCombo" FontSize="13"
+                                          SelectionChanged="ThemeCombo_SelectionChanged"/>
 
-            <!-- Scan Cache Section -->
-            <StackPanel Grid.Row="4">
-                <TextBlock Text="Scan Cache" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <CheckBox x:Name="ChkScanCache" Content="Remember previous scan results"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,4"
-                          Checked="ScanCache_Changed" Unchecked="ScanCache_Changed"/>
-                <TextBlock Text="Caches analysis results locally so previously scanned files load instantly without re-analysis. Only uses cached data when the file hasn't been modified (same path, size, and date)."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,6" TextWrapping="Wrap"/>
-                <StackPanel Orientation="Horizontal" Margin="22,0,0,0">
-                    <Button x:Name="BtnClearCache" Content="Clear Cache"
-                            Style="{StaticResource SmallButton}" Click="ClearCache_Click"
-                            Margin="0,0,10,0"/>
-                    <TextBlock x:Name="CacheStatusText" Text=""
-                               Foreground="{DynamicResource TextMuted}" FontSize="11"
-                               FontFamily="Segoe UI" VerticalAlignment="Center"/>
-                </StackPanel>
-            </StackPanel>
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Playbar Style:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Row="2" Grid.Column="1" x:Name="PlaybarCombo" FontSize="13"
+                                          SelectionChanged="PlaybarCombo_SelectionChanged"/>
 
-            <!-- Playback & Visualizer -->
-            <StackPanel Grid.Row="6">
-                <TextBlock Text="Playback &amp; Visualizer" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,10"/>
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Visualizer Style:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Row="4" Grid.Column="1" x:Name="VisualizerThemeCombo" FontSize="13"
+                                          SelectionChanged="VisualizerThemeCombo_SelectionChanged"/>
+                            </Grid>
 
-                <CheckBox x:Name="ChkAutoPlay" Content="Auto-Play next song"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,8"
-                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+                            <!-- Visualizer Cycle Settings -->
+                            <TextBlock Text="Visualizer Cycle" FontSize="13" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,6"/>
+                            <TextBlock Text="When cycling, automatically switches between visualizer styles."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <TextBlock Text="Speed:" FontSize="12" FontFamily="Segoe UI"
+                                           Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
+                                           Margin="0,0,8,0"/>
+                                <Slider x:Name="CycleSpeedSlider" Minimum="5" Maximum="60" Value="10"
+                                        Width="140" IsSnapToTickEnabled="True" TickFrequency="5"
+                                        ValueChanged="CycleSpeedSlider_Changed"
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource CrossfadeSlider}"/>
+                                <TextBlock x:Name="CycleSpeedLabel" Text="10s" FontSize="12"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                           VerticalAlignment="Center" Margin="8,0,0,0" Width="28"/>
+                            </StackPanel>
+                            <TextBlock Text="Custom cycle selection (check styles to include):"
+                                       Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,4"/>
+                            <WrapPanel x:Name="CycleStyleChecks" Margin="0,0,0,0">
+                                <CheckBox x:Name="ChkCycleBars" Content="Bars" Margin="0,0,12,4"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" IsChecked="True"
+                                          Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                                <CheckBox x:Name="ChkCycleMirror" Content="Mirror" Margin="0,0,12,4"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" IsChecked="True"
+                                          Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                                <CheckBox x:Name="ChkCycleParticles" Content="Particles" Margin="0,0,12,4"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" IsChecked="True"
+                                          Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                                <CheckBox x:Name="ChkCycleCircles" Content="Circles" Margin="0,0,12,4"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" IsChecked="True"
+                                          Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                                <CheckBox x:Name="ChkCycleScope" Content="Scope" Margin="0,0,12,4"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" IsChecked="True"
+                                          Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                                <CheckBox x:Name="ChkCycleVU" Content="VU Meter" Margin="0,0,12,4"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" IsChecked="True"
+                                          Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
+                            </WrapPanel>
 
-                <CheckBox x:Name="ChkNormalization" Content="Audio Normalization"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,8"
-                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+                            <!-- Main window color-match removed from Settings UI — Now Playing panel color-match remains available via the NP panel button -->
 
-                <CheckBox x:Name="ChkCrossfade" Content="Crossfade"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,4"
-                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
-
-                <StackPanel Orientation="Horizontal" Margin="22,6,0,0"
-                            IsEnabled="{Binding IsChecked, ElementName=ChkCrossfade}">
-                    <TextBlock Text="Duration:" FontSize="12" FontFamily="Segoe UI"
-                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
-                               Margin="0,0,8,0"/>
-                    <Slider x:Name="CrossfadeSlider" Minimum="1" Maximum="10" Value="3"
-                            Width="140" IsSnapToTickEnabled="True" TickFrequency="1"
-                            ValueChanged="CrossfadeSlider_Changed"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource CrossfadeSlider}"/>
-                    <TextBlock x:Name="CrossfadeDurationLabel" Text="3s" FontSize="12"
-                               FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
-                               VerticalAlignment="Center" Margin="8,0,0,0" Width="24"/>
-                </StackPanel>
-
-                <CheckBox x:Name="ChkSpatialAudio" Content="Spatial Audio (Headphones)"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,10,0,0"
-                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
-                <TextBlock Text="Creates a wider, room-like soundstage for headphone listening using crossfeed and stereo widening."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
-
-                <CheckBox x:Name="ChkVisualizerFullVolume" Content="Visualizer Full Volume"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,10,0,0"
-                          Checked="VisualizerFullVolume_Changed" Unchecked="VisualizerFullVolume_Changed"/>
-                <TextBlock Text="Makes the visualizer always respond as if the volume is at 100%, even when you lower it. Keeps the visual effects lively at any volume level."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
-
-                <!-- Visualizer Cycle Settings -->
-                <TextBlock Text="Visualizer Cycle" FontSize="13" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,14,0,6"/>
-                <TextBlock Text="When cycling, automatically switches between visualizer styles."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <TextBlock Text="Speed:" FontSize="12" FontFamily="Segoe UI"
-                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
-                               Margin="0,0,8,0"/>
-                    <Slider x:Name="CycleSpeedSlider" Minimum="5" Maximum="60" Value="10"
-                            Width="140" IsSnapToTickEnabled="True" TickFrequency="5"
-                            ValueChanged="CycleSpeedSlider_Changed"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource CrossfadeSlider}"/>
-                    <TextBlock x:Name="CycleSpeedLabel" Text="10s" FontSize="12"
-                               FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
-                               VerticalAlignment="Center" Margin="8,0,0,0" Width="28"/>
-                </StackPanel>
-                <TextBlock Text="Custom cycle selection (check styles to include):"
-                           Foreground="{DynamicResource TextMuted}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,0,0,4"/>
-                <WrapPanel x:Name="CycleStyleChecks" Margin="0,0,0,0">
-                    <CheckBox x:Name="ChkCycleBars" Content="Bars" Margin="0,0,12,4"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                              FontFamily="Segoe UI" IsChecked="True"
-                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
-                    <CheckBox x:Name="ChkCycleMirror" Content="Mirror" Margin="0,0,12,4"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                              FontFamily="Segoe UI" IsChecked="True"
-                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
-                    <CheckBox x:Name="ChkCycleParticles" Content="Particles" Margin="0,0,12,4"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                              FontFamily="Segoe UI" IsChecked="True"
-                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
-                    <CheckBox x:Name="ChkCycleCircles" Content="Circles" Margin="0,0,12,4"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                              FontFamily="Segoe UI" IsChecked="True"
-                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
-                    <CheckBox x:Name="ChkCycleScope" Content="Scope" Margin="0,0,12,4"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                              FontFamily="Segoe UI" IsChecked="True"
-                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
-                    <CheckBox x:Name="ChkCycleKaleido" Content="Abstract" Margin="0,0,12,4"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                              FontFamily="Segoe UI" IsChecked="True"
-                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
-                    <CheckBox x:Name="ChkCycleVU" Content="VU Meter" Margin="0,0,12,4"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                              FontFamily="Segoe UI" IsChecked="True"
-                              Checked="CycleStyleCheck_Changed" Unchecked="CycleStyleCheck_Changed"/>
-                </WrapPanel>
-
-            </StackPanel>
-
-            <!-- Music Services Section -->
-            <StackPanel Grid.Row="8">
-                <TextBlock Text="Music Service Buttons" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <TextBlock Text="Configure each of the 6 toolbar search buttons. Select 'Custom...' for any slot to set your own URL and icon."
-                           Foreground="{DynamicResource TextMuted}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
-
-                <!-- Slot 1 -->
-                <Grid Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="70"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Slot 1:" FontSize="12" FontFamily="Segoe UI"
-                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ServiceCombo0" Tag="0" FontSize="12"
-                              SelectionChanged="ServiceCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomPanel0" Visibility="Collapsed" Margin="20,0,0,8">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomUrlBox0" Width="340" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" Tag="0" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextPrimary}"
-                                 CaretBrush="{DynamicResource TextPrimary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"
-                                 TextChanged="CustomUrl_Changed"
-                                 ToolTip="Search URL — song name will be appended"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomIconBox0" Width="280" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextSecondary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"/>
-                        <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
-                                Tag="0" Click="BrowseIcon_Click"/>
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- Slot 2 -->
-                <Grid Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="70"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Slot 2:" FontSize="12" FontFamily="Segoe UI"
-                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ServiceCombo1" Tag="1" FontSize="12"
-                              SelectionChanged="ServiceCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomPanel1" Visibility="Collapsed" Margin="20,0,0,8">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomUrlBox1" Width="340" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" Tag="1" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextPrimary}"
-                                 CaretBrush="{DynamicResource TextPrimary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"
-                                 TextChanged="CustomUrl_Changed"
-                                 ToolTip="Search URL — song name will be appended"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomIconBox1" Width="280" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextSecondary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"/>
-                        <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
-                                Tag="1" Click="BrowseIcon_Click"/>
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- Slot 3 -->
-                <Grid Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="70"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Slot 3:" FontSize="12" FontFamily="Segoe UI"
-                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ServiceCombo2" Tag="2" FontSize="12"
-                              SelectionChanged="ServiceCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomPanel2" Visibility="Collapsed" Margin="20,0,0,8">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomUrlBox2" Width="340" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" Tag="2" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextPrimary}"
-                                 CaretBrush="{DynamicResource TextPrimary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"
-                                 TextChanged="CustomUrl_Changed"
-                                 ToolTip="Search URL — song name will be appended"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomIconBox2" Width="280" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextSecondary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"/>
-                        <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
-                                Tag="2" Click="BrowseIcon_Click"/>
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- Slot 4 -->
-                <Grid Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="70"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Slot 4:" FontSize="12" FontFamily="Segoe UI"
-                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ServiceCombo3" Tag="3" FontSize="12"
-                              SelectionChanged="ServiceCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomPanel3" Visibility="Collapsed" Margin="20,0,0,8">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomUrlBox3" Width="340" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" Tag="3" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextPrimary}"
-                                 CaretBrush="{DynamicResource TextPrimary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"
-                                 TextChanged="CustomUrl_Changed"
-                                 ToolTip="Search URL — song name will be appended"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomIconBox3" Width="280" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextSecondary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"/>
-                        <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
-                                Tag="3" Click="BrowseIcon_Click"/>
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- Slot 5 -->
-                <Grid Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="70"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Slot 5:" FontSize="12" FontFamily="Segoe UI"
-                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ServiceCombo4" Tag="4" FontSize="12"
-                              SelectionChanged="ServiceCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomPanel4" Visibility="Collapsed" Margin="20,0,0,8">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomUrlBox4" Width="340" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" Tag="4" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextPrimary}"
-                                 CaretBrush="{DynamicResource TextPrimary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"
-                                 TextChanged="CustomUrl_Changed"
-                                 ToolTip="Search URL — song name will be appended"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomIconBox4" Width="280" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextSecondary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"/>
-                        <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
-                                Tag="4" Click="BrowseIcon_Click"/>
-                    </StackPanel>
-                </StackPanel>
-
-                <!-- Slot 6 -->
-                <Grid Margin="0,0,0,4">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="70"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Slot 6:" FontSize="12" FontFamily="Segoe UI"
-                               VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ServiceCombo5" Tag="5" FontSize="12"
-                              SelectionChanged="ServiceCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomPanel5" Visibility="Collapsed" Margin="20,0,0,4">
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                        <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomUrlBox5" Width="340" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" Tag="5" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextPrimary}"
-                                 CaretBrush="{DynamicResource TextPrimary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"
-                                 TextChanged="CustomUrl_Changed"
-                                 ToolTip="Search URL — song name will be appended"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
-                                   Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="CustomIconBox5" Width="280" FontSize="11" FontFamily="Segoe UI"
-                                 Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
-                                 Foreground="{DynamicResource TextSecondary}"
-                                 BorderBrush="{DynamicResource ButtonBorder}"/>
-                        <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
-                                Tag="5" Click="BrowseIcon_Click"/>
-                    </StackPanel>
-                </StackPanel>
-            </StackPanel>
-
-            <!-- Integrations Section -->
-            <StackPanel Grid.Row="10">
-                <TextBlock Text="Integrations" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,10"/>
-
-                <!-- Discord Rich Presence -->
-                <TextBlock Text="Discord Rich Presence" FontSize="13" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,4"/>
-                <TextBlock Text="Shows your currently playing track in your Discord status."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
-
-                <TextBlock Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap">
-                    <Run FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}">Setup:</Run>
-                    <Run>1. Go to</Run>
-                    <Run FontWeight="SemiBold">discord.com/developers/applications</Run>
-                    <Run>→ New Application</Run>
-                    <LineBreak/>
-                    <Run>2. Copy the</Run>
-                    <Run FontWeight="SemiBold">Application ID</Run>
-                    <Run>(on the General Information page) and paste below</Run>
-                    <LineBreak/>
-                    <Run>3. (Optional) Go to Rich Presence → Art Assets, upload an icon named</Run>
-                    <Run FontWeight="SemiBold">audioauditor</Run>
-                </TextBlock>
-
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                    <Button Style="{StaticResource SmallButton}" Click="DiscordCreateApp_Click"
-                            HorizontalAlignment="Left">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Open Discord Developer Portal" FontSize="11" FontFamily="Segoe UI"
-                                       VerticalAlignment="Center"/>
-                            <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
-                                       VerticalAlignment="Center"/>
                         </StackPanel>
-                    </Button>
-                    <Button Style="{StaticResource SmallButton}" Click="DiscordDownloadLogo_Click"
-                            HorizontalAlignment="Left" Margin="6,0,0,0" Padding="6,3"
-                            ToolTip="Save the AudioAuditor icon to your Downloads folder for use as a Rich Presence asset">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#x2B73; Logo" FontSize="11" FontFamily="Segoe UI"
-                                       VerticalAlignment="Center"/>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ═══════════════════════════════════ PLAYBACK ═══════════════════════════════════ -->
+                <TabItem Header="Playback">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,14,12,14">
+
+                            <TextBlock Text="Playback &amp; Visualizer" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,10"/>
+
+                            <CheckBox x:Name="ChkAutoPlay" Content="Auto-Play next song"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,8"
+                                      Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+
+                            <CheckBox x:Name="ChkNormalization" Content="Audio Normalization"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,8"
+                                      Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+
+                            <CheckBox x:Name="ChkCrossfade" Content="Crossfade"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,4"
+                                      Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+
+                            <StackPanel IsEnabled="{Binding IsChecked, ElementName=ChkCrossfade}"
+                                        Margin="22,6,0,4">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                    <TextBlock Text="Duration:" FontSize="12" FontFamily="Segoe UI"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
+                                               Margin="0,0,8,0"/>
+                                    <Slider x:Name="CrossfadeSlider" Minimum="1" Maximum="15" Value="5"
+                                            Width="130" IsSnapToTickEnabled="True" TickFrequency="1"
+                                            ValueChanged="CrossfadeSlider_Changed"
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource CrossfadeSlider}"/>
+                                    <TextBlock x:Name="CrossfadeDurationLabel" Text="3s" FontSize="12"
+                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                               VerticalAlignment="Center" Margin="8,0,0,0" Width="24"/>
+                                </StackPanel>
+                                <CheckBox x:Name="ChkCrossfadeOnManualSkip" Content="Crossfade on manual skip"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" Margin="0,0,0,6"
+                                          Checked="CrossfadeManualSkip_Changed" Unchecked="CrossfadeManualSkip_Changed"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Curve:" FontSize="12" FontFamily="Segoe UI"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
+                                               Margin="0,0,8,0"/>
+                                    <ComboBox x:Name="CrossfadeCurveCombo" Width="160" Height="24"
+                                              SelectionChanged="CrossfadeCurve_Changed">
+                                        <ComboBoxItem Tag="EqualPower" Content="Equal Power"/>
+                                        <ComboBoxItem Tag="Linear" Content="Linear"/>
+                                        <ComboBoxItem Tag="Natural" Content="Natural"/>
+                                        <ComboBoxItem Tag="Sequential" Content="Sequential (no overlap)"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <CheckBox x:Name="ChkGapless" Content="Gapless Playback"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,10,0,4"
+                                      Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+                            <TextBlock Text="Seamless track transitions with zero silence gap. Mutually exclusive with Crossfade."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
+                            <CheckBox x:Name="ChkSpatialAudio" Content="Spatial Audio (Headphones)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,10,0,0"
+                                      Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+                            <TextBlock Text="Creates a wider, room-like soundstage for headphone listening using crossfeed and stereo widening."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
+                            <CheckBox x:Name="ChkVisualizerFullVolume" Content="Visualizer Full Volume"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,10,0,0"
+                                      Checked="VisualizerFullVolume_Changed" Unchecked="VisualizerFullVolume_Changed"/>
+                            <TextBlock Text="Makes the visualizer always respond as if the volume is at 100%, even when you lower it. Keeps the visual effects lively at any volume level."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
                         </StackPanel>
-                    </Button>
-                </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
 
-                <Grid Margin="0,0,0,6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="95"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Application ID:"
-                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <TextBox Grid.Column="1" x:Name="DiscordAppIdBox"
-                             FontSize="12" FontFamily="Segoe UI" Padding="4,3"
-                             Background="{DynamicResource InputBg}"
-                             Foreground="{DynamicResource TextPrimary}"
-                             CaretBrush="{DynamicResource TextPrimary}"
-                             BorderBrush="{DynamicResource ButtonBorder}"
-                             TextChanged="DiscordAppId_Changed">
-                        <TextBox.Style>
-                            <Style TargetType="TextBox">
-                                <Setter Property="FontFamily" Value="Segoe UI"/>
-                            </Style>
-                        </TextBox.Style>
-                    </TextBox>
-                    <!-- Eye toggle for Discord App ID -->
-                    <Button Grid.Column="2"
-                            x:Name="BtnToggleDiscordIdVisibility"
-                            Click="ToggleDiscordIdVisibility_Click"
-                            VerticalAlignment="Center" Margin="6,0,0,0"
-                            Cursor="Hand" ToolTip="Show/Hide Application ID"
-                            Background="Transparent" BorderBrush="Transparent"
-                            Padding="4,2">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="bd" Property="Background"
-                                                Value="{DynamicResource ButtonHover}"/>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <Canvas Width="20" Height="16">
-                            <Path x:Name="DiscordEyeIcon"
-                                  Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
-                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
-                            <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
-                                     Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
-                            <Line x:Name="DiscordEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
-                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
-                        </Canvas>
-                    </Button>
-                </Grid>
+                <!-- ═══════════════════════════════════ ANALYSIS ═══════════════════════════════════ -->
+                <TabItem Header="Analysis">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,14,12,14">
 
-                <CheckBox x:Name="ChkDiscordRpc" Content="Enable Discord Rich Presence"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,4,0,8"
-                          Checked="DiscordRpc_Changed" Unchecked="DiscordRpc_Changed"/>
+                            <TextBlock Text="Analysis" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,10"/>
 
-                <Grid Margin="0,0,0,6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="95"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Display Mode:"
-                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="DiscordDisplayModeCombo"
-                              FontSize="12" SelectionChanged="DiscordDisplayMode_Changed"/>
-                </Grid>
+                            <!-- Silence gap threshold -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <CheckBox x:Name="ChkSilenceMinGap" Content="Flag gaps longer than"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI" VerticalAlignment="Center"
+                                          Checked="SilenceOption_Changed" Unchecked="SilenceOption_Changed"/>
+                                <TextBox x:Name="TxtSilenceMinGapSec" Width="48" Margin="8,0,4,0" Text="0.5"
+                                         FontSize="13" FontFamily="Segoe UI" Padding="4,2"
+                                         Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="SilenceOption_Changed"/>
+                                <TextBlock Text="seconds" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                           FontFamily="Segoe UI"/>
+                            </StackPanel>
+                            <TextBlock Text="Overrides the default 500 ms minimum silence gap for mid-track flagging."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,0,0,8" TextWrapping="Wrap"/>
 
-                <CheckBox x:Name="ChkDiscordShowElapsed" Content="Show elapsed time"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
-                          FontFamily="Segoe UI" Margin="0,2,0,4"
-                          Checked="DiscordShowElapsed_Changed" Unchecked="DiscordShowElapsed_Changed"/>
+                            <!-- Edge-skip threshold -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <CheckBox x:Name="ChkSilenceSkipEdges" Content="Don't flag silence in the first/last"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI" VerticalAlignment="Center"
+                                          Checked="SilenceOption_Changed" Unchecked="SilenceOption_Changed"/>
+                                <TextBox x:Name="TxtSilenceSkipEdgeSec" Width="48" Margin="8,0,4,0" Text="5.0"
+                                         FontSize="13" FontFamily="Segoe UI" Padding="4,2"
+                                         Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="SilenceOption_Changed"/>
+                                <TextBlock Text="seconds of the track" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                           FontFamily="Segoe UI"/>
+                            </StackPanel>
+                            <TextBlock Text="Suppresses leading/trailing silence flags within the specified zone at each end of the file."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,0,0,8" TextWrapping="Wrap"/>
 
-                <TextBlock x:Name="DiscordStatusText" Text=""
-                           Foreground="{DynamicResource TextMuted}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,2,0,0"/>
-            </StackPanel>
+                            <!-- Always full analysis -->
+                            <CheckBox x:Name="ChkAlwaysFullAnalysis" Content="Always analyze the entire audio file (much slower)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,4,0,4"
+                                      Checked="SilenceOption_Changed" Unchecked="SilenceOption_Changed"/>
+                            <TextBlock Text="Forces a complete sample-by-sample pass even when Silence, DR, True Peak, and LUFS detection are all disabled. Useful for bitrate/encoder analysis only."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,0,0,0" TextWrapping="Wrap"/>
 
-            <!-- Last.fm Section -->
-            <StackPanel Grid.Row="12">
-                <TextBlock Text="Last.fm Scrobbling" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <TextBlock Text="Scrobbles tracks to your Last.fm account."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                            <!-- Hz Cutoff Allow Setting (F13) -->
+                            <TextBlock Text="Frequency Cutoff" FontSize="13" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,6"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <CheckBox x:Name="ChkFreqCutoffAllow" Content="Allow cutoffs above"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI" VerticalAlignment="Center"
+                                          Checked="FreqCutoff_Changed" Unchecked="FreqCutoff_Changed"/>
+                                <TextBox x:Name="TxtFreqCutoffHz" Width="64" Margin="8,0,4,0" Text="19600"
+                                         FontSize="13" FontFamily="Segoe UI" Padding="4,2"
+                                         TextChanged="FreqCutoffHz_Changed"/>
+                                <TextBlock Text="Hz (don't flag these files)" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                           FontFamily="Segoe UI"/>
+                            </StackPanel>
+                            <TextBlock Text="When enabled, files whose frequency cutoff meets or exceeds this threshold will not be flagged as low-quality. Default: 19,600 Hz. Off by default."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,0,0,0" TextWrapping="Wrap"/>
 
-                <Button Style="{StaticResource SmallButton}" Click="LastFmCreateApiKey_Click"
-                        HorizontalAlignment="Left" Margin="0,0,0,10">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Create API Key" FontSize="11" FontFamily="Segoe UI"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
-                                   VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
+                            <!-- AI Detection -->
+                            <TextBlock Text="AI Detection" FontSize="13" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
 
-                <Grid Margin="0,0,0,6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="80"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="6"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+                            <CheckBox x:Name="ChkDefaultAi" Content="Default AI Detection (Watermark / Metadata)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,2" IsChecked="True" IsEnabled="False"/>
+                            <TextBlock Text="Scans metadata, watermarks, and known AI markers. Always enabled, unlimited, no network needed."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,8" TextWrapping="Wrap"/>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="API Key:"
-                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <TextBox Grid.Row="0" Grid.Column="1" x:Name="LastFmApiKeyBox"
-                             FontSize="12" FontFamily="Segoe UI" Padding="4,3"
-                             Background="{DynamicResource InputBg}"
-                             Foreground="{DynamicResource TextPrimary}"
-                             CaretBrush="{DynamicResource TextPrimary}"
-                             BorderBrush="{DynamicResource ButtonBorder}"
-                             TextChanged="LastFmKey_Changed">
-                        <TextBox.Style>
-                            <Style TargetType="TextBox">
-                                <Setter Property="FontFamily" Value="Segoe UI"/>
-                            </Style>
-                        </TextBox.Style>
-                    </TextBox>
+                            <CheckBox x:Name="ChkExperimentalAi" Content="Aggressive AI Detection (Spectral Analysis)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,2"
+                                      Checked="ExperimentalAi_Changed" Unchecked="ExperimentalAi_Changed"/>
+                            <TextBlock Text="⚠ Uses spectral analysis (ultrasonic energy, stereo correlation, spectral regularity) to detect AI-generated audio. This will produce more false positives than standard detection but can catch AI audio that has been stripped of metadata markers."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,8" TextWrapping="Wrap"/>
 
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="API Secret:"
-                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <TextBox Grid.Row="2" Grid.Column="1" x:Name="LastFmApiSecretBox"
-                             FontSize="12" FontFamily="Segoe UI" Padding="4,3"
-                             Background="{DynamicResource InputBg}"
-                             Foreground="{DynamicResource TextPrimary}"
-                             CaretBrush="{DynamicResource TextPrimary}"
-                             BorderBrush="{DynamicResource ButtonBorder}"
-                             TextChanged="LastFmKey_Changed">
-                        <TextBox.Style>
-                            <Style TargetType="TextBox">
-                                <Setter Property="FontFamily" Value="Segoe UI"/>
-                            </Style>
-                        </TextBox.Style>
-                    </TextBox>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                <CheckBox x:Name="ChkSHLabsAi" Content="SH Labs AI Audio Detection (API)"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI"
+                                          Checked="SHLabsAi_Changed" Unchecked="SHLabsAi_Changed"/>
+                                <TextBlock x:Name="SHLabsPrivacyIcon" Text=" ⚠️" FontSize="14"
+                                           VerticalAlignment="Center" Cursor="Hand"
+                                           ToolTip="View SH Labs privacy information"
+                                           PreviewMouseLeftButtonDown="SHLabsPrivacyIcon_Click"/>
+                            </StackPanel>
+                            <TextBlock Text="AI audio detection via SH Labs. Can be better at detecting certain types of AI audio compared to the other options, but limited to 15 scans/day and 100/month. ⚠ Enabling this will significantly slow down scanning as each file must be uploaded for analysis. When the limit is reached, your other selected detection methods will be used instead."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,4" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="SHLabsQuotaText" Text=""
+                                       Foreground="{DynamicResource AccentColor}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,0,0,6"/>
 
-                    <!-- Eye toggle button spanning both rows on the right -->
-                    <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="3"
-                            x:Name="BtnToggleApiVisibility"
-                            Click="ToggleApiVisibility_Click"
-                            VerticalAlignment="Center" Margin="6,0,0,0"
-                            Cursor="Hand" ToolTip="Show/Hide API keys"
-                            Background="Transparent" BorderBrush="Transparent"
-                            Padding="4,2">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="bd" Property="Background"
-                                                Value="{DynamicResource ButtonHover}"/>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <Canvas Width="20" Height="16">
-                            <!-- Eye icon -->
-                            <Path x:Name="EyeIcon"
-                                  Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
-                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
-                            <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
-                                     Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
-                            <!-- Slash line (visible by default = hidden) -->
-                            <Line x:Name="EyeSlash" X1="3" Y1="14" X2="17" Y2="2"
-                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
-                        </Canvas>
-                    </Button>
-                </Grid>
+                            <TextBlock Text="Use your own SH Labs API key (optional):" FontSize="11.5"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                                       Margin="22,4,0,4"/>
+                            <StackPanel Orientation="Horizontal" Margin="22,0,0,2">
+                                <TextBox x:Name="SHLabsApiKeyBox" Width="280" FontSize="12"
+                                         FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="SHLabsApiKey_Changed"/>
+                                <Button Content="Clear" FontSize="11" FontFamily="Segoe UI" Margin="8,0,0,0"
+                                        Click="SHLabsApiKeyClear_Click" Cursor="Hand" Padding="8,3"
+                                        Background="{DynamicResource ButtonBg}"
+                                        Foreground="{DynamicResource TextPrimary}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"/>
+                            </StackPanel>
+                            <TextBlock Text="With your own key, audio goes directly to SH Labs — no proxy, no rate limits, no data collection by AudioAuditor."
+                                       Foreground="{DynamicResource TextDim}" FontSize="10.5"
+                                       FontFamily="Segoe UI" Margin="22,3,0,0" TextWrapping="Wrap"/>
 
-                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                    <Button x:Name="BtnLastFmAuth" Content="Authenticate"
-                            Style="{StaticResource SmallButton}" Click="LastFmAuth_Click"
-                            Margin="0,0,10,0"/>
-                    <Button x:Name="BtnLastFmConfirm" Content="Confirm Auth"
-                            Style="{StaticResource SmallButton}" Click="LastFmConfirm_Click"
-                            Visibility="Collapsed" Margin="0,0,10,0"/>
-                    <TextBlock x:Name="LastFmStatusText" Text=""
-                               Foreground="{DynamicResource TextMuted}" FontSize="11"
-                               FontFamily="Segoe UI" VerticalAlignment="Center"/>
-                </StackPanel>
+                            <!-- Columns & Features -->
+                            <TextBlock Text="Columns &amp; Features" FontSize="13" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
+                            <TextBlock Text="Toggle which columns and analysis features are visible. Hidden columns won't appear in the results table. Right-click any column header to hide it for the current session."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                            <WrapPanel Orientation="Horizontal">
+                                <CheckBox x:Name="ColFavoriteCb" Content="★ Favorite" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColStatusCb" Content="Status" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColTitleCb" Content="Title" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColArtistCb" Content="Artist" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColFilenameCb" Content="Filename" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColPathCb" Content="Path" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColSampleRateCb" Content="Sample Rate" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColBitsCb" Content="Bits" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColChCb" Content="Ch" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColDurationCb" Content="Duration" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColSizeCb" Content="Size" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColBitrateCb" Content="Bitrate" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColActualBRCb" Content="Actual BR" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColFormatCb" Content="Format" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColMaxFreqCb" Content="Max Freq" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColClippingCb" Content="Clipping" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColBpmCb" Content="BPM" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColReplayGainCb" Content="Replay Gain" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColDRCb" Content="DR" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColMqaCb" Content="MQA" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColAiCb" Content="AI" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColStereoCb" Content="Fake Stereo" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColSilenceCb" Content="Silence" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColDateModifiedCb" Content="Date Modified" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColDateCreatedCb" Content="Date Created" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColTruePeakCb" Content="True Peak" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColLufsCb" Content="LUFS" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                                <CheckBox x:Name="ColRipQualityCb" Content="Rip Quality" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
+                                          Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
+                            </WrapPanel>
 
-                <!-- AcoustID -->
-                <TextBlock Text="AcoustID Fingerprinting" FontWeight="SemiBold" FontSize="12"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}" Margin="0,16,0,4"/>
-                <TextBlock Foreground="{DynamicResource TextMuted}" FontSize="11"
-                           FontFamily="Segoe UI" TextWrapping="Wrap" Margin="0,0,0,4"
-                           Text="Identify unknown tracks via audio fingerprint."/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
 
-                <Button Style="{StaticResource SmallButton}" Click="AcoustIdCreateApiKey_Click"
-                        HorizontalAlignment="Left" Margin="0,0,0,10">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Get a Free API Key" FontSize="11" FontFamily="Segoe UI"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
-                                   VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
-                <Grid Margin="0,0,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="70"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="API Key:"
-                               FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <TextBox Grid.Column="1" x:Name="AcoustIdKeyBox"
-                             FontSize="12" FontFamily="Consolas"
-                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
-                             BorderBrush="{DynamicResource Border}" Padding="6,4"
-                             TextChanged="AcoustIdKey_Changed"/>
-                    <!-- Eye toggle for AcoustID key -->
-                    <Button Grid.Column="2" x:Name="BtnToggleAcoustIdVisibility"
-                            Click="ToggleAcoustIdVisibility_Click"
-                            VerticalAlignment="Center" Margin="6,0,0,0"
-                            Cursor="Hand" ToolTip="Show/Hide API key"
-                            Background="Transparent" BorderBrush="Transparent"
-                            Padding="4,2">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="bd" Property="Background"
-                                                Value="{DynamicResource ButtonHover}"/>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Button.Template>
-                        <Canvas Width="20" Height="16">
-                            <Path x:Name="AcoustIdEyeIcon"
-                                  Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
-                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
-                            <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
-                                     Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
-                            <Line x:Name="AcoustIdEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
-                                  Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
-                        </Canvas>
-                    </Button>
-                </Grid>
-            </StackPanel>
+                <!-- ═══════════════════════════════════ CACHE & FILES ═══════════════════════════════════ -->
+                <TabItem Header="Cache &amp; Files">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,14,12,14">
 
-            <!-- Export Format Section -->
-            <StackPanel Grid.Row="16">
-                <TextBlock Text="Export" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Default Format:"
-                               FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ExportFormatCombo" FontSize="13"
-                              SelectionChanged="ExportFormatCombo_Changed"/>
-                </Grid>
-            </StackPanel>
+                            <!-- Scan Cache -->
+                            <TextBlock Text="Scan Cache" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,8"/>
+                            <CheckBox x:Name="ChkScanCache" Content="Remember previous scan results"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,4"
+                                      Checked="ScanCache_Changed" Unchecked="ScanCache_Changed"/>
+                            <TextBlock Text="Caches analysis results locally so previously scanned files load instantly without re-analysis. Only uses cached data when the file hasn't been modified (same path, size, and date)."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,6" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Margin="22,0,0,0">
+                                <Button x:Name="BtnClearCache" Content="Clear Cache"
+                                        Style="{StaticResource SmallButton}" Click="ClearCache_Click"
+                                        Margin="0,0,8,0"/>
+                                <Button x:Name="BtnEditCache" Content="Edit Cache..."
+                                        Style="{StaticResource SmallButton}" Click="EditCache_Click"
+                                        Margin="0,0,10,0"/>
+                                <TextBlock x:Name="CacheStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
 
-            <!-- Performance Section -->
-            <StackPanel Grid.Row="20">
-                <TextBlock Text="Performance" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="130"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="CPU Usage Limit:"
-                               FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="ConcurrencyCombo" FontSize="13"
-                              SelectionChanged="ConcurrencyCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomCpuPanel" Orientation="Horizontal" Margin="130,6,0,0" Visibility="Collapsed">
-                    <TextBox x:Name="CustomCpuBox" Width="80" FontSize="13" FontFamily="Segoe UI"
-                             Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
-                             BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
-                             TextChanged="CustomCpu_Changed"/>
-                    <TextBlock Text=" threads" FontSize="13" FontFamily="Segoe UI"
-                               Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"/>
-                </StackPanel>
-                <TextBlock x:Name="ConcurrencyInfoText" Text=""
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                <Grid Margin="0,12,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="130"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Memory Limit:"
-                               FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextSecondary}"/>
-                    <ComboBox Grid.Column="1" x:Name="MemoryLimitCombo" FontSize="13"
-                              SelectionChanged="MemoryLimitCombo_Changed"/>
-                </Grid>
-                <StackPanel x:Name="CustomMemPanel" Orientation="Horizontal" Margin="130,6,0,0" Visibility="Collapsed">
-                    <TextBox x:Name="CustomMemBox" Width="80" FontSize="13" FontFamily="Segoe UI"
-                             Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
-                             BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
-                             TextChanged="CustomMem_Changed"/>
-                    <TextBlock Text=" MB" FontSize="13" FontFamily="Segoe UI"
-                               Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"/>
-                </StackPanel>
-                <TextBlock x:Name="MemoryInfoText" Text=""
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
-            </StackPanel>
+                            <!-- NP Color Cache -->
+                            <TextBlock Text="Now Playing Colors" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
+                            <CheckBox x:Name="ChkNpColorCache" Content="Cache album art colors"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,4"
+                                      Checked="NpColorCache_Changed" Unchecked="NpColorCache_Changed"/>
+                            <TextBlock Text="Stores extracted album art colors so track switching is instant. In-memory only unless persist is enabled below."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,4" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="ChkNpColorCachePersist" Content="Persist color cache to disk"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="22,4,0,4"
+                                      Checked="NpColorCachePersist_Changed" Unchecked="NpColorCachePersist_Changed"/>
+                            <TextBlock Text="Saves the color cache to %APPDATA%\AudioAuditor\ so it survives app restarts. Keys are hashed — no file paths are stored."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="44,2,0,4" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Margin="22,2,0,0">
+                                <TextBlock x:Name="NpColorCacheStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
 
-            <!-- AI Detection Section -->
-            <StackPanel Grid.Row="18">
-                <DockPanel Margin="0,0,0,8">
-                    <TextBlock Text="AI Detection" FontSize="14" FontWeight="SemiBold"
-                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
-                </DockPanel>
+                            <!-- Close to Tray -->
+                            <CheckBox x:Name="ChkCloseToTray" Content="Minimize to system tray on close"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,18,0,4"
+                                      Checked="CloseToTray_Changed" Unchecked="CloseToTray_Changed"/>
+                            <TextBlock Text="When enabled, closing the window sends it to the system tray instead of exiting. Playback and analysis continue in the background. Right-click the tray icon to exit."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
 
-                <!-- Default (watermark) detector — always available -->
-                <CheckBox x:Name="ChkDefaultAi" Content="Default AI Detection (Watermark / Metadata)"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,2" IsChecked="True" IsEnabled="False"/>
-                <TextBlock Text="Scans metadata, watermarks, and known AI markers. Always enabled, unlimited, no network needed."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,8" TextWrapping="Wrap"/>
+                            <!-- Favorites (F9) -->
+                            <TextBlock Text="Favorites" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <Button x:Name="BtnClearFavorites" Content="Clear All Favorites"
+                                        Style="{StaticResource SmallButton}" Click="ClearFavorites_Click"
+                                        Margin="0,0,8,0"/>
+                                <Button x:Name="BtnOpenFavoritesFile" Content="Edit Favorites File..."
+                                        Style="{StaticResource SmallButton}" Click="OpenFavoritesFile_Click"
+                                        Margin="0,0,10,0"/>
+                                <TextBlock x:Name="FavoritesStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="favorites.json is stored in %APPDATA%\AudioAuditor\ and can be manually edited to rearrange or remove entries."
+                                       FontSize="11" Foreground="{DynamicResource TextMuted}"
+                                       FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
 
-                <!-- Experimental spectral detector -->
-                <CheckBox x:Name="ChkExperimentalAi" Content="Aggressive AI Detection (Spectral Analysis)"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,2"
-                          Checked="ExperimentalAi_Changed" Unchecked="ExperimentalAi_Changed"/>
-                <TextBlock Text="⚠ Uses spectral analysis (ultrasonic energy, stereo correlation, spectral regularity) to detect AI-generated audio. This will produce more false positives than standard detection but can catch AI audio that has been stripped of metadata markers."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,8" TextWrapping="Wrap"/>
+                            <!-- Performance -->
+                            <TextBlock Text="Performance" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="CPU Usage Limit:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ConcurrencyCombo" FontSize="13"
+                                          SelectionChanged="ConcurrencyCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomCpuPanel" Orientation="Horizontal" Margin="130,6,0,0" Visibility="Collapsed">
+                                <TextBox x:Name="CustomCpuBox" Width="80" FontSize="13" FontFamily="Segoe UI"
+                                         Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
+                                         TextChanged="CustomCpu_Changed"/>
+                                <TextBlock Text=" threads" FontSize="13" FontFamily="Segoe UI"
+                                           Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock x:Name="ConcurrencyInfoText" Text=""
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Memory Limit:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="MemoryLimitCombo" FontSize="13"
+                                          SelectionChanged="MemoryLimitCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomMemPanel" Orientation="Horizontal" Margin="130,6,0,0" Visibility="Collapsed">
+                                <TextBox x:Name="CustomMemBox" Width="80" FontSize="13" FontFamily="Segoe UI"
+                                         Background="{DynamicResource ButtonBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
+                                         TextChanged="CustomMem_Changed"/>
+                                <TextBlock Text=" MB" FontSize="13" FontFamily="Segoe UI"
+                                           Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock x:Name="MemoryInfoText" Text=""
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
 
-                <!-- SH Labs API detector -->
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
-                    <CheckBox x:Name="ChkSHLabsAi" Content="SH Labs AI Audio Detection (API)"
-                              Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                              FontFamily="Segoe UI"
-                              Checked="SHLabsAi_Changed" Unchecked="SHLabsAi_Changed"/>
-                    <TextBlock x:Name="SHLabsPrivacyIcon" Text=" ⚠️" FontSize="14"
-                               VerticalAlignment="Center" Cursor="Hand"
-                               ToolTip="View SH Labs privacy information"
-                               MouseLeftButtonDown="SHLabsPrivacyIcon_Click"/>
-                </StackPanel>
-                <TextBlock Text="AI audio detection via SH Labs. Can be better at detecting certain types of AI audio compared to the other options, but limited to 15 scans/day and 100/month. ⚠ Enabling this will significantly slow down scanning as each file must be uploaded for analysis. When the limit is reached, your other selected detection methods will be used instead."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,4" TextWrapping="Wrap"/>
-                <TextBlock x:Name="SHLabsQuotaText" Text=""
-                           Foreground="{DynamicResource AccentColor}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,0,0,6"/>
+                            <!-- Rename Pattern -->
+                            <TextBlock Text="Quick Rename Pattern" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
+                            <RadioButton x:Name="RbRenameFake" Content="Filename + [FAKE + Bitrate]"
+                                         Margin="0,0,0,6" FontSize="13"
+                                         Checked="RenamePattern_Changed"/>
+                            <RadioButton x:Name="RbRenameStatusActual" Content="Filename + [Status + Actual Bitrate]"
+                                         Margin="0,0,0,6" FontSize="13"
+                                         Checked="RenamePattern_Changed"/>
+                            <RadioButton x:Name="RbRenameStatusBoth" Content="Filename + [Status + Bitrate + Actual Bitrate]"
+                                         Margin="0,0,0,6" FontSize="13"
+                                         Checked="RenamePattern_Changed"/>
 
-                <!-- Custom API Key -->
-                <TextBlock Text="Use your own SH Labs API key (optional):" FontSize="11.5"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
-                           Margin="22,4,0,4"/>
-                <StackPanel Orientation="Horizontal" Margin="22,0,0,2">
-                    <TextBox x:Name="SHLabsApiKeyBox" Width="280" FontSize="12"
-                             FontFamily="Segoe UI" Padding="4,3"
-                             Background="{DynamicResource InputBg}"
-                             Foreground="{DynamicResource TextPrimary}"
-                             BorderBrush="{DynamicResource ButtonBorder}"
-                             TextChanged="SHLabsApiKey_Changed"/>
-                    <Button Content="Clear" FontSize="11" FontFamily="Segoe UI" Margin="8,0,0,0"
-                            Click="SHLabsApiKeyClear_Click" Cursor="Hand" Padding="8,3"
-                            Background="{DynamicResource ButtonBg}"
-                            Foreground="{DynamicResource TextPrimary}"
-                            BorderBrush="{DynamicResource ButtonBorder}"/>
-                </StackPanel>
-                <TextBlock Text="With your own key, audio goes directly to SH Labs — no proxy, no rate limits, no data collection by AudioAuditor."
-                           Foreground="{DynamicResource TextDim}" FontSize="10.5"
-                           FontFamily="Segoe UI" Margin="22,3,0,0" TextWrapping="Wrap"/>
-            </StackPanel>
+                            <!-- Default Folders -->
+                            <TextBlock Text="Default Folders" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
 
-            <!-- Columns & Features Section -->
-            <StackPanel Grid.Row="14">
-                <TextBlock Text="Columns &amp; Features" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <TextBlock Text="Toggle which columns and analysis features are visible. Hidden columns won't appear in the results table. Right-click any column header to hide it for the current session."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
-                <WrapPanel Orientation="Horizontal">
-                    <CheckBox x:Name="ColStatusCb" Content="Status" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColTitleCb" Content="Title" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColArtistCb" Content="Artist" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColFilenameCb" Content="Filename" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColPathCb" Content="Path" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColSampleRateCb" Content="Sample Rate" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColBitsCb" Content="Bits" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColChCb" Content="Ch" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColDurationCb" Content="Duration" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColSizeCb" Content="Size" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColBitrateCb" Content="Bitrate" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColActualBRCb" Content="Actual BR" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColFormatCb" Content="Format" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColMaxFreqCb" Content="Max Freq" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColClippingCb" Content="Clipping" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColBpmCb" Content="BPM" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColReplayGainCb" Content="Replay Gain" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColDRCb" Content="DR" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColMqaCb" Content="MQA" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColAiCb" Content="AI" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColStereoCb" Content="Fake Stereo" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColSilenceCb" Content="Silence" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColDateModifiedCb" Content="Date Modified" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColDateCreatedCb" Content="Date Created" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColTruePeakCb" Content="True Peak" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColLufsCb" Content="LUFS" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                    <CheckBox x:Name="ColRipQualityCb" Content="Rip Quality" Margin="0,0,12,6" FontSize="12" FontFamily="Segoe UI"
-                              Foreground="{DynamicResource TextPrimary}" Checked="ColumnVisibility_Changed" Unchecked="ColumnVisibility_Changed"/>
-                </WrapPanel>
-            </StackPanel>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Copy to:" FontSize="12"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox x:Name="TxtDefaultCopy" Grid.Column="1" FontSize="12"
+                                         Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
+                                         TextChanged="DefaultFolder_Changed"/>
+                                <Button Grid.Column="2" Content="Browse..." Margin="8,0,0,0"
+                                        Click="BrowseCopyFolder_Click" Style="{StaticResource SmallButton}"/>
+                            </Grid>
 
-            <!-- Version & Updates -->
-            <StackPanel Grid.Row="22">
-                <TextBlock Text="Version &amp; Updates" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                           Margin="0,0,0,8"/>
-                <Border Background="{DynamicResource InputBg}" CornerRadius="6"
-                        Padding="14,10" Margin="0,0,0,10"
-                        BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="6"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Current:"
-                                   FontSize="12" FontFamily="Segoe UI"
-                                   Foreground="{DynamicResource TextMuted}"
-                                   VerticalAlignment="Center" Margin="0,0,12,0"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1"
-                                   x:Name="CurrentVersionText" FontSize="12"
-                                   FontFamily="Segoe UI" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource TextPrimary}"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Latest:"
-                                   FontSize="12" FontFamily="Segoe UI"
-                                   Foreground="{DynamicResource TextMuted}"
-                                   VerticalAlignment="Center" Margin="0,0,12,0"/>
-                        <TextBlock Grid.Row="2" Grid.Column="1"
-                                   x:Name="LatestVersionText" FontSize="12"
-                                   FontFamily="Segoe UI"
-                                   Foreground="{DynamicResource TextSecondary}"
-                                   VerticalAlignment="Center"/>
-                    </Grid>
-                </Border>
-                <CheckBox x:Name="ChkCheckForUpdates" Content="Check for Updates on Startup"
-                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                          FontFamily="Segoe UI" Margin="0,0,0,4"
-                          Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
-                <TextBlock Text="Silently checks GitHub for a new version each time AudioAuditor starts."
-                           Foreground="{DynamicResource TextDim}" FontSize="11"
-                           FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
-            </StackPanel>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Move to:" FontSize="12"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox x:Name="TxtDefaultMove" Grid.Column="1" FontSize="12"
+                                         Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
+                                         TextChanged="DefaultFolder_Changed"/>
+                                <Button Grid.Column="2" Content="Browse..." Margin="8,0,0,0"
+                                        Click="BrowseMoveFolder_Click" Style="{StaticResource SmallButton}"/>
+                            </Grid>
 
-            <!-- Attribution -->
-            <Grid Grid.Row="24" Margin="0,8,0,4">
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Playlist:" FontSize="12"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox x:Name="TxtDefaultPlaylist" Grid.Column="1" FontSize="12"
+                                         Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}" Padding="4,2"
+                                         TextChanged="DefaultFolder_Changed"/>
+                                <Button Grid.Column="2" Content="Browse..." Margin="8,0,0,0"
+                                        Click="BrowsePlaylistFolder_Click" Style="{StaticResource SmallButton}"/>
+                            </Grid>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ═══════════════════════════════════ EXPORT ═══════════════════════════════════ -->
+                <TabItem Header="Export">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,14,12,14">
+
+                            <TextBlock Text="Export" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,8"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Default Format:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ExportFormatCombo" FontSize="13"
+                                          SelectionChanged="ExportFormatCombo_Changed"/>
+                            </Grid>
+
+                            <!-- Spectrogram Export Quality -->
+                            <TextBlock Text="Spectrogram Export" FontSize="13" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,16,0,6"/>
+                            <CheckBox x:Name="ChkSpectHiFi"
+                                      Content="High-Fidelity spectrogram (16384 FFT, Blackman-Harris window)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,2"
+                                      Checked="SpectOption_Changed" Unchecked="SpectOption_Changed"/>
+                            <TextBlock Text="Produces sharper frequency detail at the cost of longer render time. Recommended for lossy artifact inspection."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,0,0,8" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="ChkSpectMagma"
+                                      Content="Scientific color theme (Magma perceptual gradient)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,2"
+                                      Checked="SpectOption_Changed" Unchecked="SpectOption_Changed"/>
+                            <TextBlock Text="Replaces the default heatmap with a perceptually uniform dark-purple-to-yellow gradient."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,0,0,12" TextWrapping="Wrap"/>
+
+                            <!-- Clear Spectrogram Cache (F14) -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <Button x:Name="BtnClearSpectrogramCache" Content="Clear Spectrogram Cache"
+                                        Style="{StaticResource SmallButton}"
+                                        Click="ClearSpectrogramCache_Click"/>
+                                <TextBlock x:Name="SpectrogramCacheStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            </StackPanel>
+                            <TextBlock Text="Clears in-memory cached spectrograms for the current session. The next time you click a file its spectrogram will be regenerated."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ═══════════════════════════════════ INTEGRATIONS ═══════════════════════════════════ -->
+                <TabItem Header="Integrations">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,14,12,14">
+
+                            <!-- Offline Mode -->
+                            <TextBlock Text="Connection Mode" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,6"/>
+                            <TextBlock TextWrapping="Wrap" FontSize="11" FontFamily="Segoe UI"
+                                       Foreground="{DynamicResource TextMuted}" Margin="0,0,0,8">
+                                <Run Text="Offline mode disables all internet features: lyrics, updates, SH Labs AI, Last.fm, translation, and Discord art. Local analysis and playback are unaffected."/>
+                            </TextBlock>
+                            <CheckBox x:Name="ChkOfflineMode" Content="Offline mode (disable all network calls)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,14"
+                                      Checked="OfflineMode_Changed" Unchecked="OfflineMode_Changed"/>
+
+                            <Separator Background="{DynamicResource BorderColor}" Margin="0,0,0,14"/>
+
+                            <!-- Music Service Buttons -->
+                            <TextBlock Text="Music Service Buttons" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,8"/>
+                            <TextBlock Text="Configure each of the 6 toolbar search buttons. Select 'Custom...' for any slot to set your own URL and icon."
+                                       Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                            <CheckBox x:Name="ChkRegionAwareSearch" Content="Use region-aware store URLs"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                      FontFamily="Segoe UI" Margin="0,0,0,6"
+                                      Checked="RegionAwareSearch_Changed" Unchecked="RegionAwareSearch_Changed"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="90"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Store region:" FontSize="12" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ComboStreamingRegion" FontSize="12"
+                                          SelectionChanged="StreamingRegion_Changed">
+                                    <ComboBoxItem>us</ComboBoxItem>
+                                    <ComboBoxItem>uk</ComboBoxItem>
+                                    <ComboBoxItem>de</ComboBoxItem>
+                                    <ComboBoxItem>fr</ComboBoxItem>
+                                    <ComboBoxItem>jp</ComboBoxItem>
+                                    <ComboBoxItem>ca</ComboBoxItem>
+                                    <ComboBoxItem>au</ComboBoxItem>
+                                    <ComboBoxItem>br</ComboBoxItem>
+                                    <ComboBoxItem>in</ComboBoxItem>
+                                    <ComboBoxItem>mx</ComboBoxItem>
+                                </ComboBox>
+                            </Grid>
+
+                            <!-- Slot 1 -->
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Slot 1:" FontSize="12" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ServiceCombo0" Tag="0" FontSize="12"
+                                          SelectionChanged="ServiceCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomPanel0" Visibility="Collapsed" Margin="20,0,0,8">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomUrlBox0" Width="340" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" Tag="0" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextPrimary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"
+                                             TextChanged="CustomUrl_Changed"
+                                             ToolTip="Search URL — song name will be appended"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomIconBox0" Width="280" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextSecondary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"/>
+                                    <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
+                                            Tag="0" Click="BrowseIcon_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Slot 2 -->
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Slot 2:" FontSize="12" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ServiceCombo1" Tag="1" FontSize="12"
+                                          SelectionChanged="ServiceCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomPanel1" Visibility="Collapsed" Margin="20,0,0,8">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomUrlBox1" Width="340" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" Tag="1" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextPrimary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"
+                                             TextChanged="CustomUrl_Changed"
+                                             ToolTip="Search URL — song name will be appended"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomIconBox1" Width="280" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextSecondary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"/>
+                                    <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
+                                            Tag="1" Click="BrowseIcon_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Slot 3 -->
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Slot 3:" FontSize="12" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ServiceCombo2" Tag="2" FontSize="12"
+                                          SelectionChanged="ServiceCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomPanel2" Visibility="Collapsed" Margin="20,0,0,8">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomUrlBox2" Width="340" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" Tag="2" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextPrimary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"
+                                             TextChanged="CustomUrl_Changed"
+                                             ToolTip="Search URL — song name will be appended"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomIconBox2" Width="280" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextSecondary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"/>
+                                    <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
+                                            Tag="2" Click="BrowseIcon_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Slot 4 -->
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Slot 4:" FontSize="12" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ServiceCombo3" Tag="3" FontSize="12"
+                                          SelectionChanged="ServiceCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomPanel3" Visibility="Collapsed" Margin="20,0,0,8">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomUrlBox3" Width="340" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" Tag="3" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextPrimary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"
+                                             TextChanged="CustomUrl_Changed"
+                                             ToolTip="Search URL — song name will be appended"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomIconBox3" Width="280" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextSecondary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"/>
+                                    <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
+                                            Tag="3" Click="BrowseIcon_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Slot 5 -->
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Slot 5:" FontSize="12" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ServiceCombo4" Tag="4" FontSize="12"
+                                          SelectionChanged="ServiceCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomPanel4" Visibility="Collapsed" Margin="20,0,0,8">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomUrlBox4" Width="340" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" Tag="4" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextPrimary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"
+                                             TextChanged="CustomUrl_Changed"
+                                             ToolTip="Search URL — song name will be appended"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomIconBox4" Width="280" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextSecondary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"/>
+                                    <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
+                                            Tag="4" Click="BrowseIcon_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Slot 6 -->
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Slot 6:" FontSize="12" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="ServiceCombo5" Tag="5" FontSize="12"
+                                          SelectionChanged="ServiceCombo_Changed"/>
+                            </Grid>
+                            <StackPanel x:Name="CustomPanel5" Visibility="Collapsed" Margin="20,0,0,8">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                    <TextBlock Text="URL:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomUrlBox5" Width="340" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" Tag="5" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextPrimary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"
+                                             TextChanged="CustomUrl_Changed"
+                                             ToolTip="Search URL — song name will be appended"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Icon:" FontSize="11" FontFamily="Segoe UI" Width="40"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CustomIconBox5" Width="280" FontSize="11" FontFamily="Segoe UI"
+                                             Padding="4,3" IsReadOnly="True" Background="{DynamicResource InputBg}"
+                                             Foreground="{DynamicResource TextSecondary}"
+                                             BorderBrush="{DynamicResource ButtonBorder}"/>
+                                    <Button Content="Browse..." Margin="4,0,0,0" Style="{StaticResource SmallButton}"
+                                            Tag="5" Click="BrowseIcon_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Discord Rich Presence -->
+                            <TextBlock Text="Discord Rich Presence" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,4"/>
+                            <TextBlock Text="Shows your currently playing track in your Discord status."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
+
+                            <TextBlock Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap">
+                                <Run FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}">Setup:</Run>
+                                <Run>1. Go to</Run>
+                                <Run FontWeight="SemiBold">discord.com/developers/applications</Run>
+                                <Run>→ New Application</Run>
+                                <LineBreak/>
+                                <Run>2. Copy the</Run>
+                                <Run FontWeight="SemiBold">Application ID</Run>
+                                <Run>(on the General Information page) and paste below</Run>
+                                <LineBreak/>
+                                <Run>3. (Optional) Go to Rich Presence → Art Assets, upload an icon named</Run>
+                                <Run FontWeight="SemiBold">audioauditor</Run>
+                            </TextBlock>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Style="{StaticResource SmallButton}" Click="DiscordCreateApp_Click"
+                                        HorizontalAlignment="Left">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Open Discord Developer Portal" FontSize="11" FontFamily="Segoe UI"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource SmallButton}" Click="DiscordDownloadLogo_Click"
+                                        HorizontalAlignment="Left" Margin="6,0,0,0" Padding="6,3"
+                                        ToolTip="Save the AudioAuditor icon to your Downloads folder for use as a Rich Presence asset">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#x2B73; Logo" FontSize="11" FontFamily="Segoe UI"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="95"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Application ID:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Column="1" x:Name="DiscordAppIdBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="DiscordAppId_Changed"/>
+                                <Button Grid.Column="2"
+                                        x:Name="BtnToggleDiscordIdVisibility"
+                                        Click="ToggleDiscordIdVisibility_Click"
+                                        VerticalAlignment="Center" Margin="6,0,0,0"
+                                        Cursor="Hand" ToolTip="Show/Hide Application ID"
+                                        Background="Transparent" BorderBrush="Transparent"
+                                        Padding="4,2">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="bd" Property="Background"
+                                                            Value="{DynamicResource ButtonHover}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Canvas Width="20" Height="16">
+                                        <Path x:Name="DiscordEyeIcon"
+                                              Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                                        <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                                 Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                                        <Line x:Name="DiscordEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                                    </Canvas>
+                                </Button>
+                            </Grid>
+
+                            <CheckBox x:Name="ChkDiscordRpc" Content="Enable Discord Rich Presence"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,4,0,8"
+                                      Checked="DiscordRpc_Changed" Unchecked="DiscordRpc_Changed"/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="95"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Display Mode:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="DiscordDisplayModeCombo"
+                                          FontSize="12" SelectionChanged="DiscordDisplayMode_Changed"/>
+                            </Grid>
+
+                            <CheckBox x:Name="ChkDiscordShowElapsed" Content="Show elapsed time"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                      FontFamily="Segoe UI" Margin="0,2,0,4"
+                                      Checked="DiscordShowElapsed_Changed" Unchecked="DiscordShowElapsed_Changed"/>
+
+                            <TextBlock x:Name="DiscordStatusText" Text=""
+                                       Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,2,0,0"/>
+
+                            <!-- Last.fm Scrobbling -->
+                            <TextBlock Text="Last.fm Scrobbling" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,8"/>
+                            <TextBlock Text="Scrobbles tracks to your Last.fm account."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                            <Button Style="{StaticResource SmallButton}" Click="LastFmCreateApiKey_Click"
+                                    HorizontalAlignment="Left" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Create API Key" FontSize="11" FontFamily="Segoe UI"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="6"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="API Key:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" x:Name="LastFmApiKeyBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="LastFmKey_Changed"/>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="API Secret:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="LastFmApiSecretBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="LastFmKey_Changed"/>
+
+                                <!-- Eye toggle button spanning both rows -->
+                                <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="3"
+                                        x:Name="BtnToggleApiVisibility"
+                                        Click="ToggleApiVisibility_Click"
+                                        VerticalAlignment="Center" Margin="6,0,0,0"
+                                        Cursor="Hand" ToolTip="Show/Hide API keys"
+                                        Background="Transparent" BorderBrush="Transparent"
+                                        Padding="4,2">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="bd" Property="Background"
+                                                            Value="{DynamicResource ButtonHover}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Canvas Width="20" Height="16">
+                                        <Path x:Name="EyeIcon"
+                                              Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                                        <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                                 Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                                        <Line x:Name="EyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                                    </Canvas>
+                                </Button>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button x:Name="BtnLastFmAuth" Content="Authenticate"
+                                        Style="{StaticResource SmallButton}" Click="LastFmAuth_Click"
+                                        Margin="0,0,10,0"/>
+                                <Button x:Name="BtnLastFmConfirm" Content="Confirm Auth"
+                                        Style="{StaticResource SmallButton}" Click="LastFmConfirm_Click"
+                                        Visibility="Collapsed" Margin="0,0,10,0"/>
+                                <TextBlock x:Name="LastFmStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- AcoustID Fingerprinting -->
+                            <TextBlock Text="AcoustID Fingerprinting" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,4"/>
+                            <TextBlock Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                       FontFamily="Segoe UI" TextWrapping="Wrap" Margin="0,0,0,4"
+                                       Text="Identify unknown tracks via audio fingerprint."/>
+
+                            <Button Style="{StaticResource SmallButton}" Click="AcoustIdCreateApiKey_Click"
+                                    HorizontalAlignment="Left" Margin="0,0,0,10">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Get a Free API Key" FontSize="11" FontFamily="Segoe UI"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Text=" &#x2197;" FontSize="12" FontFamily="Segoe UI"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Grid Margin="0,0,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="70"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="API Key:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Column="1" x:Name="AcoustIdKeyBox"
+                                         FontSize="12" FontFamily="Consolas"
+                                         Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource Border}" Padding="6,4"
+                                         TextChanged="AcoustIdKey_Changed"/>
+                                <Button Grid.Column="2" x:Name="BtnToggleAcoustIdVisibility"
+                                        Click="ToggleAcoustIdVisibility_Click"
+                                        VerticalAlignment="Center" Margin="6,0,0,0"
+                                        Cursor="Hand" ToolTip="Show/Hide API key"
+                                        Background="Transparent" BorderBrush="Transparent"
+                                        Padding="4,2">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="bd" Property="Background"
+                                                            Value="{DynamicResource ButtonHover}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Canvas Width="20" Height="16">
+                                        <Path x:Name="AcoustIdEyeIcon"
+                                              Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                                        <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                                 Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                                        <Line x:Name="AcoustIdEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                                    </Canvas>
+                                </Button>
+                            </Grid>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- ═══════════════════════════════════ ABOUT ═══════════════════════════════════ -->
+                <TabItem Header="About">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="12,14,12,14">
+
+                            <TextBlock Text="Version &amp; Updates" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,0,0,8"/>
+                            <Border Background="{DynamicResource InputBg}" CornerRadius="6"
+                                    Padding="14,10" Margin="0,0,0,10"
+                                    BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="6"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Current:"
+                                               FontSize="12" FontFamily="Segoe UI"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="1"
+                                               x:Name="CurrentVersionText" FontSize="12"
+                                               FontFamily="Segoe UI" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextPrimary}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Latest:"
+                                               FontSize="12" FontFamily="Segoe UI"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="1"
+                                               x:Name="LatestVersionText" FontSize="12"
+                                               FontFamily="Segoe UI"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                            <CheckBox x:Name="ChkCheckForUpdates" Content="Check for Updates on Startup"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,4"
+                                      Checked="PlayOption_Changed" Unchecked="PlayOption_Changed"/>
+                            <TextBlock Text="Silently checks GitHub for a new version each time AudioAuditor starts."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+            </TabControl>
+
+            <!-- Footer: attribution + support + close -->
+            <StackPanel Grid.Row="2" Margin="20,6,20,12">
                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="12" FontFamily="Segoe UI">
                     <Run Text="Made with " Foreground="{DynamicResource TextMuted}"/><Run Text="&#x2764;" Foreground="#E25555" FontSize="13"/><Run Text=" by " Foreground="{DynamicResource TextMuted}"/><Hyperlink x:Name="AuthorLink" NavigateUri="https://github.com/Angel2mp3" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{DynamicResource AccentColor}" TextDecorations="None">Angel</Hyperlink>
                 </TextBlock>
-            </Grid>
+                <Grid Margin="0,6,0,0">
+                    <Button Click="SupportDonate_Click" Cursor="Hand" HorizontalAlignment="Center">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="supportBd" Background="{DynamicResource ButtonBg}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        BorderThickness="1" CornerRadius="5" Padding="18,8">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <TextBlock Text="Support AudioAuditor" FontSize="13" FontWeight="SemiBold"
+                                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Text=" ❤" FontSize="14" Foreground="#E25555"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="supportBd" Property="Background"
+                                                Value="{DynamicResource ButtonHover}"/>
+                                        <Setter TargetName="supportBd" Property="BorderBrush"
+                                                Value="{DynamicResource AccentColor}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Content="Close" Width="90"
+                            Click="Close_Click" Padding="12,6"
+                            Background="{DynamicResource ButtonBg}"
+                            Foreground="{DynamicResource TextPrimary}"
+                            BorderBrush="{DynamicResource ButtonBorder}"
+                            FontFamily="Segoe UI" FontSize="13" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        BorderThickness="1" CornerRadius="3"
+                                        Padding="{TemplateBinding Padding}">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Background"
+                                                Value="{DynamicResource ButtonHover}"/>
+                                        <Setter TargetName="bd" Property="BorderBrush"
+                                                Value="{DynamicResource AccentColor}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </Grid>
+            </StackPanel>
 
-            <!-- Support button + Close -->
-            <Grid Grid.Row="26" Margin="0,8,0,4">
-                <Button Click="SupportDonate_Click" Cursor="Hand"
-                        HorizontalAlignment="Center">
-                    <Button.Template>
-                        <ControlTemplate TargetType="Button">
-                            <Border x:Name="supportBd" Background="{DynamicResource ButtonBg}"
-                                    BorderBrush="{DynamicResource ButtonBorder}"
-                                    BorderThickness="1" CornerRadius="5" Padding="18,8">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                    <TextBlock Text="Support AudioAuditor" FontSize="13" FontWeight="SemiBold"
-                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Text=" ❤" FontSize="14" Foreground="#E25555"
-                                               VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="supportBd" Property="Background"
-                                            Value="{DynamicResource ButtonHover}"/>
-                                    <Setter TargetName="supportBd" Property="BorderBrush"
-                                            Value="{DynamicResource AccentColor}"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Button.Template>
-                </Button>
-                <Button HorizontalAlignment="Right" VerticalAlignment="Center"
-                        Content="Close" Width="90"
-                        Click="Close_Click" Padding="12,6"
-                        Background="{DynamicResource ButtonBg}"
-                        Foreground="{DynamicResource TextPrimary}"
-                        BorderBrush="{DynamicResource ButtonBorder}"
-                        FontFamily="Segoe UI" FontSize="13" Cursor="Hand">
-                    <Button.Template>
-                        <ControlTemplate TargetType="Button">
-                            <Border x:Name="bd"
-                                    Background="{TemplateBinding Background}"
-                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                    BorderThickness="1" CornerRadius="3"
-                                    Padding="{TemplateBinding Padding}">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                            </Border>
-                            <ControlTemplate.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="bd" Property="Background"
-                                            Value="{DynamicResource ButtonHover}"/>
-                                    <Setter TargetName="bd" Property="BorderBrush"
-                                            Value="{DynamicResource AccentColor}"/>
-                                </Trigger>
-                            </ControlTemplate.Triggers>
-                        </ControlTemplate>
-                    </Button.Template>
-                </Button>
-            </Grid>
         </Grid>
-        </ScrollViewer>
     </Border>
 </Window>

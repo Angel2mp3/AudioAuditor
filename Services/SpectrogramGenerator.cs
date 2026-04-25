@@ -1,4 +1,6 @@
 using System;
+using System.Buffers;
+using System.Threading;
 #if !CROSS_PLATFORM
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -23,6 +25,7 @@ namespace AudioQualityChecker.Services
     public static class SpectrogramGenerator
     {
         private const int FftSize = 4096;
+        private const int FftSizeHQ = 16384; // High-Fidelity mode
 
         // Color gradient: black → blue → purple → red → orange → yellow → white
         private static readonly (byte R, byte G, byte B)[] GradientColors =
@@ -39,6 +42,21 @@ namespace AudioQualityChecker.Services
         private static readonly double[] GradientPos =
             { 0.00, 0.08, 0.18, 0.32, 0.48, 0.62, 0.78, 1.00 };
 
+        // Magma perceptual gradient (Scientific / dark-to-light)
+        private static readonly (byte R, byte G, byte B)[] MagmaColors =
+        {
+            (0,   0,   4  ),   // 0.00 — near black
+            (28,  16,  68 ),   // 0.15 — deep purple
+            (79,  18,  123),   // 0.30
+            (129, 37,  129),   // 0.45
+            (181, 54,  85 ),   // 0.55
+            (229, 107, 44 ),   // 0.70
+            (252, 180, 98 ),   // 0.85
+            (252, 253, 191),   // 1.00 — light yellow
+        };
+        private static readonly double[] MagmaPos =
+            { 0.00, 0.15, 0.30, 0.45, 0.55, 0.70, 0.85, 1.00 };
+
         /// <summary>
         /// Generates raw RGB24 pixel data for a spectrogram. Cross-platform.
         /// Returns (pixels, width, height) or null if the file is too short/silent.
@@ -46,7 +64,10 @@ namespace AudioQualityChecker.Services
         public static (byte[] pixels, int width, int height)? GenerateRawPixels(string filePath,
             int width = 1200, int height = 400,
             bool linearScale = false, SpectrogramChannel channel = SpectrogramChannel.Mono,
-            double endZoomSeconds = 0)
+            double endZoomSeconds = 0,
+            bool highFidelity = false,
+            bool magmaColormap = false,
+            CancellationToken ct = default)
         {
             try
             {
@@ -69,7 +90,9 @@ namespace AudioQualityChecker.Services
                 else
                     totalFrames = 0;
 
-                if (totalFrames < FftSize * 2) return null;
+                int fftSize = highFidelity ? FftSizeHQ : FftSize;
+
+                if (totalFrames < fftSize * 2) return null;
 
                 long startFrame = 0;
                 long rangeFrames = totalFrames;
@@ -83,74 +106,126 @@ namespace AudioQualityChecker.Services
                     }
                 }
 
-                int columns = width;
-                int rows = height;
-                int spectrumSize = FftSize / 2;
-                long stepFrames = Math.Max(1, (rangeFrames - FftSize) / columns);
+                if (rangeFrames < fftSize) return null;
 
-                double[] window = new double[FftSize];
-                for (int i = 0; i < FftSize; i++)
-                    window[i] = 0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (FftSize - 1)));
+                int rows = height;
+                int spectrumSize = fftSize / 2;
+
+                // Compute how many columns the audio can actually support.
+                // With a sequential ISampleProvider we can't seek backward, so when the
+                // natural hop (stepFrames) is smaller than fftSize we would need overlap
+                // that the reader can't provide. In that case fall back to non-overlapping
+                // windows (stepFrames = fftSize) and cap columns accordingly.
+                long stepFrames = Math.Max(1, (rangeFrames - fftSize) / width);
+                int columns;
+                if (stepFrames < fftSize)
+                {
+                    // Non-overlapping sequential windows
+                    columns = (int)(rangeFrames / fftSize);
+                    if (columns < 1) columns = 1;
+                    stepFrames = fftSize;
+                }
+                else
+                {
+                    // Sequential reader can skip forward fine; cap to actual audio length
+                    columns = width;
+                    long maxColumns = (rangeFrames - fftSize) / stepFrames + 1;
+                    if (maxColumns < columns)
+                        columns = (int)maxColumns;
+                }
+
+                double[] window = new double[fftSize];
+                if (highFidelity)
+                {
+                    // Blackman-Harris window — better sidelobe suppression for HiFi mode
+                    for (int i = 0; i < fftSize; i++)
+                    {
+                        double x = 2 * Math.PI * i / (fftSize - 1);
+                        window[i] = 0.35875 - 0.48829 * Math.Cos(x)
+                                    + 0.14128 * Math.Cos(2 * x) - 0.01168 * Math.Cos(3 * x);
+                    }
+                }
+                else
+                {
+                    // Standard Hann window
+                    for (int i = 0; i < fftSize; i++)
+                        window[i] = 0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (fftSize - 1)));
+                }
 
                 double[][] specData = new double[columns][];
                 double globalMax = -200;
-                float[] frameBuf = new float[FftSize * channels];
+                float[] frameBuf = new float[fftSize * channels];
                 long currentFrame = 0;
 
                 if (startFrame > 0)
                     SkipFrames(samples, channels, startFrame, ref currentFrame);
 
-                for (int col = 0; col < columns; col++)
+                double[] real = ArrayPool<double>.Shared.Rent(fftSize);
+                double[] imag = ArrayPool<double>.Shared.Rent(fftSize);
+                double[] mags = ArrayPool<double>.Shared.Rent(spectrumSize);
+                try
                 {
-                    long targetFrame = startFrame + col * stepFrames;
-                    long framesToSkip = targetFrame - currentFrame;
-                    if (framesToSkip > 0)
-                        SkipFrames(samples, channels, framesToSkip, ref currentFrame);
-
-                    int read = samples.Read(frameBuf, 0, frameBuf.Length);
-                    currentFrame += FftSize;
-
-                    if (read < frameBuf.Length)
+                    for (int col = 0; col < columns; col++)
                     {
+                        // Cooperative cancellation every 50 columns (~12ms at 250μs/col)
+                        if ((col & 0x3F) == 0) ct.ThrowIfCancellationRequested();
+
+                        long targetFrame = startFrame + col * stepFrames;
+                        long framesToSkip = targetFrame - currentFrame;
+                        if (framesToSkip > 0)
+                            SkipFrames(samples, channels, framesToSkip, ref currentFrame);
+
+                        int read = samples.Read(frameBuf, 0, frameBuf.Length);
+                        currentFrame += fftSize;
+
+                        if (read < frameBuf.Length)
+                        {
+                            specData[col] = new double[spectrumSize];
+                            for (int i = 0; i < spectrumSize; i++) specData[col][i] = -200;
+                            continue;
+                        }
+
+                        Array.Clear(real, 0, fftSize);
+                        Array.Clear(imag, 0, fftSize);
+
+                        if (channel == SpectrogramChannel.Difference && channels >= 2)
+                        {
+                            for (int i = 0; i < fftSize; i++)
+                            {
+                                float left = frameBuf[i * channels];
+                                float right = frameBuf[i * channels + 1];
+                                real[i] = (left - right) * window[i];
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < fftSize; i++)
+                            {
+                                float sum = 0;
+                                for (int ch = 0; ch < channels; ch++)
+                                    sum += frameBuf[i * channels + ch];
+                                real[i] = (sum / channels) * window[i];
+                            }
+                        }
+
+                        FFT(real, imag);
+
+                        for (int i = 0; i < spectrumSize; i++)
+                        {
+                            double mag = Math.Sqrt(real[i] * real[i] + imag[i] * imag[i]);
+                            mags[i] = mag > 1e-12 ? 20.0 * Math.Log10(mag) : -200;
+                            if (mags[i] > globalMax) globalMax = mags[i];
+                        }
+
                         specData[col] = new double[spectrumSize];
-                        for (int i = 0; i < spectrumSize; i++) specData[col][i] = -200;
-                        continue;
+                        Array.Copy(mags, 0, specData[col], 0, spectrumSize);
                     }
-
-                    double[] real = new double[FftSize];
-                    double[] imag = new double[FftSize];
-
-                    if (channel == SpectrogramChannel.Difference && channels >= 2)
-                    {
-                        for (int i = 0; i < FftSize; i++)
-                        {
-                            float left = frameBuf[i * channels];
-                            float right = frameBuf[i * channels + 1];
-                            real[i] = (left - right) * window[i];
-                        }
-                    }
-                    else
-                    {
-                        for (int i = 0; i < FftSize; i++)
-                        {
-                            float sum = 0;
-                            for (int ch = 0; ch < channels; ch++)
-                                sum += frameBuf[i * channels + ch];
-                            real[i] = (sum / channels) * window[i];
-                        }
-                    }
-
-                    FFT(real, imag);
-
-                    double[] mags = new double[spectrumSize];
-                    for (int i = 0; i < spectrumSize; i++)
-                    {
-                        double mag = Math.Sqrt(real[i] * real[i] + imag[i] * imag[i]);
-                        mags[i] = mag > 1e-12 ? 20.0 * Math.Log10(mag) : -200;
-                        if (mags[i] > globalMax) globalMax = mags[i];
-                    }
-
-                    specData[col] = mags;
+                }
+                finally
+                {
+                    ArrayPool<double>.Shared.Return(real);
+                    ArrayPool<double>.Shared.Return(imag);
+                    ArrayPool<double>.Shared.Return(mags);
                 }
 
                 if (globalMax < -150) return null;
@@ -169,13 +244,13 @@ namespace AudioQualityChecker.Services
                         {
                             double t = 1.0 - (double)row / (rows - 1);
                             double freq = t * nyquist;
-                            double bin = freq / sampleRate * FftSize;
+                            double bin = freq / sampleRate * fftSize;
                             int b0 = Math.Clamp((int)bin, 0, spectrumSize - 1);
                             int b1 = Math.Clamp(b0 + 1, 0, spectrumSize - 1);
                             double frac = bin - (int)bin;
                             double val = colData[b0] * (1.0 - frac) + colData[b1] * frac;
                             double norm = Math.Clamp((val - minDb) / dynamicRange, 0, 1);
-                            var (r, g, b) = MapColor(norm);
+                            var (r, g, b) = MapColor(norm, magmaColormap);
                             int idx = (row * columns + col) * 3;
                             pixels[idx] = r;
                             pixels[idx + 1] = g;
@@ -195,13 +270,13 @@ namespace AudioQualityChecker.Services
                         {
                             double t = 1.0 - (double)row / (rows - 1);
                             double freq = Math.Pow(10, logMin + t * logRange);
-                            double bin = freq / sampleRate * FftSize;
+                            double bin = freq / sampleRate * fftSize;
                             int b0 = Math.Clamp((int)bin, 0, spectrumSize - 1);
                             int b1 = Math.Clamp(b0 + 1, 0, spectrumSize - 1);
                             double frac = bin - (int)bin;
                             double val = colData[b0] * (1.0 - frac) + colData[b1] * frac;
                             double norm = Math.Clamp((val - minDb) / dynamicRange, 0, 1);
-                            var (r, g, b) = MapColor(norm);
+                            var (r, g, b) = MapColor(norm, magmaColormap);
                             int idx = (row * columns + col) * 3;
                             pixels[idx] = r;
                             pixels[idx + 1] = g;
@@ -228,9 +303,12 @@ namespace AudioQualityChecker.Services
         /// <param name="endZoomSeconds">If > 0, only render the last N seconds of the file.</param>
         public static BitmapSource? Generate(string filePath, int width = 1200, int height = 400,
             bool linearScale = false, SpectrogramChannel channel = SpectrogramChannel.Mono,
-            double endZoomSeconds = 0)
+            double endZoomSeconds = 0,
+            bool highFidelity = false, bool magmaColormap = false,
+            CancellationToken ct = default)
         {
-            var result = GenerateRawPixels(filePath, width, height, linearScale, channel, endZoomSeconds);
+            var result = GenerateRawPixels(filePath, width, height, linearScale, channel, endZoomSeconds,
+                highFidelity, magmaColormap, ct);
             if (result == null) return null;
 
             var (pixels, columns, rows) = result.Value;
@@ -263,19 +341,22 @@ namespace AudioQualityChecker.Services
             currentFrame += framesToSkip;
         }
 
-        private static (byte R, byte G, byte B) MapColor(double t)
+        private static (byte R, byte G, byte B) MapColor(double t, bool useMagma = false)
         {
             t = Math.Clamp(t, 0, 1);
 
-            for (int i = 0; i < GradientPos.Length - 1; i++)
+            var colors = useMagma ? MagmaColors : GradientColors;
+            var pos    = useMagma ? MagmaPos    : GradientPos;
+
+            for (int i = 0; i < pos.Length - 1; i++)
             {
-                if (t <= GradientPos[i + 1])
+                if (t <= pos[i + 1])
                 {
-                    double seg = (t - GradientPos[i]) / (GradientPos[i + 1] - GradientPos[i]);
+                    double seg = (t - pos[i]) / (pos[i + 1] - pos[i]);
                     seg = Math.Clamp(seg, 0, 1);
 
-                    var c0 = GradientColors[i];
-                    var c1 = GradientColors[i + 1];
+                    var c0 = colors[i];
+                    var c1 = colors[i + 1];
                     return (
                         (byte)(c0.R + (c1.R - c0.R) * seg),
                         (byte)(c0.G + (c1.G - c0.G) * seg),
@@ -284,7 +365,7 @@ namespace AudioQualityChecker.Services
                 }
             }
 
-            var last = GradientColors[^1];
+            var last = colors[^1];
             return (last.R, last.G, last.B);
         }
 

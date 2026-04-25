@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -14,11 +15,16 @@ namespace AudioQualityChecker.Services
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AudioAuditor");
         private static readonly string CacheFile = Path.Combine(CacheDir, "scan_cache.json");
 
-        private static Dictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
+        private static ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
         private static bool _loaded;
         private static bool _dirty;
+        private static bool _cacheSkipped;
+
+        private const long MaxCacheSizeBytes = 100L * 1024 * 1024; // 100 MB — skip loading above this
+        private const int MaxCacheEntries = 50_000;                 // cap in-memory entries
 
         public static int EntryCount => _cache.Count;
+        public static bool CacheSkipped => _cacheSkipped;
 
         public static void EnsureLoaded()
         {
@@ -27,10 +33,17 @@ namespace AudioQualityChecker.Services
             try
             {
                 if (!File.Exists(CacheFile)) return;
+                long fileSize = new FileInfo(CacheFile).Length;
+                if (fileSize > MaxCacheSizeBytes)
+                {
+                    _cacheSkipped = true;
+                    return;
+                }
                 var json = File.ReadAllText(CacheFile);
                 var entries = JsonSerializer.Deserialize<List<CacheEntry>>(json);
                 if (entries == null) return;
-                foreach (var e in entries)
+                // Keep only the last MaxCacheEntries to avoid unbounded memory use
+                foreach (var e in entries.TakeLast(MaxCacheEntries))
                     if (!string.IsNullOrEmpty(e.FilePath))
                         _cache[e.FilePath] = e;
             }
@@ -44,7 +57,7 @@ namespace AudioQualityChecker.Services
             if (entry.FileSizeBytes != fileSizeBytes ||
                 Math.Abs((entry.LastWriteUtc - lastWriteUtc).TotalSeconds) > 2)
             {
-                _cache.Remove(filePath);
+                _cache.TryRemove(filePath, out _);
                 _dirty = true;
                 return false;
             }
@@ -84,6 +97,8 @@ namespace AudioQualityChecker.Services
         {
             _cache.Clear();
             _dirty = false;
+            _loaded = false;
+            _cacheSkipped = false;
             try { if (File.Exists(CacheFile)) File.Delete(CacheFile); } catch { }
         }
 

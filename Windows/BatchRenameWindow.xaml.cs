@@ -181,7 +181,24 @@ namespace AudioQualityChecker
             var invalid = Path.GetInvalidFileNameChars();
             foreach (char c in invalid)
                 segment = segment.Replace(c, '_');
-            return segment.Trim().TrimEnd('.', ' ');
+            segment = segment.Trim().TrimEnd('.', ' ');
+
+            // Prevent path traversal: neutralize .. sequences and strip separator chars
+            segment = segment.Replace("..", "__");
+            segment = segment.Replace(Path.DirectorySeparatorChar, '_')
+                             .Replace(Path.AltDirectorySeparatorChar, '_');
+
+            return string.IsNullOrWhiteSpace(segment) ? "_" : segment;
+        }
+
+        private static string VerifyTargetDir(string baseDir, string relativePath)
+        {
+            // Ensure the resulting path doesn't escape the source directory
+            string fullBase = Path.GetFullPath(baseDir) + Path.DirectorySeparatorChar;
+            string fullTarget = Path.GetFullPath(Path.Combine(baseDir, relativePath));
+            if (!fullTarget.StartsWith(fullBase, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Rename target would escape source directory.");
+            return fullTarget;
         }
 
         private async void Rename_Click(object sender, RoutedEventArgs e)
@@ -221,7 +238,9 @@ namespace AudioQualityChecker
                                         album = tagFile.Tag.Album;
                                 }
                                 catch { }
-                                targetDir = Path.Combine(dir, SanitizePath(artist), SanitizePath(album));
+                                album = SanitizePath(album);
+                                // VerifyTargetDir ensures the path can't escape the original directory
+                                targetDir = VerifyTargetDir(dir, Path.Combine(artist, album));
                             }
 
                             Directory.CreateDirectory(targetDir);

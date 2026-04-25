@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor.Core</AssemblyName>
-    <Version>1.6.0</Version>
+    <Version>1.7.0</Version>
     <DefineConstants>CROSS_PLATFORM</DefineConstants>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
