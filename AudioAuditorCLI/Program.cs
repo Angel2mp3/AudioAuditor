@@ -735,7 +735,14 @@ OPTIONS:
   --no-recursive    Do not recurse into subdirectories
   --json            Output results as JSON
 
-  ANALYSIS TOGGLES (all enabled by default unless noted):
+  ANALYSIS TOGGLES:
+  Fast scan is the default. Full-track detectors are opt-in.
+  --thorough        Enable silence, DR, true peak, LUFS, BPM, and rip quality analysis
+  --silence         Enable silence detection
+  --dynamic-range   Enable dynamic range measurement
+  --true-peak       Enable true peak measurement
+  --lufs            Enable integrated LUFS measurement
+  --bpm             Enable BPM detection
   --experimental-ai Enable experimental spectral AI detection (off by default)
   --rip-quality     Enable rip/encode quality detection (off by default)
   --shlabs          Enable SH Labs AI detection (uses quota: 15/day, 100/month)
@@ -747,7 +754,7 @@ OPTIONS:
   --no-true-peak    Disable true peak measurement
   --no-lufs         Disable integrated LUFS measurement
   --no-bpm          Disable BPM detection
-  --fast            Disable DR, true peak, LUFS, rip quality (faster analysis)
+  --fast            Force fast scan by disabling full-track detectors
 ");
                 return 0;
             }
@@ -773,6 +780,19 @@ OPTIONS:
                     case "--experimental-ai": experimentalAi = true; break;
                     case "--rip-quality": ripQuality = true; break;
                     case "--shlabs": shLabs = true; break;
+                    case "--silence": AudioAnalyzer.EnableSilenceDetection = true; break;
+                    case "--dynamic-range": AudioAnalyzer.EnableDynamicRange = true; break;
+                    case "--true-peak": AudioAnalyzer.EnableTruePeak = true; break;
+                    case "--lufs": AudioAnalyzer.EnableLufs = true; break;
+                    case "--bpm": AudioAnalyzer.EnableBpmDetection = true; break;
+                    case "--thorough":
+                        AudioAnalyzer.EnableSilenceDetection = true;
+                        AudioAnalyzer.EnableDynamicRange = true;
+                        AudioAnalyzer.EnableTruePeak = true;
+                        AudioAnalyzer.EnableLufs = true;
+                        AudioAnalyzer.EnableBpmDetection = true;
+                        ripQuality = true;
+                        break;
                     case "--no-clipping": AudioAnalyzer.EnableClippingDetection = false; break;
                     case "--no-mqa": AudioAnalyzer.EnableMqaDetection = false; break;
                     case "--no-silence": AudioAnalyzer.EnableSilenceDetection = false; break;
@@ -786,6 +806,9 @@ OPTIONS:
                         AudioAnalyzer.EnableTruePeak = false;
                         AudioAnalyzer.EnableLufs = false;
                         AudioAnalyzer.EnableRipQuality = false;
+                        AudioAnalyzer.EnableSilenceDetection = false;
+                        AudioAnalyzer.EnableBpmDetection = false;
+                        ripQuality = false;
                         break;
                 }
             }
@@ -1278,22 +1301,42 @@ USAGE: audioauditorcli info <file> [options]
 Show detailed analysis for a single audio file.
 
 OPTIONS:
+  --thorough         Enable silence, DR, true peak, LUFS, BPM, and rip quality analysis
+  --silence          Enable silence detection
+  --dynamic-range    Enable dynamic range measurement
+  --true-peak        Enable true peak measurement
+  --lufs             Enable LUFS measurement
+  --bpm              Enable BPM detection
   --experimental-ai  Enable experimental spectral AI detection
   --rip-quality      Enable rip/encode quality detection
   --shlabs           Enable SH Labs AI detection
   --no-true-peak     Disable true peak measurement
   --no-lufs          Disable LUFS measurement
   --no-bpm           Disable BPM detection
-  --fast             Disable DR, true peak, LUFS, rip quality
+  --fast             Force fast scan by disabling full-track detectors
 ");
                 return 0;
             }
 
-            var knownFlags = new HashSet<string> { "--experimental-ai", "--rip-quality", "--shlabs", "--no-true-peak", "--no-lufs", "--no-bpm", "--no-clipping", "--no-mqa", "--no-silence", "--no-fake-stereo", "--no-dynamic-range", "--fast" };
+            var knownFlags = new HashSet<string> { "--experimental-ai", "--rip-quality", "--shlabs", "--silence", "--dynamic-range", "--true-peak", "--lufs", "--bpm", "--thorough", "--no-true-peak", "--no-lufs", "--no-bpm", "--no-clipping", "--no-mqa", "--no-silence", "--no-fake-stereo", "--no-dynamic-range", "--fast" };
             bool experimentalAi = args.Contains("--experimental-ai");
             bool ripQuality = args.Contains("--rip-quality");
             bool shLabs = args.Contains("--shlabs");
 
+            if (args.Contains("--silence")) AudioAnalyzer.EnableSilenceDetection = true;
+            if (args.Contains("--dynamic-range")) AudioAnalyzer.EnableDynamicRange = true;
+            if (args.Contains("--true-peak")) AudioAnalyzer.EnableTruePeak = true;
+            if (args.Contains("--lufs")) AudioAnalyzer.EnableLufs = true;
+            if (args.Contains("--bpm")) AudioAnalyzer.EnableBpmDetection = true;
+            if (args.Contains("--thorough"))
+            {
+                AudioAnalyzer.EnableSilenceDetection = true;
+                AudioAnalyzer.EnableDynamicRange = true;
+                AudioAnalyzer.EnableTruePeak = true;
+                AudioAnalyzer.EnableLufs = true;
+                AudioAnalyzer.EnableBpmDetection = true;
+                AudioAnalyzer.EnableRipQuality = true;
+            }
             if (args.Contains("--no-clipping")) AudioAnalyzer.EnableClippingDetection = false;
             if (args.Contains("--no-mqa")) AudioAnalyzer.EnableMqaDetection = false;
             if (args.Contains("--no-silence")) AudioAnalyzer.EnableSilenceDetection = false;
@@ -1308,6 +1351,8 @@ OPTIONS:
                 AudioAnalyzer.EnableTruePeak = false;
                 AudioAnalyzer.EnableLufs = false;
                 AudioAnalyzer.EnableRipQuality = false;
+                AudioAnalyzer.EnableSilenceDetection = false;
+                AudioAnalyzer.EnableBpmDetection = false;
             }
 
             var fileArg = args.Where(a => !knownFlags.Contains(a.ToLowerInvariant())).FirstOrDefault();
@@ -1324,7 +1369,7 @@ OPTIONS:
 
             Console.WriteLine($"Analyzing: {Path.GetFileName(filePath)}...\n");
 
-            var result = AudioAnalyzer.AnalyzeFile(filePath);
+            var result = AnalyzeFileWithTimeout(filePath, CancellationToken.None, out _);
 
             // Run SH Labs if requested
             if (shLabs)
@@ -1474,6 +1519,45 @@ OPTIONS:
             return result;
         }
 
+        static AudioFileInfo AnalyzeFileWithTimeout(string filePath, CancellationToken ct, out bool completed)
+        {
+            completed = false;
+            try
+            {
+                var analysisTask = Task.Factory.StartNew(
+                    () => AudioAnalyzer.AnalyzeFile(filePath, ct),
+                    ct,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+                if (!analysisTask.Wait(TimeSpan.FromSeconds(120), ct))
+                {
+                    return CreateAnalysisError(filePath, "Analysis timed out (file may be corrupt)");
+                }
+
+                var result = analysisTask.GetAwaiter().GetResult();
+                completed = true;
+                return result;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                return CreateAnalysisError(filePath, "Failed to open or analyze");
+            }
+        }
+
+        static AudioFileInfo CreateAnalysisError(string filePath, string message)
+        {
+            return new AudioFileInfo
+            {
+                FilePath = filePath,
+                FileName = Path.GetFileName(filePath),
+                FolderPath = Path.GetDirectoryName(filePath) ?? "",
+                Extension = Path.GetExtension(filePath).ToLowerInvariant(),
+                Status = AudioStatus.Corrupt,
+                ErrorMessage = message
+            };
+        }
+
         static List<AudioFileInfo> AnalyzeFiles(List<string> files, int threads, bool showProgress, int memoryLimitMb, out bool userStopped)
         {
             var results = new ConcurrentBag<AudioFileInfo>();
@@ -1550,6 +1634,7 @@ OPTIONS:
             Task? animTask = null;
             int progressRow = -1; // captured on first draw; updated in place each tick
             object consoleLock = new();
+            int lastRedirectedProgress = 0;
             if (showProgress && !Console.IsOutputRedirected)
             {
                 animTask = Task.Run(async () =>
@@ -1739,8 +1824,9 @@ OPTIONS:
             }
 
             // Analysis — Parallel.ForEach with NoBuffering partitioner for dynamic work-stealing.
-            // Bounded by MaxDegreeOfParallelism; no nested Task.Run, no semaphore juggling.
+            // File analysis uses dedicated threads so decoder hangs do not starve the ThreadPool.
             userStopped = false;
+            AudioAnalyzer.PauseEvent = pauseEvent;
             try
             {
                 var partitioner = System.Collections.Concurrent.Partitioner.Create(
@@ -1774,41 +1860,35 @@ OPTIONS:
 
                         if (result == null)
                         {
-                            // Per-file timeout: a hung TagLib or NAudio call cannot stall the scan forever
-                            var analysisTask = Task.Run(() => AudioAnalyzer.AnalyzeFile(filePath, cts.Token), cts.Token);
-                            if (!analysisTask.Wait(TimeSpan.FromSeconds(120)))
-                            {
-                                result = new AudioFileInfo
-                                {
-                                    FilePath = filePath,
-                                    FileName = Path.GetFileName(filePath),
-                                    FolderPath = Path.GetDirectoryName(filePath) ?? "",
-                                    Extension = Path.GetExtension(filePath).ToLowerInvariant(),
-                                    Status = AudioStatus.Corrupt,
-                                    ErrorMessage = "Analysis timed out (file may be corrupt)"
-                                };
-                            }
-                            else
-                            {
-                                result = analysisTask.Result;
+                            result = AnalyzeFileWithTimeout(filePath, cts.Token, out bool completedAnalysis);
+                            if (completedAnalysis)
                                 try { ScanCacheService.Set(result); } catch { }
-                            }
                         }
                         results.Add(result);
-                        Interlocked.Increment(ref completed);
+                        int completedNow = Interlocked.Increment(ref completed);
                         completionTimes.Enqueue(Environment.TickCount64);
 
                         // Fallback plain-text progress for redirected output
                         if (showProgress && Console.IsOutputRedirected)
                         {
-                            int c = Volatile.Read(ref completed);
-                            Console.WriteLine($"  [{c}/{files.Count}] {c * 100 / files.Count}%");
+                            lock (consoleLock)
+                            {
+                                if (completedNow > lastRedirectedProgress)
+                                {
+                                    lastRedirectedProgress = completedNow;
+                                    Console.WriteLine($"  [{completedNow}/{files.Count}] {completedNow * 100 / files.Count}%");
+                                }
+                            }
                         }
                     });
             }
             catch (OperationCanceledException)
             {
                 userStopped = true;
+            }
+            finally
+            {
+                AudioAnalyzer.PauseEvent = null;
             }
 
             cts.Cancel();

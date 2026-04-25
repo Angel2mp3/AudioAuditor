@@ -132,7 +132,7 @@
                     <!-- Feature Highlights -->
                     <TextBlock Text="Feature Highlights" FontSize="13" FontWeight="SemiBold"
                                FontFamily="Segoe UI" Foreground="#FFCCCCCC" Margin="0,16,0,8"/>
-                    <TextBlock Text="Toggle features you want enabled. You can change these later in Settings."
+                    <TextBlock Text="Toggle features you want enabled. More enabled analysis options can slow scanning."
                                FontSize="11" Foreground="#FF888888" FontFamily="Segoe UI"
                                Margin="0,0,0,8"/>
 
@@ -145,7 +145,7 @@
 
                         <!-- Left column -->
                         <StackPanel Grid.Column="0">
-                            <CheckBox x:Name="ChkSilence" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <CheckBox x:Name="ChkSilence" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="Silence Detection" FontSize="12.5" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
                             </CheckBox>
@@ -153,15 +153,15 @@
                                 <TextBlock Text="Fake Stereo Detection" FontSize="12.5" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
                             </CheckBox>
-                            <CheckBox x:Name="ChkDR" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <CheckBox x:Name="ChkDR" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="Dynamic Range (DR Score)" FontSize="12.5" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
                             </CheckBox>
-                            <CheckBox x:Name="ChkTruePeak" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <CheckBox x:Name="ChkTruePeak" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="True Peak" FontSize="12.5" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
                             </CheckBox>
-                            <CheckBox x:Name="ChkLufs" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <CheckBox x:Name="ChkLufs" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="LUFS" FontSize="12.5" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
                             </CheckBox>
@@ -177,7 +177,7 @@
                                 <TextBlock Text="MQA Detection" FontSize="12.5" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
                             </CheckBox>
-                            <CheckBox x:Name="ChkBpm" IsChecked="True" Margin="0,5" Cursor="Hand">
+                            <CheckBox x:Name="ChkBpm" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="BPM Detection" FontSize="12.5" FontWeight="SemiBold"
                                            FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
                             </CheckBox>

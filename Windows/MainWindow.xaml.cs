@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -342,6 +343,7 @@ namespace AudioQualityChecker
                             AudioAnalyzer.EnableRipQuality = dlg.EnableRipQuality;
                             ThemeManager.SHLabsAiDetection = dlg.EnableSHLabs;
 
+                            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
                             ThemeManager.SavePlayOptions();
                             ApplyColumnVisibility();
 
@@ -760,36 +762,16 @@ namespace AudioQualityChecker
         /// </summary>
         public void ApplyColumnVisibility()
         {
-            var hidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // Add persistent hidden columns
-            if (!string.IsNullOrEmpty(ThemeManager.HiddenColumns))
-            {
-                foreach (var h in ThemeManager.HiddenColumns.Split(',', StringSplitOptions.RemoveEmptyEntries))
-                    hidden.Add(h.Trim());
-            }
+            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
+            var hidden = ThemeManager.GetHiddenColumnSet();
 
             // Add session hidden columns
             foreach (var h in _sessionHiddenColumns)
-                hidden.Add(h);
+                hidden.Add(ThemeManager.NormalizeColumnHeader(h));
 
             foreach (var col in FileGrid.Columns)
             {
-                string header = col.Header?.ToString() ?? "";
-
-                // Feature-disabled columns should always be hidden
-                if (header == "Rip Quality" && !ThemeManager.RipQualityEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "DR" && !ThemeManager.DynamicRangeEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "True Peak" && !ThemeManager.TruePeakEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "LUFS" && !ThemeManager.LufsEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "Clipping" && !ThemeManager.ClippingDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "MQA" && !ThemeManager.MqaDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "AI" && !ThemeManager.DefaultAiDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "Silence" && !ThemeManager.SilenceDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "Fake Stereo" && !ThemeManager.FakeStereoDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-                if (header == "BPM" && !ThemeManager.BpmDetectionEnabled) { col.Visibility = Visibility.Collapsed; continue; }
-
-                // Check if user has hidden this column
+                string header = ThemeManager.NormalizeColumnHeader(col.Header?.ToString() ?? "");
                 bool isHidden = hidden.Contains(header);
                 col.Visibility = isHidden ? Visibility.Collapsed : Visibility.Visible;
             }
@@ -797,7 +779,7 @@ namespace AudioQualityChecker
 
         private void HideColumnForSession(string header)
         {
-            _sessionHiddenColumns.Add(header);
+            _sessionHiddenColumns.Add(ThemeManager.NormalizeColumnHeader(header));
             ApplyColumnVisibility();
         }
 
@@ -805,6 +787,7 @@ namespace AudioQualityChecker
         {
             _sessionHiddenColumns.Clear();
             ThemeManager.HiddenColumns = "";
+            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
             ThemeManager.SavePlayOptions();
             ApplyColumnVisibility();
         }
@@ -1264,6 +1247,46 @@ namespace AudioQualityChecker
             Interlocked.Increment(ref _activeBatches);
             var semaphore = _analysisSemaphore!;
             var shLabsSemaphore = _shLabsSemaphore!;
+            var pendingUiResults = new ConcurrentQueue<AudioFileInfo>();
+            int uiFlushScheduled = 0;
+
+            void FlushPendingResultsOnUi()
+            {
+                while (pendingUiResults.TryDequeue(out var pending))
+                    _files.Add(pending);
+
+                int count = Volatile.Read(ref _analysisCompleted);
+                int total = Volatile.Read(ref _analysisTotal);
+                AnalysisProgress.Maximum = total;
+                AnalysisProgress.Value = Math.Min(count, total);
+                StatusText.Text = $"Analyzed {count} / {total} files...";
+                UpdateAnalysisEta(count, total);
+            }
+
+            void ScheduleUiFlush()
+            {
+                if (Interlocked.CompareExchange(ref uiFlushScheduled, 1, 0) != 0)
+                    return;
+
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    FlushPendingResultsOnUi();
+                    Interlocked.Exchange(ref uiFlushScheduled, 0);
+                    if (!pendingUiResults.IsEmpty)
+                        ScheduleUiFlush();
+                }, DispatcherPriority.Background);
+            }
+
+            void QueueUiResult(AudioFileInfo result)
+            {
+                pendingUiResults.Enqueue(result);
+                ScheduleUiFlush();
+            }
+
+            async Task FlushPendingResultsAsync()
+            {
+                await Dispatcher.InvokeAsync(FlushPendingResultsOnUi, DispatcherPriority.Background);
+            }
 
             try
             {
@@ -1276,75 +1299,76 @@ namespace AudioQualityChecker
                     var chunk = newPaths.Skip(_chunkStart).Take(ChunkSize).ToArray();
                     var chunkTasks = chunk.Select(async path =>
                     {
-                    AudioFileInfo? info = null;
-                    bool acquired = false;
+                        AudioFileInfo? info = null;
+                        bool acquired = false;
+                        bool cacheAnalysisResult = false;
 
-                    // ── Check scan cache first ──
-                    if (ThemeManager.ScanCacheEnabled)
-                    {
+                        // ── Check scan cache first ──
+                        if (ThemeManager.ScanCacheEnabled)
+                        {
+                            try
+                            {
+                                var fi = new System.IO.FileInfo(path);
+                                if (fi.Exists && ScanCacheService.TryGet(path, fi.Length, fi.LastWriteTimeUtc, out var cached) && cached != null)
+                                {
+                                    Interlocked.Increment(ref _analysisCompleted);
+                                    QueueUiResult(cached);
+                                    return;
+                                }
+                            }
+                            catch { /* cache miss — fall through to normal analysis */ }
+                        }
+
                         try
                         {
-                            var fi = new System.IO.FileInfo(path);
-                            if (fi.Exists && ScanCacheService.TryGet(path, fi.Length, fi.LastWriteTimeUtc, out var cached) && cached != null)
+                            // Wait if analysis is paused (poll so we don't pin a ThreadPool thread)
+                            while (!_analysisPauseEvent.Wait(0))
                             {
-                                var count = Interlocked.Increment(ref _analysisCompleted);
-                                await Dispatcher.InvokeAsync(() =>
-                                {
-                                    _files.Add(cached);
-                                    int t = _analysisTotal;
-                                    AnalysisProgress.Maximum = t;
-                                    StatusText.Text = $"Analyzed {count} / {t} files...";
-                                    AnalysisProgress.Value = count;
-                                    UpdateAnalysisEta(count, t);
-                                });
-                                return;
+                                await Task.Delay(10, ct);
                             }
-                        }
-                        catch { /* cache miss — fall through to normal analysis */ }
-                    }
+                            await semaphore.WaitAsync(ct);
+                            acquired = true;
+                            ct.ThrowIfCancellationRequested();
+                            await ThemeManager.WaitForMemoryAsync(ct);
+                            ct.ThrowIfCancellationRequested();
 
-                    try
-                    {
-                        // Wait if analysis is paused
-                        _analysisPauseEvent.Wait(ct);
-                        await semaphore.WaitAsync(ct);
-                        acquired = true;
-                        ct.ThrowIfCancellationRequested();
-                        // Wait if memory usage exceeds configured limit
-                        await ThemeManager.WaitForMemoryAsync();
-                        ct.ThrowIfCancellationRequested();
-
-                        // Per-file timeout: a hung TagLib or NAudio call cannot stall the scan forever
-                        var analysisTask = Task.Run(() => AudioAnalyzer.AnalyzeFile(path, ct), ct);
-                        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120));
-                        var winner = await Task.WhenAny(analysisTask, timeoutTask);
-                        if (winner == timeoutTask)
-                        {
-                            info = new AudioFileInfo
+                            // Use a dedicated analysis thread so a hung decoder cannot starve the ThreadPool.
+                            var analysisTask = Task.Factory.StartNew(
+                                () => AudioAnalyzer.AnalyzeFile(path, ct),
+                                ct,
+                                TaskCreationOptions.LongRunning,
+                                TaskScheduler.Default);
+                            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                            var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120), timeoutCts.Token);
+                            var winner = await Task.WhenAny(analysisTask, timeoutTask);
+                            if (winner == timeoutTask)
                             {
-                                FilePath = path,
-                                FileName = IOPath.GetFileName(path),
-                                FolderPath = IOPath.GetDirectoryName(path) ?? "",
-                                Extension = IOPath.GetExtension(path).ToLowerInvariant(),
-                                Status = AudioStatus.Corrupt,
-                                ErrorMessage = "Analysis timed out (file may be corrupt)"
-                            };
-                        }
-                        else
-                        {
-                            info = await analysisTask;
-                        }
-                        ct.ThrowIfCancellationRequested();
-                    }
-                    catch (OperationCanceledException) { return; }
-                    catch
-                    {
-                        var errCount = Interlocked.Increment(ref _analysisCompleted);
-                        if (!ct.IsCancellationRequested)
-                        {
-                            await Dispatcher.InvokeAsync(() =>
+                                ct.ThrowIfCancellationRequested();
+                                info = new AudioFileInfo
+                                {
+                                    FilePath = path,
+                                    FileName = IOPath.GetFileName(path),
+                                    FolderPath = IOPath.GetDirectoryName(path) ?? "",
+                                    Extension = IOPath.GetExtension(path).ToLowerInvariant(),
+                                    Status = AudioStatus.Corrupt,
+                                    ErrorMessage = "Analysis timed out (file may be corrupt)"
+                                };
+                            }
+                            else
                             {
-                                _files.Add(new AudioFileInfo
+                                timeoutCts.Cancel();
+                                info = await analysisTask;
+                                cacheAnalysisResult = true;
+                            }
+                            ct.ThrowIfCancellationRequested();
+                        }
+                        catch (OperationCanceledException) { return; }
+                        catch
+                        {
+                            if (!ct.IsCancellationRequested)
+                            {
+                                Interlocked.Increment(ref _analysisCompleted);
+                                QueueUiResult(new AudioFileInfo
                                 {
                                     FilePath = path,
                                     FileName = IOPath.GetFileName(path),
@@ -1353,67 +1377,55 @@ namespace AudioQualityChecker
                                     Status = AudioStatus.Corrupt,
                                     ErrorMessage = "Failed to open or analyze"
                                 });
-                                int t = _analysisTotal;
-                                AnalysisProgress.Maximum = t;
-                                AnalysisProgress.Value = errCount;
-                                StatusText.Text = $"Analyzed {errCount} / {t} files...";
-                                UpdateAnalysisEta(errCount, t);
-                            });
+                            }
+                            return;
                         }
-                        return;
-                    }
-                    finally
-                    {
-                        if (acquired) semaphore.Release();
-                    }
-
-                    // ── SH Labs detection (runs outside analysis semaphore to avoid blocking local analysis) ──
-                    if (info != null && shLabsTargets != null && shLabsTargets.Contains(path))
-                    {
-                        try
+                        finally
                         {
-                            await shLabsSemaphore.WaitAsync(ct);
+                            if (acquired) semaphore.Release();
+                        }
+
+                        // ── SH Labs detection (runs outside analysis semaphore to avoid blocking local analysis) ──
+                        if (info != null && shLabsTargets != null && shLabsTargets.Contains(path))
+                        {
                             try
                             {
-                                var shResult = await SHLabsDetectionService.AnalyzeAsync(path, ct);
-                                if (shResult != null)
+                                await shLabsSemaphore.WaitAsync(ct);
+                                try
                                 {
-                                    info.SHLabsScanned = true;
-                                    info.SHLabsPrediction = shResult.Prediction;
-                                    info.SHLabsProbability = shResult.Probability;
-                                    info.SHLabsConfidence = shResult.Confidence;
-                                    info.SHLabsAiType = shResult.MostLikelyAiType;
+                                    var shResult = await SHLabsDetectionService.AnalyzeAsync(path, ct);
+                                    if (shResult != null)
+                                    {
+                                        info.SHLabsScanned = true;
+                                        info.SHLabsPrediction = shResult.Prediction;
+                                        info.SHLabsProbability = shResult.Probability;
+                                        info.SHLabsConfidence = shResult.Confidence;
+                                        info.SHLabsAiType = shResult.MostLikelyAiType;
+                                    }
                                 }
+                                finally { shLabsSemaphore.Release(); }
                             }
-                            finally { shLabsSemaphore.Release(); }
-                        }
-                        catch (OperationCanceledException) { /* SH Labs cancelled — file still added below */ }
-                        catch { /* SH Labs failure is non-fatal — other detectors still ran */ }
-                    }
-
-                    if (info != null && !ct.IsCancellationRequested)
-                    {
-                        // Cache the result for future use
-                        if (ThemeManager.ScanCacheEnabled)
-                        {
-                            try { ScanCacheService.Set(info); } catch { }
+                            catch (OperationCanceledException) { /* SH Labs cancelled — file still added below */ }
+                            catch { /* SH Labs failure is non-fatal — other detectors still ran */ }
                         }
 
-                        await Dispatcher.InvokeAsync(() =>
+                        if (info != null && !ct.IsCancellationRequested)
                         {
-                            _files.Add(info);
-                            var count = Interlocked.Increment(ref _analysisCompleted);
-                            int t = _analysisTotal;
-                            AnalysisProgress.Maximum = t;
-                            StatusText.Text = $"Analyzed {count} / {t} files...";
-                            AnalysisProgress.Value = count;
-                            UpdateAnalysisEta(count, t);
-                        });
-                    }
+                            // Cache the result for future use
+                            if (ThemeManager.ScanCacheEnabled && cacheAnalysisResult)
+                            {
+                                try { ScanCacheService.Set(info); } catch { }
+                            }
+
+                            Interlocked.Increment(ref _analysisCompleted);
+                            QueueUiResult(info);
+                        }
                     });
 
                     try { await Task.WhenAll(chunkTasks); } catch (OperationCanceledException) { break; }
                 } // end chunk loop
+
+                await FlushPendingResultsAsync();
 
                 // Save scan cache to disk after batch completes
                 if (ThemeManager.ScanCacheEnabled)
@@ -1776,6 +1788,7 @@ exit
             string currentVersion = System.Reflection.Assembly.GetExecutingAssembly()
                 .GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "0.0.0";
             ThemeManager.FeatureConfigVersion = currentVersion;
+            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
             ThemeManager.SavePlayOptions();
 
             // Show/hide columns based on user choices
@@ -5874,10 +5887,11 @@ exit
                 return;
             }
 
-            // Use precise rendering time for frame limiting (~60fps)
+            // Use precise rendering time for frame limiting (~60fps normally, ~30fps while scanning)
             if (e is RenderingEventArgs re)
             {
-                if ((re.RenderingTime - _lastVizRenderTime).TotalMilliseconds < 16) return;
+                int minMs = _isAnalyzing ? 33 : 16;
+                if ((re.RenderingTime - _lastVizRenderTime).TotalMilliseconds < minMs) return;
                 _lastVizRenderTime = re.RenderingTime;
             }
 

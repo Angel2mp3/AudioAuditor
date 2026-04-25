@@ -703,8 +703,9 @@
 
                             <CheckBox x:Name="ChkDefaultAi" Content="Default AI Detection (Watermark / Metadata)"
                                       Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                                      FontFamily="Segoe UI" Margin="0,0,0,2" IsChecked="True" IsEnabled="False"/>
-                            <TextBlock Text="Scans metadata, watermarks, and known AI markers. Always enabled, unlimited, no network needed."
+                                      FontFamily="Segoe UI" Margin="0,0,0,2"
+                                      Checked="DefaultAi_Changed" Unchecked="DefaultAi_Changed"/>
+                            <TextBlock Text="Scans metadata, watermarks, and known AI markers. Unlimited, no network needed."
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
                                        FontFamily="Segoe UI" Margin="22,2,0,8" TextWrapping="Wrap"/>
 
@@ -757,7 +758,7 @@
                             <TextBlock Text="Columns &amp; Features" FontSize="13" FontWeight="SemiBold"
                                        FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                                        Margin="0,18,0,8"/>
-                            <TextBlock Text="Toggle which columns and analysis features are visible. Hidden columns won't appear in the results table. Right-click any column header to hide it for the current session."
+                            <TextBlock Text="Toggle which columns and analysis features are enabled. Disabled analysis features won't run or appear in the results table."
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
                                        FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
                             <WrapPanel Orientation="Horizontal">

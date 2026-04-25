@@ -205,7 +205,8 @@ namespace AudioQualityChecker
             MemoryInfoText.Text = $"Your system has {ThemeManager.TotalSystemMemoryMB:N0} MB total RAM. " +
                 $"Presets scale dynamically to your hardware. Limits memory used during analysis.";
 
-            // Experimental AI detection
+            // AI detection
+            ChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
             ChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
 
             // SH Labs AI detection
@@ -264,40 +265,39 @@ namespace AudioQualityChecker
                 LatestVersionText.Text = "checking...";
             _ = LoadLatestVersionAsync(currentVersion);
 
-            // Column visibility checkboxes — checked = visible (not hidden)
-            var hidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (!string.IsNullOrEmpty(ThemeManager.HiddenColumns))
-                foreach (var h in ThemeManager.HiddenColumns.Split(',', StringSplitOptions.RemoveEmptyEntries))
-                    hidden.Add(h.Trim());
+            // Column visibility checkboxes — checked = visible/enabled
+            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
+            var hidden = ThemeManager.GetHiddenColumnSet();
+            bool Visible(string header) => !hidden.Contains(ThemeManager.NormalizeColumnHeader(header));
 
-            ColFavoriteCb.IsChecked = !hidden.Contains("★");
-            ColStatusCb.IsChecked = !hidden.Contains("Status");
-            ColTitleCb.IsChecked = !hidden.Contains("Title");
-            ColArtistCb.IsChecked = !hidden.Contains("Artist");
-            ColFilenameCb.IsChecked = !hidden.Contains("Filename");
-            ColPathCb.IsChecked = !hidden.Contains("Path");
-            ColSampleRateCb.IsChecked = !hidden.Contains("Sample Rate");
-            ColBitsCb.IsChecked = !hidden.Contains("Bits");
-            ColChCb.IsChecked = !hidden.Contains("Ch");
-            ColDurationCb.IsChecked = !hidden.Contains("Duration");
-            ColSizeCb.IsChecked = !hidden.Contains("Size");
-            ColBitrateCb.IsChecked = !hidden.Contains("Bitrate");
-            ColActualBRCb.IsChecked = !hidden.Contains("Actual BR");
-            ColFormatCb.IsChecked = !hidden.Contains("Format");
-            ColMaxFreqCb.IsChecked = !hidden.Contains("Max Freq");
-            ColClippingCb.IsChecked = !hidden.Contains("Clipping");
-            ColBpmCb.IsChecked = !hidden.Contains("BPM");
-            ColReplayGainCb.IsChecked = !hidden.Contains("Replay Gain");
-            ColDRCb.IsChecked = !hidden.Contains("DR");
-            ColMqaCb.IsChecked = !hidden.Contains("MQA");
-            ColAiCb.IsChecked = !hidden.Contains("AI");
-            ColStereoCb.IsChecked = !hidden.Contains("Fake Stereo");
-            ColSilenceCb.IsChecked = !hidden.Contains("Silence");
-            ColDateModifiedCb.IsChecked = !hidden.Contains("Date Modified");
-            ColDateCreatedCb.IsChecked = !hidden.Contains("Date Created");
-            ColTruePeakCb.IsChecked = !hidden.Contains("True Peak");
-            ColLufsCb.IsChecked = !hidden.Contains("LUFS");
-            ColRipQualityCb.IsChecked = !hidden.Contains("Rip Quality");
+            ColFavoriteCb.IsChecked = Visible("★");
+            ColStatusCb.IsChecked = Visible("Status");
+            ColTitleCb.IsChecked = Visible("Title");
+            ColArtistCb.IsChecked = Visible("Artist");
+            ColFilenameCb.IsChecked = Visible("Filename");
+            ColPathCb.IsChecked = Visible("Path");
+            ColSampleRateCb.IsChecked = Visible("Sample Rate");
+            ColBitsCb.IsChecked = Visible("Bits");
+            ColChCb.IsChecked = Visible("Ch");
+            ColDurationCb.IsChecked = Visible("Duration");
+            ColSizeCb.IsChecked = Visible("Size");
+            ColBitrateCb.IsChecked = Visible("Bitrate");
+            ColActualBRCb.IsChecked = Visible("Actual BR");
+            ColFormatCb.IsChecked = Visible("Format");
+            ColMaxFreqCb.IsChecked = Visible("Max Freq");
+            ColClippingCb.IsChecked = Visible("Clipping");
+            ColBpmCb.IsChecked = Visible("BPM");
+            ColReplayGainCb.IsChecked = Visible("Replay Gain");
+            ColDRCb.IsChecked = Visible("DR");
+            ColMqaCb.IsChecked = Visible("MQA");
+            ColAiCb.IsChecked = Visible("AI");
+            ColStereoCb.IsChecked = Visible("Fake Stereo");
+            ColSilenceCb.IsChecked = Visible("Silence");
+            ColDateModifiedCb.IsChecked = Visible("Date Modified");
+            ColDateCreatedCb.IsChecked = Visible("Date Created");
+            ColTruePeakCb.IsChecked = Visible("True Peak");
+            ColLufsCb.IsChecked = Visible("LUFS");
+            ColRipQualityCb.IsChecked = Visible("Rip Quality");
 
             // Hz cutoff allow (F13)
             ChkFreqCutoffAllow.IsChecked = ThemeManager.FrequencyCutoffAllowEnabled;
@@ -560,9 +560,25 @@ namespace AudioQualityChecker
         {
             if (_initializing) return;
 
+            ThemeManager.SetAnalysisColumnEnabled("Clipping", ColClippingCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("BPM", ColBpmCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("DR", ColDRCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("MQA", ColMqaCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("AI", ColAiCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("Fake Stereo", ColStereoCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("Silence", ColSilenceCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("True Peak", ColTruePeakCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("LUFS", ColLufsCb.IsChecked == true);
+            ThemeManager.SetAnalysisColumnEnabled("Rip Quality", ColRipQualityCb.IsChecked == true);
+            ChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
+
             // Build comma-separated list of hidden column headers
             var hidden = new List<string>();
-            void Check(CheckBox cb, string header) { if (cb.IsChecked != true) hidden.Add(header); }
+            void Check(CheckBox cb, string header)
+            {
+                if (cb.IsChecked != true)
+                    hidden.Add(ThemeManager.NormalizeColumnHeader(header));
+            }
 
             Check(ColFavoriteCb, "★");
             Check(ColStatusCb, "Status");
@@ -594,6 +610,7 @@ namespace AudioQualityChecker
             Check(ColRipQualityCb, "Rip Quality");
 
             ThemeManager.HiddenColumns = string.Join(",", hidden);
+            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
             ThemeManager.SavePlayOptions();
 
             // Apply to MainWindow immediately if it's open
@@ -638,6 +655,25 @@ namespace AudioQualityChecker
             {
                 Dispatcher.Invoke(() => LatestVersionText.Text = "unable to check");
             }
+        }
+
+        private void DefaultAi_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+
+            bool enabled = ChkDefaultAi.IsChecked == true;
+            ThemeManager.SetAnalysisColumnEnabled("AI", enabled);
+
+            if (ColAiCb.IsChecked != enabled)
+            {
+                ColAiCb.IsChecked = enabled;
+                return;
+            }
+
+            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
+            ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw)
+                mw.ApplyColumnVisibility();
         }
 
         private void ExperimentalAi_Changed(object sender, RoutedEventArgs e)
