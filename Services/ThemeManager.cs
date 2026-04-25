@@ -158,16 +158,20 @@ namespace AudioQualityChecker.Services
         // Rip/Encode Quality Check (experimental — opt-in)
         public static bool RipQualityEnabled { get; set; }
 
-        // Feature toggles for core analysis (all default to true)
-        public static bool SilenceDetectionEnabled { get; set; } = true;
+        private const string CurrentScanPerformanceDefaultsVersion = "1.7.0-fast-scan-columns";
+
+        // Fast scan is the default. Full-file detectors are opt-in because they decode
+        // a large portion of every track and can make library scans painfully slow.
+        public static bool SilenceDetectionEnabled { get; set; }
         public static bool FakeStereoDetectionEnabled { get; set; } = true;
-        public static bool DynamicRangeEnabled { get; set; } = true;
-        public static bool TruePeakEnabled { get; set; } = true;
-        public static bool LufsEnabled { get; set; } = true;
+        public static bool DynamicRangeEnabled { get; set; }
+        public static bool TruePeakEnabled { get; set; }
+        public static bool LufsEnabled { get; set; }
         public static bool ClippingDetectionEnabled { get; set; } = true;
         public static bool MqaDetectionEnabled { get; set; } = true;
         public static bool DefaultAiDetectionEnabled { get; set; } = true;
-        public static bool BpmDetectionEnabled { get; set; } = true;
+        public static bool BpmDetectionEnabled { get; set; }
+        public static string ScanPerformanceDefaultsVersion { get; set; } = "";
 
         // SH Labs AI Detection (API-based — opt-in, uses rate-limited proxy)
         public static bool SHLabsAiDetection { get; set; }
@@ -309,8 +313,176 @@ namespace AudioQualityChecker.Services
         // DataGrid column layout — serialized as Header:DisplayIndex:Width;...
         public static string ColumnLayout { get; set; } = "";
 
-        // Hidden columns — comma-separated column headers that are permanently hidden
-        public static string HiddenColumns { get; set; } = "";
+        public static readonly string[] ColumnHeaderOrder =
+        {
+            "★", "Status", "Title", "Artist", "Filename", "Path", "Sample Rate", "Bits", "Ch",
+            "Duration", "Size", "Bitrate", "Actual BR", "Format", "Max Freq", "Clipping", "BPM",
+            "Replay Gain", "DR", "MQA", "AI", "Fake Stereo", "Silence", "Date Modified",
+            "Date Created", "True Peak", "LUFS", "Rip Quality"
+        };
+
+        private static readonly string[] DefaultHiddenColumnHeaders =
+        {
+            "★", "BPM", "DR", "Date Created", "True Peak", "LUFS", "Rip Quality", "Silence"
+        };
+
+        private static readonly HashSet<string> AnalysisColumnHeaders = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "BPM", "DR", "True Peak", "LUFS", "Rip Quality", "Silence",
+            "Clipping", "MQA", "AI", "Fake Stereo"
+        };
+
+        public static string DefaultHiddenColumns => string.Join(",", DefaultHiddenColumnHeaders);
+
+        // Hidden columns — comma-separated canonical column headers that are permanently hidden
+        public static string HiddenColumns { get; set; } = DefaultHiddenColumns;
+
+        public static string NormalizeColumnHeader(string header)
+        {
+            var normalized = (header ?? "").Trim();
+            return normalized.Equals("File Name", StringComparison.OrdinalIgnoreCase) ? "Filename" : normalized;
+        }
+
+        public static HashSet<string> GetHiddenColumnSet()
+        {
+            var hidden = ParseHiddenColumns(HiddenColumns);
+
+            foreach (var header in AnalysisColumnHeaders)
+            {
+                if (IsAnalysisColumnEnabled(header))
+                    hidden.Remove(header);
+                else
+                    hidden.Add(header);
+            }
+
+            return hidden;
+        }
+
+        public static bool IsAnalysisColumn(string header) =>
+            AnalysisColumnHeaders.Contains(NormalizeColumnHeader(header));
+
+        public static bool IsAnalysisColumnEnabled(string header)
+        {
+            return NormalizeColumnHeader(header) switch
+            {
+                "BPM" => BpmDetectionEnabled,
+                "DR" => DynamicRangeEnabled,
+                "True Peak" => TruePeakEnabled,
+                "LUFS" => LufsEnabled,
+                "Rip Quality" => RipQualityEnabled,
+                "Silence" => SilenceDetectionEnabled,
+                "Clipping" => ClippingDetectionEnabled,
+                "MQA" => MqaDetectionEnabled,
+                "AI" => DefaultAiDetectionEnabled,
+                "Fake Stereo" => FakeStereoDetectionEnabled,
+                _ => true
+            };
+        }
+
+        public static void SetAnalysisColumnEnabled(string header, bool enabled)
+        {
+            switch (NormalizeColumnHeader(header))
+            {
+                case "BPM":
+                    BpmDetectionEnabled = enabled;
+                    AudioAnalyzer.EnableBpmDetection = enabled;
+                    break;
+                case "DR":
+                    DynamicRangeEnabled = enabled;
+                    AudioAnalyzer.EnableDynamicRange = enabled;
+                    break;
+                case "True Peak":
+                    TruePeakEnabled = enabled;
+                    AudioAnalyzer.EnableTruePeak = enabled;
+                    break;
+                case "LUFS":
+                    LufsEnabled = enabled;
+                    AudioAnalyzer.EnableLufs = enabled;
+                    break;
+                case "Rip Quality":
+                    RipQualityEnabled = enabled;
+                    AudioAnalyzer.EnableRipQuality = enabled;
+                    break;
+                case "Silence":
+                    SilenceDetectionEnabled = enabled;
+                    AudioAnalyzer.EnableSilenceDetection = enabled;
+                    break;
+                case "Clipping":
+                    ClippingDetectionEnabled = enabled;
+                    AudioAnalyzer.EnableClippingDetection = enabled;
+                    break;
+                case "MQA":
+                    MqaDetectionEnabled = enabled;
+                    AudioAnalyzer.EnableMqaDetection = enabled;
+                    break;
+                case "AI":
+                    DefaultAiDetectionEnabled = enabled;
+                    AudioAnalyzer.EnableDefaultAiDetection = enabled;
+                    break;
+                case "Fake Stereo":
+                    FakeStereoDetectionEnabled = enabled;
+                    AudioAnalyzer.EnableFakeStereoDetection = enabled;
+                    break;
+            }
+        }
+
+        public static bool SyncHiddenColumnsWithAnalysisOptions(bool applyDefaultHiddenColumns = false)
+        {
+            var hidden = ParseHiddenColumns(HiddenColumns);
+
+            if (applyDefaultHiddenColumns)
+            {
+                foreach (var header in DefaultHiddenColumnHeaders)
+                    hidden.Add(header);
+            }
+
+            foreach (var header in AnalysisColumnHeaders)
+            {
+                if (IsAnalysisColumnEnabled(header))
+                    hidden.Remove(header);
+                else
+                    hidden.Add(header);
+            }
+
+            var synced = FormatHiddenColumns(hidden);
+            if (string.Equals(HiddenColumns, synced, StringComparison.Ordinal))
+                return false;
+
+            HiddenColumns = synced;
+            return true;
+        }
+
+        public static HashSet<string> ParseHiddenColumns(string value)
+        {
+            var hidden = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(value))
+                return hidden;
+
+            foreach (var item in value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var header = NormalizeColumnHeader(item);
+                if (!string.IsNullOrWhiteSpace(header))
+                    hidden.Add(header);
+            }
+
+            return hidden;
+        }
+
+        private static string FormatHiddenColumns(HashSet<string> hidden)
+        {
+            var ordered = new List<string>();
+            foreach (var header in ColumnHeaderOrder)
+            {
+                if (hidden.Contains(header))
+                    ordered.Add(header);
+            }
+
+            ordered.AddRange(hidden
+                .Where(h => !ColumnHeaderOrder.Contains(h, StringComparer.OrdinalIgnoreCase))
+                .OrderBy(h => h, StringComparer.OrdinalIgnoreCase));
+
+            return string.Join(",", ordered);
+        }
 
         // Performance — max parallel analysis threads (0 = auto)
         // Auto: half of logical processors, clamped 1–16
@@ -494,7 +666,12 @@ namespace AudioQualityChecker.Services
         {
             try
             {
-                if (!File.Exists(OptionsFile)) return;
+                if (!File.Exists(OptionsFile))
+                {
+                    LoadSensitiveData();
+                    ApplyScanPerformanceDefaultsMigration();
+                    return;
+                }
                 var lines = File.ReadAllLines(OptionsFile);
                 var cleanLines = lines.Where(l =>
                     !l.StartsWith("LastFmApiKey=", StringComparison.Ordinal) &&
@@ -815,6 +992,7 @@ namespace AudioQualityChecker.Services
                     $"MqaDetectionEnabled={MqaDetectionEnabled}",
                     $"DefaultAiDetectionEnabled={DefaultAiDetectionEnabled}",
                     $"BpmDetectionEnabled={BpmDetectionEnabled}",
+                    $"ScanPerformanceDefaultsVersion={ScanPerformanceDefaultsVersion}",
                     $"SHLabsAiDetection={SHLabsAiDetection}",
                     $"SHLabsPrivacyAccepted={SHLabsPrivacyAccepted}",
                     $"SHLabsCustomApiKey={SHLabsCustomApiKey}",
@@ -916,7 +1094,13 @@ namespace AudioQualityChecker.Services
 
             try
             {
-                if (!File.Exists(OptionsFile)) return;
+                if (!File.Exists(OptionsFile))
+                {
+                    LoadSensitiveData();
+                    SyncHiddenColumnsWithAnalysisOptions(applyDefaultHiddenColumns: true);
+                    ApplyScanPerformanceDefaultsMigration();
+                    return;
+                }
                 foreach (var line in File.ReadAllLines(OptionsFile))
                 {
                     var parts = line.Split('=', 2);
@@ -1011,15 +1195,16 @@ namespace AudioQualityChecker.Services
                         case "SpatialAudio": SpatialAudioEnabled = bool.TryParse(val, out var bsa) && bsa; break;
                         case "ExperimentalAiDetection": ExperimentalAiDetection = bool.TryParse(val, out var bea) && bea; AudioAnalyzer.EnableExperimentalAi = ExperimentalAiDetection; break;
                         case "RipQualityEnabled": RipQualityEnabled = bool.TryParse(val, out var brq) && brq; AudioAnalyzer.EnableRipQuality = RipQualityEnabled; break;
-                        case "SilenceDetectionEnabled": SilenceDetectionEnabled = !(bool.TryParse(val, out var bSilDet) && !bSilDet); AudioAnalyzer.EnableSilenceDetection = SilenceDetectionEnabled; break;
+                        case "SilenceDetectionEnabled": SilenceDetectionEnabled = bool.TryParse(val, out var bSilDet) && bSilDet; AudioAnalyzer.EnableSilenceDetection = SilenceDetectionEnabled; break;
                         case "FakeStereoDetectionEnabled": FakeStereoDetectionEnabled = !(bool.TryParse(val, out var bFsDet) && !bFsDet); AudioAnalyzer.EnableFakeStereoDetection = FakeStereoDetectionEnabled; break;
-                        case "DynamicRangeEnabled": DynamicRangeEnabled = !(bool.TryParse(val, out var bDrEn) && !bDrEn); AudioAnalyzer.EnableDynamicRange = DynamicRangeEnabled; break;
-                        case "TruePeakEnabled": TruePeakEnabled = !(bool.TryParse(val, out var bTpEn) && !bTpEn); AudioAnalyzer.EnableTruePeak = TruePeakEnabled; break;
-                        case "LufsEnabled": LufsEnabled = !(bool.TryParse(val, out var bLuEn) && !bLuEn); AudioAnalyzer.EnableLufs = LufsEnabled; break;
+                        case "DynamicRangeEnabled": DynamicRangeEnabled = bool.TryParse(val, out var bDrEn) && bDrEn; AudioAnalyzer.EnableDynamicRange = DynamicRangeEnabled; break;
+                        case "TruePeakEnabled": TruePeakEnabled = bool.TryParse(val, out var bTpEn) && bTpEn; AudioAnalyzer.EnableTruePeak = TruePeakEnabled; break;
+                        case "LufsEnabled": LufsEnabled = bool.TryParse(val, out var bLuEn) && bLuEn; AudioAnalyzer.EnableLufs = LufsEnabled; break;
                         case "ClippingDetectionEnabled": ClippingDetectionEnabled = !(bool.TryParse(val, out var bClEn) && !bClEn); AudioAnalyzer.EnableClippingDetection = ClippingDetectionEnabled; break;
                         case "MqaDetectionEnabled": MqaDetectionEnabled = !(bool.TryParse(val, out var bMqEn) && !bMqEn); AudioAnalyzer.EnableMqaDetection = MqaDetectionEnabled; break;
                         case "DefaultAiDetectionEnabled": DefaultAiDetectionEnabled = !(bool.TryParse(val, out var bDaEn) && !bDaEn); AudioAnalyzer.EnableDefaultAiDetection = DefaultAiDetectionEnabled; break;
-                        case "BpmDetectionEnabled": BpmDetectionEnabled = !(bool.TryParse(val, out var bBpmEn) && !bBpmEn); AudioAnalyzer.EnableBpmDetection = BpmDetectionEnabled; break;
+                        case "BpmDetectionEnabled": BpmDetectionEnabled = bool.TryParse(val, out var bBpmEn) && bBpmEn; AudioAnalyzer.EnableBpmDetection = BpmDetectionEnabled; break;
+                        case "ScanPerformanceDefaultsVersion": ScanPerformanceDefaultsVersion = val; break;
                         case "SHLabsAiDetection": SHLabsAiDetection = bool.TryParse(val, out var bsh) && bsh; break;
                         case "SHLabsPrivacyAccepted": SHLabsPrivacyAccepted = bool.TryParse(val, out var bsp) && bsp; break;
                         case "SHLabsCustomApiKey": SHLabsCustomApiKey = val; SHLabsDetectionService.CustomApiKey = val; break;
@@ -1031,11 +1216,11 @@ namespace AudioQualityChecker.Services
                         case "ColumnLayout": ColumnLayout = val; break;
                         case "HiddenColumns": HiddenColumns = val; break;
                         case "MaxConcurrency":
-                            if (int.TryParse(val, out var mc) && mc >= 0 && mc <= 32)
+                            if (int.TryParse(val, out var mc) && mc >= 0 && mc <= Environment.ProcessorCount)
                                 _maxConcurrency = mc;
                             break;
                         case "MaxMemoryMB":
-                            if (int.TryParse(val, out var mm) && mm >= 0 && mm <= 16384)
+                            if (int.TryParse(val, out var mm) && mm >= 0 && mm <= (int)Math.Min(TotalSystemMemoryMB, 65536))
                                 _maxMemoryMB = mm;
                             break;
                         case "DonationDismissed": DonationDismissed = bool.TryParse(val, out var bdd) && bdd; break;
@@ -1103,6 +1288,39 @@ namespace AudioQualityChecker.Services
 
             // Load sensitive Last.fm data from Documents
             LoadSensitiveData();
+            ApplyScanPerformanceDefaultsMigration();
+        }
+
+        private static void ApplyScanPerformanceDefaultsMigration()
+        {
+            if (ScanPerformanceDefaultsVersion == CurrentScanPerformanceDefaultsVersion)
+            {
+                if (SyncHiddenColumnsWithAnalysisOptions())
+                    SavePlayOptions();
+                return;
+            }
+
+            // Migrate the old inherited "everything on" profile back to fast scan defaults.
+            if (SilenceDetectionEnabled && DynamicRangeEnabled && TruePeakEnabled && LufsEnabled && BpmDetectionEnabled && !AlwaysFullAnalysis)
+            {
+                SilenceDetectionEnabled = false;
+                DynamicRangeEnabled = false;
+                TruePeakEnabled = false;
+                LufsEnabled = false;
+                BpmDetectionEnabled = false;
+                RipQualityEnabled = false;
+
+                AudioAnalyzer.EnableSilenceDetection = false;
+                AudioAnalyzer.EnableDynamicRange = false;
+                AudioAnalyzer.EnableTruePeak = false;
+                AudioAnalyzer.EnableLufs = false;
+                AudioAnalyzer.EnableBpmDetection = false;
+                AudioAnalyzer.EnableRipQuality = false;
+            }
+
+            SyncHiddenColumnsWithAnalysisOptions(applyDefaultHiddenColumns: string.IsNullOrWhiteSpace(HiddenColumns));
+            ScanPerformanceDefaultsVersion = CurrentScanPerformanceDefaultsVersion;
+            SavePlayOptions();
         }
 
         private static Dictionary<string, object> GetThemeColors(string theme)

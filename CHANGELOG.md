@@ -45,10 +45,12 @@
 - **Cache album art colors** (Settings → Cache & Files → Now Playing Colors) is **on by default** — extracted album-art colors are kept in memory while the app is open so skipping tracks and scrolling through Now Playing with **Color Match** enabled is noticeably smoother. Cache is cleared when the program closes
 - **Persist color cache to disk** sub-option (off by default) keeps a tiny amount of color data (a few bytes of RGB per cached track, hashed keys — no file paths) in `%APPDATA%\AudioAuditor\` so the smoothness survives app restarts
 
-#### Performance
-- **Services/ThemeManager.cs** — `IsMemoryWithinLimit()` now caches the result for 400 ms. `Process.WorkingSet64` was being called on every single file during scan; now it hits the kernel at most ~2.5× per second.
-- **AudioAuditor.Core/Services/ScanCacheService.cs** — `SaveToDisk()` now writes compact JSON (`WriteIndented = false`). This roughly halves serialization time and cache file size.
-- **Windows/MainWindow.xaml.cs** — `SaveToDisk()` is already correctly placed after the chunk loop (once per batch), not inside it.
+#### Scan Stability / Performance
+- Fixed GUI and CLI scans that could appear stuck or stop progressing during large analysis runs.
+- Analysis now avoids nested blocking worker tasks and batches GUI progress updates to keep scans moving.
+- Settings toggles now stay in sync with the DataGrid and the analyzer flags they control.
+- Fast defaults keep BPM, DR, True Peak, LUFS, Silence, Rip Quality, Favorites, and Date Created off/hidden unless enabled.
+- Malformed metadata no longer prevents otherwise-decodable audio from being analyzed.
 
 #### GUI — Now Playing Polish
 - **Tray context menu** was fixed to more match the ColorMatch option when enabled

@@ -11,7 +11,7 @@ InstallModes:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/Angel2mp3/AudioAuditor/releases/download/v1.7.0/AudioAuditor.exe
-    InstallerSha256: C4801598DD197FD092BD0C5BBFB06A08228D4F1243A90A831CE0EEB68C31C1FE
+    InstallerSha256: 2B5BD0AB00299234050A3F7627581C7E4035D20F21495FBB124C151E7D0B1A76
     Commands:
       - AudioAuditor
     InstallScope: user

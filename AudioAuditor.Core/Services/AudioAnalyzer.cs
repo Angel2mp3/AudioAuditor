@@ -32,11 +32,11 @@ namespace AudioQualityChecker.Services
         public static bool EnableBpmDetection { get; set; } = false;
         public static bool EnableExperimentalAi { get; set; }
         public static bool EnableRipQuality { get; set; }
-        public static bool EnableSilenceDetection { get; set; } = true;
+        public static bool EnableSilenceDetection { get; set; }
         public static bool EnableFakeStereoDetection { get; set; } = true;
-        public static bool EnableDynamicRange { get; set; } = true;
-        public static bool EnableTruePeak { get; set; } = true;
-        public static bool EnableLufs { get; set; } = true;
+        public static bool EnableDynamicRange { get; set; }
+        public static bool EnableTruePeak { get; set; }
+        public static bool EnableLufs { get; set; }
         public static bool EnableClippingDetection { get; set; } = true;
         public static bool EnableMqaDetection { get; set; } = true;
         public static bool EnableDefaultAiDetection { get; set; } = true;
@@ -53,6 +53,18 @@ namespace AudioQualityChecker.Services
         /// <summary>When set, RunFullFilePass cooperatively pauses at safe checkpoints.</summary>
         public static System.Threading.ManualResetEventSlim? PauseEvent { get; set; }
 
+        private static void WaitIfPaused(CancellationToken ct)
+        {
+            var pauseEvent = PauseEvent;
+            while (pauseEvent != null && !pauseEvent.Wait(0))
+            {
+                Thread.Sleep(10);
+                ct.ThrowIfCancellationRequested();
+                pauseEvent = PauseEvent;
+            }
+            ct.ThrowIfCancellationRequested();
+        }
+
         // Frequency cutoff allow-listing: skip quality downgrade for files above threshold
         public static bool FrequencyCutoffAllowEnabled { get; set; }
         public static int FrequencyCutoffAllowHz { get; set; } = 19600;
@@ -66,6 +78,8 @@ namespace AudioQualityChecker.Services
 
         public static AudioFileInfo AnalyzeFile(string filePath, CancellationToken ct = default)
         {
+            ct.ThrowIfCancellationRequested();
+
             // Validate runtime environment on first analysis pass (silent, non-blocking)
             if (!_envChecked)
             {
@@ -133,15 +147,8 @@ namespace AudioQualityChecker.Services
                 // ── Metadata via TagLib (kept open for reuse by MQA + AI watermark detectors) ──
                 try
                 {
-                    // TagLib can hang indefinitely on corrupted atoms — enforce a timeout
-                    var tagTask = System.Threading.Tasks.Task.Run(() => TagLib.File.Create(filePath));
-                    if (!tagTask.Wait(System.TimeSpan.FromSeconds(10)))
-                    {
-                        info.Status = AudioStatus.Corrupt;
-                        info.ErrorMessage = "Metadata read timed out (file may be corrupt)";
-                        return info;
-                    }
-                    sharedTagFile = tagTask.Result;
+                    WaitIfPaused(ct);
+                    sharedTagFile = TagLib.File.Create(filePath);
                     info.Artist = sharedTagFile.Tag.FirstPerformer ?? sharedTagFile.Tag.FirstAlbumArtist ?? "";
                     info.Title = sharedTagFile.Tag.Title ?? "";
                     info.ReportedBitrate = sharedTagFile.Properties.AudioBitrate;
@@ -161,12 +168,6 @@ namespace AudioQualityChecker.Services
                     // Extract Replay Gain from tags
                     ExtractReplayGain(sharedTagFile, info);
 
-                    // If no BPM tag, detect algorithmically
-                    if (EnableBpmDetection && info.Bpm <= 0)
-                    {
-                        try { info.Bpm = DetectBpm(filePath); } catch { }
-                    }
-
                     // Detect ALAC codec inside M4A/MP4 containers
                     if (info.Extension is ".m4a" or ".mp4")
                     {
@@ -185,18 +186,25 @@ namespace AudioQualityChecker.Services
                     // Album cover detection (reuse the already-open TagLib instance)
                     info.HasAlbumCover = sharedTagFile.Tag.Pictures?.Length > 0;
                 }
+                catch (OperationCanceledException) { throw; }
                 catch
                 {
-                    info.Status = AudioStatus.Corrupt;
-                    info.ErrorMessage = "Cannot read metadata (file may be corrupted)";
-                    return info;
+                    // Metadata read failure is not fatal — audio may still decode fine via NAudio
+                    sharedTagFile = null;
+                }
+
+                // If no BPM tag, detect algorithmically
+                if (EnableBpmDetection && info.Bpm <= 0)
+                {
+                    try { info.Bpm = DetectBpm(filePath); } catch { }
                 }
 
                 // ── Spectral analysis via NAudio ──
                 try
                 {
-                    AnalyzeSpectralContent(filePath, info);
+                    AnalyzeSpectralContent(filePath, info, ct);
                 }
+                catch (OperationCanceledException) { throw; }
                 catch
                 {
                     if (info.SampleRate > 0)
@@ -220,6 +228,7 @@ namespace AudioQualityChecker.Services
                     {
                         RunFullFilePass(filePath, info, ct);
                     }
+                    catch (OperationCanceledException) { throw; }
                     catch { /* Full file pass is optional — individual features degrade gracefully */ }
                 }
 
@@ -287,6 +296,7 @@ namespace AudioQualityChecker.Services
                 }
                 catch { /* Experimental AI detection is optional */ }
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 info.Status = AudioStatus.Corrupt;
@@ -304,8 +314,9 @@ namespace AudioQualityChecker.Services
         //  Spectral Analysis
         // ═══════════════════════════════════════════════════════
 
-        private static void AnalyzeSpectralContent(string filePath, AudioFileInfo info)
+        private static void AnalyzeSpectralContent(string filePath, AudioFileInfo info, CancellationToken ct)
         {
+            WaitIfPaused(ct);
             var (disposable, samples, waveFormat) = OpenAudioFile(filePath);
             using var _ = disposable;
 
@@ -393,6 +404,7 @@ namespace AudioQualityChecker.Services
                 long toSkip = safeStart * channels;
                 while (toSkip > 0)
                 {
+                    WaitIfPaused(ct);
                     int chunk = (int)Math.Min(toSkip, skipBuf.Length);
                     int got = samples.Read(skipBuf, 0, chunk);
                     if (got <= 0) break;
@@ -403,6 +415,7 @@ namespace AudioQualityChecker.Services
 
             for (int seg = 0; seg < segmentCount; seg++)
             {
+                WaitIfPaused(ct);
                 long framePos = safeStart + seg * stepFrames;
 
                 // Skip/seek forward to the target position
@@ -418,6 +431,7 @@ namespace AudioQualityChecker.Services
                         long samplesToSkip = framesToSkip * channels;
                         while (samplesToSkip > 0)
                         {
+                            WaitIfPaused(ct);
                             int chunk = (int)Math.Min(samplesToSkip, skipBuf.Length);
                             int got = samples.Read(skipBuf, 0, chunk);
                             if (got <= 0) break;
@@ -780,8 +794,7 @@ namespace AudioQualityChecker.Services
                     if (frameCounter >= sr)
                     {
                         frameCounter = 0;
-                        PauseEvent?.Wait(ct);
-                        ct.ThrowIfCancellationRequested();
+                        WaitIfPaused(ct);
                     }
                     if (totalFramesRead >= maxFramesToRead)
                         break;
@@ -1030,6 +1043,8 @@ namespace AudioQualityChecker.Services
                     FinalizeRipQuality(info, sr, channels, ripTotalFrames, ripZeroRuns, ripStickyRuns,
                         ripPopClicks, ripTruncatedSamples, dcOffset, noiseRms);
                 }
+
+                Thread.Yield(); // cooperative: don't starve ThreadPool / UI threads
             }
         }
 
@@ -2469,11 +2484,7 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFile(string filePath)
         {
-            // NAudio reader initialization can hang on corrupted files (codec probing, COM init).
-            var openTask = System.Threading.Tasks.Task.Run(() => OpenAudioFileInner(filePath));
-            if (!openTask.Wait(System.TimeSpan.FromSeconds(15)))
-                throw new System.TimeoutException($"Opening audio file timed out: {System.IO.Path.GetFileName(filePath)}");
-            return openTask.Result;
+            return OpenAudioFileInner(filePath);
         }
 
         private static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFileInner(string filePath)

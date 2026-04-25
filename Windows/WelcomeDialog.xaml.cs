@@ -9,13 +9,13 @@ public partial class WelcomeDialog : Window
     public bool SelectedOffline { get; private set; } = false;
 
     // Feature choices
-    public bool EnableSilenceDetection { get; private set; } = true;
+    public bool EnableSilenceDetection { get; private set; } = false;
     public bool EnableFakeStereoDetection { get; private set; } = true;
-    public bool EnableDynamicRange { get; private set; } = true;
-    public bool EnableTruePeak { get; private set; } = true;
-    public bool EnableLufs { get; private set; } = true;
+    public bool EnableDynamicRange { get; private set; } = false;
+    public bool EnableTruePeak { get; private set; } = false;
+    public bool EnableLufs { get; private set; } = false;
     public bool EnableClippingDetection { get; private set; } = true;
-    public bool EnableBpmDetection { get; private set; } = true;
+    public bool EnableBpmDetection { get; private set; } = false;
     public bool EnableMqaDetection { get; private set; } = true;
     public bool EnableDefaultAiDetection { get; private set; } = true;
     public bool EnableExperimentalAi { get; private set; } = false;
