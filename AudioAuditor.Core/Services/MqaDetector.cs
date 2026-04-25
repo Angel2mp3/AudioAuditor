@@ -69,17 +69,21 @@ namespace AudioQualityChecker.Services
         /// Detect MQA encoding by analyzing raw PCM audio samples.
         /// Looks for the 36-bit MQA sync word embedded in the XOR of stereo channels.
         /// </summary>
-        public static MqaResult? Detect(string filePath)
+        public static MqaResult? Detect(string filePath, TagLib.File? sharedTagFile = null, bool runAudioSampleAnalysis = true)
         {
-            // First try deep audio sample analysis
-            var result = DetectFromAudioSamples(filePath);
-            if (result != null) return result;
+            // Fast-skip: callers pass runAudioSampleAnalysis=false for files that can't possibly
+            // be MQA (non-stereo, non-44.1k/48k, lossy formats). Saves a decoder open + bit scan.
+            if (runAudioSampleAnalysis)
+            {
+                var result = DetectFromAudioSamples(filePath, sharedTagFile);
+                if (result != null) return result;
+            }
 
             // Fallback: check metadata tags (for files with proper MQA tagging)
-            return DetectFromMetadata(filePath);
+            return DetectFromMetadata(filePath, sharedTagFile);
         }
 
-        private static MqaResult? DetectFromAudioSamples(string filePath)
+        private static MqaResult? DetectFromAudioSamples(string filePath, TagLib.File? sharedTagFile = null)
         {
             try
             {
@@ -180,21 +184,31 @@ namespace AudioQualityChecker.Services
                                 int provenance = ExtractBits(left, right, syncPos + 29, 5, bitPos);
                                 bool isStudio = provenance > 8;
 
-                                // Get encoder info from metadata if available
+                                // Get encoder info from metadata if available (reuse caller's tagFile if provided)
                                 string encoder = "Embedded MQA";
                                 try
                                 {
-                                    using var tagFile = TagLib.File.Create(filePath);
-                                    // Check for ENCODER or MQAENCODER tags
-                                    if (tagFile.Tag is TagLib.Ogg.XiphComment xiph)
+                                    TagLib.File? ownedTagFile = null;
+                                    var tagFile = sharedTagFile;
+                                    if (tagFile == null)
                                     {
-                                        var enc = xiph.GetField("ENCODER");
-                                        var mqaEnc = xiph.GetField("MQAENCODER");
-                                        if (enc != null && enc.Length > 0 && !string.IsNullOrEmpty(enc[0]))
-                                            encoder = enc[0];
-                                        else if (mqaEnc != null && mqaEnc.Length > 0 && !string.IsNullOrEmpty(mqaEnc[0]))
-                                            encoder = mqaEnc[0];
+                                        ownedTagFile = TagLib.File.Create(filePath);
+                                        tagFile = ownedTagFile;
                                     }
+                                    try
+                                    {
+                                        // Check for ENCODER or MQAENCODER tags
+                                        if (tagFile.Tag is TagLib.Ogg.XiphComment xiph)
+                                        {
+                                            var enc = xiph.GetField("ENCODER");
+                                            var mqaEnc = xiph.GetField("MQAENCODER");
+                                            if (enc != null && enc.Length > 0 && !string.IsNullOrEmpty(enc[0]))
+                                                encoder = enc[0];
+                                            else if (mqaEnc != null && mqaEnc.Length > 0 && !string.IsNullOrEmpty(mqaEnc[0]))
+                                                encoder = mqaEnc[0];
+                                        }
+                                    }
+                                    finally { ownedTagFile?.Dispose(); }
                                 }
                                 catch { }
 
@@ -218,11 +232,17 @@ namespace AudioQualityChecker.Services
             }
         }
 
-        private static MqaResult? DetectFromMetadata(string filePath)
+        private static MqaResult? DetectFromMetadata(string filePath, TagLib.File? sharedTagFile = null)
         {
+            TagLib.File? ownedTagFile = null;
             try
             {
-                using var tagFile = TagLib.File.Create(filePath);
+                var tagFile = sharedTagFile;
+                if (tagFile == null)
+                {
+                    ownedTagFile = TagLib.File.Create(filePath);
+                    tagFile = ownedTagFile;
+                }
 
                 string encoder = "";
                 string mqaEncoder = "";
@@ -276,6 +296,10 @@ namespace AudioQualityChecker.Services
             catch
             {
                 return null;
+            }
+            finally
+            {
+                ownedTagFile?.Dispose();
             }
         }
     }

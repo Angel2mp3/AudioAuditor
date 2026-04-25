@@ -92,6 +92,7 @@
                                    Margin="0,0,8,0" FontFamily="Consolas"/>
                         <Slider x:Name="NpSeekSlider" Grid.Column="1"
                                 Minimum="0" Maximum="100"
+                                IsMoveToPointEnabled="True"
                                 ValueChanged="NpSeekSlider_ValueChanged"
                                 PreviewMouseLeftButtonDown="NpSeekSlider_MouseDown"
                                 PreviewMouseLeftButtonUp="NpSeekSlider_MouseUp"/>

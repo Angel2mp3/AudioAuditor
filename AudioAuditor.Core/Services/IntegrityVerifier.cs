@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 
@@ -110,6 +111,7 @@ namespace AudioQualityChecker.Services
                 // ── Check 1: Core assembly exact name ──
                 if (!string.Equals(coreName, _officialCoreAssembly, StringComparison.OrdinalIgnoreCase))
                 {
+                    LogTamper("core_name");
                     lock (_lock) _cachedResult = true;
                     return (true, "core_name");
                 }
@@ -117,6 +119,7 @@ namespace AudioQualityChecker.Services
                 // ── Check 2: Entry assembly name ──
                 if (entry != null && entryName != null && !_officialEntryNames.Contains(entryName))
                 {
+                    LogTamper("entry_name");
                     lock (_lock) _cachedResult = true;
                     return (true, "entry_name");
                 }
@@ -124,6 +127,7 @@ namespace AudioQualityChecker.Services
                 // ── Check 3: Seal validation (reflection-based to resist IL patching) ──
                 if (!ValidateSeal())
                 {
+                    LogTamper("seal");
                     lock (_lock) _cachedResult = true;
                     return (true, "seal");
                 }
@@ -131,6 +135,7 @@ namespace AudioQualityChecker.Services
                 // ── Check 4: Namespace integrity ──
                 if (!ValidateNamespaces(coreAsm))
                 {
+                    LogTamper("namespace");
                     lock (_lock) _cachedResult = true;
                     return (true, "namespace");
                 }
@@ -138,8 +143,17 @@ namespace AudioQualityChecker.Services
                 // ── Check 5: Critical service classes must exist ──
                 if (!ValidateCoreServices(coreAsm))
                 {
+                    LogTamper("services");
                     lock (_lock) _cachedResult = true;
                     return (true, "services");
+                }
+
+                // ── Check 6: AudioAnalyzer method count floor ──
+                if (!ValidateAnalyzerMethodCount())
+                {
+                    LogTamper("analyzer_stub");
+                    lock (_lock) _cachedResult = true;
+                    return (true, "analyzer_stub");
                 }
 
                 lock (_lock) _cachedResult = false;
@@ -244,7 +258,11 @@ namespace AudioQualityChecker.Services
                     "AudioQualityChecker.Services.AudioAnalyzer",
                     "AudioQualityChecker.Services.IntegrityVerifier",
                     "AudioQualityChecker.Services.ExportService",
-                    "AudioQualityChecker.Services.UpdateChecker"
+                    "AudioQualityChecker.Services.UpdateChecker",
+                    "AudioQualityChecker.Services.OpusFileReader",
+                    "AudioQualityChecker.Services.ScanCacheService",
+                    "AudioQualityChecker.Services.LyricService",
+                    "AudioQualityChecker.Models.AudioFileInfo"
                 };
 
                 foreach (var typeName in requiredTypes)
@@ -258,6 +276,35 @@ namespace AudioQualityChecker.Services
             {
                 return true;
             }
+        }
+
+        private static bool ValidateAnalyzerMethodCount()
+        {
+            try
+            {
+                var t = typeof(AudioQualityChecker.Services.AudioAnalyzer);
+                int count = t.GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.Instance | BindingFlags.Static).Length;
+                return count >= 20;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static void LogTamper(string reason)
+        {
+            try
+            {
+                string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AudioAuditor");
+                Directory.CreateDirectory(logDir);
+                string logPath = Path.Combine(logDir, "integrity.log");
+                string entry = $"[{DateTime.UtcNow:O}] TAMPER DETECTED: {reason}" + Environment.NewLine;
+                File.AppendAllText(logPath, entry);
+            }
+            catch { /* never block on logging failure */ }
         }
     }
 }

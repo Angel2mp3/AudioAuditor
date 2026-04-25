@@ -8,7 +8,7 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor</AssemblyName>
-    <Version>1.6.0</Version>
+    <Version>1.7.0</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -27,6 +27,8 @@
     <None Remove="AudioAuditorMac\**" />
     <Compile Remove="AudioAuditor.Tests\**" />
     <None Remove="AudioAuditor.Tests\**" />
+    <Compile Remove="icon-test\**" />
+    <None Remove="icon-test\**" />
     <Compile Remove="temp\**" />
     <None Remove="temp\**" />
     <EmbeddedResource Remove="temp\**" />
@@ -43,11 +45,17 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
+  <!-- WindowsForms assembly for NotifyIcon (system tray) support -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="AudioAuditor.Core\AudioAuditor.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <Resource Include="Resources\app.ico" />
     <Resource Include="Resources\icon.png" />
     <Resource Include="Resources\Qobuz.png" />
     <Resource Include="Resources\Amazon-music.png" />

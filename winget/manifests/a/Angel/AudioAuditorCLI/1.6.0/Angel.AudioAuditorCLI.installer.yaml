@@ -11,7 +11,7 @@ InstallModes:
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/Angel2mp3/AudioAuditor/releases/download/v1.6.0/AudioAuditorCLI.exe
-    InstallerSha256: 7D23CE567C8251AEEEE09F8BBFCC8B85B309206C21A7F518C90B9591E73AFF89
+    InstallerSha256: E557A906F2C92706759E31BE22D1249DCDD9887B5268BD59D3D799984645B9B9
     Commands:
       - AudioAuditorCLI
     InstallScope: user

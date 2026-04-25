@@ -137,17 +137,37 @@ namespace AudioQualityChecker.Converters
             => throw new NotImplementedException();
     }
 
+    public class StarConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+            => value is bool b && b ? "★" : "☆";
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+            => throw new NotImplementedException();
+    }
+
     public class AiToColorConverter : IValueConverter
     {
-        private static readonly SolidColorBrush AiDetected = new(Color.FromRgb(255, 87, 34));   // Deep orange
+        private static readonly SolidColorBrush AiYes = new(Color.FromRgb(255, 87, 34));      // Deep orange
+        private static readonly SolidColorBrush AiPossible = new(Color.FromRgb(255, 193, 7));  // Amber/yellow
         private static readonly SolidColorBrush NotAi = new(Color.FromRgb(212, 212, 212));
 
-        static AiToColorConverter() { AiDetected.Freeze(); NotAi.Freeze(); }
+        static AiToColorConverter() { AiYes.Freeze(); AiPossible.Freeze(); NotAi.Freeze(); }
 
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
+            // Accept either the new three-state verdict string or a legacy bool
+            if (value is string verdict)
+            {
+                return verdict switch
+                {
+                    "Yes" => AiYes,
+                    "Possible" => AiPossible,
+                    _ => NotAi,
+                };
+            }
             if (value is bool isAi && isAi)
-                return AiDetected;
+                return AiYes;
             return NotAi;
         }
 

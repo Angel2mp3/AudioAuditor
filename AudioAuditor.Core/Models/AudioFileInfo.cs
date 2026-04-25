@@ -190,7 +190,64 @@ namespace AudioQualityChecker.Models
             if (ms >= 1000) return $"{ms / 1000:F1}s";
             return $"{(int)ms}ms";
         }
+        /// <summary>Three-state AI verdict: "Yes" (≥70% confidence), "Possible" (35–70%), or "No" (&lt;35% or no detector flagged).</summary>
+        public string AiVerdict
+        {
+            get
+            {
+                if (!IsAnyAiDetected) return "No";
+                double conf = AiCombinedConfidence;
+                if (conf >= 70.0) return "Yes";
+                if (conf >= 35.0) return "Possible";
+                return "No";
+            }
+        }
+
+        /// <summary>Numeric combined confidence (0–100) averaged across whichever detectors are enabled and triggered.</summary>
+        public double AiCombinedConfidence
+        {
+            get
+            {
+                var scores = new List<double>();
+                if (IsAiGenerated)
+                {
+                    double wmConf = AiSources.Count > 0 ? Math.Min(AiSources.Count * 0.35 + 0.3, 1.0) : 0.5;
+                    scores.Add(wmConf * 100.0);
+                }
+                if (ExperimentalAiSuspicious)
+                    scores.Add(ExperimentalAiConfidence * 100.0);
+                if (SHLabsScanned && SHLabsPrediction != "Human Made")
+                    scores.Add(SHLabsProbability);
+                return scores.Count > 0 ? scores.Average() : 0.0;
+            }
+        }
+
+        /// <summary>Single-line display: "Yes (73%)" / "Possible (52%)" / "No" — keeps grid row height compact.</summary>
         public string AiDisplay
+        {
+            get
+            {
+                string verdict = AiVerdict;
+                if (verdict == "No") return "No";
+                return $"{verdict} ({AiCombinedConfidence:F0}%)";
+            }
+        }
+
+        /// <summary>True when AI verdict is Yes or Possible — used to drive row highlighting.</summary>
+        public bool IsAiPossibleOrYes => AiVerdict != "No";
+
+        /// <summary>Compact confidence percentage for secondary display (kept for CLI/JSON use).</summary>
+        public string AiConfidenceDisplay
+        {
+            get
+            {
+                if (!IsAnyAiDetected) return "";
+                return $"{AiCombinedConfidence:F0}%";
+            }
+        }
+
+        /// <summary>Detailed tooltip showing breakdown from each detection method.</summary>
+        public string AiDetailTooltip
         {
             get
             {
@@ -210,7 +267,7 @@ namespace AudioQualityChecker.Models
                 {
                     parts.Add("SH Labs: Human Made");
                 }
-                return parts.Count > 0 ? string.Join(" + ", parts) : "No";
+                return parts.Count > 0 ? string.Join(" + ", parts) : "No AI detected";
             }
         }
 
@@ -219,6 +276,21 @@ namespace AudioQualityChecker.Models
             IsAiGenerated
             || ExperimentalAiSuspicious
             || (SHLabsScanned && SHLabsPrediction != "Human Made");
+
+        // Favorites
+        private bool _isFavorite;
+        public bool IsFavorite
+        {
+            get => _isFavorite;
+            set { _isFavorite = value; OnPropertyChanged(); }
+        }
+
+        private int _favoriteOrder;
+        public int FavoriteOrder
+        {
+            get => _favoriteOrder;
+            set { _favoriteOrder = value; OnPropertyChanged(); }
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null)

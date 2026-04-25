@@ -112,6 +112,7 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public static async Task<SHLabsResult?> AnalyzeAsync(string filePath, CancellationToken ct = default)
         {
+            if (AudioAuditorSettings.OfflineMode) return null;
             EnsureCacheLoaded();
 
             // Check local cache first (shared between proxy and direct modes)
@@ -147,6 +148,8 @@ namespace AudioQualityChecker.Services
                 // For direct mode, we send the file as multipart with the user's own key.
                 // Note: If SH Labs doesn't accept file uploads, the user will need an accessible URL.
                 // For now, we try multipart POST which some API versions support.
+                var fileLen = new FileInfo(filePath).Length;
+                if (fileLen > 500 * 1024 * 1024) return null; // 500 MB safety limit
                 using var form = new MultipartFormDataContent();
                 var fileBytes = await File.ReadAllBytesAsync(filePath, ct);
                 var fileContent = new ByteArrayContent(fileBytes);
@@ -181,7 +184,7 @@ namespace AudioQualityChecker.Services
                 var shlResult = new SHLabsResult
                 {
                     Prediction = result.TryGetProperty("prediction", out var pred) ? pred.GetString() ?? "Unknown" : "Unknown",
-                    Probability = result.TryGetProperty("probability_ai_generated", out var prob) ? prob.GetDouble() : 0,
+                    Probability = result.TryGetProperty("probability_ai_generated", out var prob) ? prob.GetDouble() * 100.0 : 0,
                     Confidence = result.TryGetProperty("confidence_score", out var conf) ? conf.GetDouble() : 0,
                     MostLikelyAiType = result.TryGetProperty("most_likely_ai_type", out var aiType) ? aiType.GetString() ?? "" : "",
                     FromCache = false
@@ -227,6 +230,8 @@ namespace AudioQualityChecker.Services
             {
                 string signature = ComputeHmac($"{installId}:{timestamp}:{nonce}");
 
+                var fileLen = new FileInfo(filePath).Length;
+                if (fileLen > 500 * 1024 * 1024) return null; // 500 MB safety limit
                 using var form = new MultipartFormDataContent();
                 var fileBytes = await File.ReadAllBytesAsync(filePath, ct);
                 var fileContent = new ByteArrayContent(fileBytes);
@@ -269,7 +274,7 @@ namespace AudioQualityChecker.Services
                 var shlResult = new SHLabsResult
                 {
                     Prediction = result.TryGetProperty("prediction", out var pred) ? pred.GetString() ?? "Unknown" : "Unknown",
-                    Probability = result.TryGetProperty("probability_ai_generated", out var prob) ? prob.GetDouble() : 0,
+                    Probability = result.TryGetProperty("probability_ai_generated", out var prob) ? prob.GetDouble() * 100.0 : 0,
                     Confidence = result.TryGetProperty("confidence_score", out var conf) ? conf.GetDouble() : 0,
                     MostLikelyAiType = result.TryGetProperty("most_likely_ai_type", out var aiType) ? aiType.GetString() ?? "" : "",
                     FromCache = false

@@ -126,13 +126,13 @@ namespace AudioQualityChecker.Services
         /// Scans an audio file for verifiable AI watermarks and metadata signatures.
         /// Returns detection result with found evidence.
         /// </summary>
-        public static AiDetectionResult Detect(string filePath)
+        public static AiDetectionResult Detect(string filePath, TagLib.File? sharedTagFile = null)
         {
             var result = new AiDetectionResult();
             var foundMarkers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var encoderInfo = new List<string>();
 
-            try { ScanMetadataTags(filePath, foundMarkers, encoderInfo); }
+            try { ScanMetadataTags(filePath, foundMarkers, encoderInfo, sharedTagFile); }
             catch { }
 
             try { ScanRawBytes(filePath, foundMarkers); }
@@ -188,9 +188,18 @@ namespace AudioQualityChecker.Services
         //  Metadata Tag Scanning
         // ══════════════════════════════════════════════════════════════
 
-        private static void ScanMetadataTags(string filePath, HashSet<string> found, List<string>? encoderInfo = null)
+        private static void ScanMetadataTags(string filePath, HashSet<string> found, List<string>? encoderInfo = null, TagLib.File? sharedTagFile = null)
         {
-            using var tagFile = TagLib.File.Create(filePath);
+            // Reuse the caller's TagLib file when provided to avoid a redundant full parse.
+            TagLib.File? ownedTagFile = null;
+            TagLib.File? tagFile = sharedTagFile;
+            if (tagFile == null)
+            {
+                ownedTagFile = TagLib.File.Create(filePath);
+                tagFile = ownedTagFile;
+            }
+            try
+            {
             if (tagFile?.Tag == null) return;
 
             var allTagText = new StringBuilder(2048);
@@ -357,6 +366,11 @@ namespace AudioQualityChecker.Services
                     if (!string.IsNullOrEmpty(source))
                         found.Add(source);
                 }
+            }
+            }
+            finally
+            {
+                ownedTagFile?.Dispose();
             }
         }
 

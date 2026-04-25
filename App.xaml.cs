@@ -16,6 +16,7 @@ namespace AudioQualityChecker
     public partial class App : Application
     {
         private static Mutex? _singleInstanceMutex;
+        private static bool _createdNewMutex;
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -32,11 +33,14 @@ namespace AudioQualityChecker
         {
             const string mutexName = "AudioAuditor_SingleInstance_F7A3B2";
             _singleInstanceMutex = new Mutex(true, mutexName, out bool createdNew);
+            _createdNewMutex = createdNew;
 
             if (!createdNew)
             {
                 // Another instance is already running — bring it to front
                 BringExistingInstanceToFront();
+                _singleInstanceMutex?.Dispose();
+                _singleInstanceMutex = null;
                 Shutdown();
                 return;
             }
@@ -62,8 +66,11 @@ namespace AudioQualityChecker
 
         protected override void OnExit(ExitEventArgs e)
         {
-            _singleInstanceMutex?.ReleaseMutex();
-            _singleInstanceMutex?.Dispose();
+            if (_createdNewMutex && _singleInstanceMutex != null)
+            {
+                _singleInstanceMutex.ReleaseMutex();
+                _singleInstanceMutex.Dispose();
+            }
             base.OnExit(e);
         }
     }

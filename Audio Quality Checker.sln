@@ -6,8 +6,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioQualityChecker", "Audi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditorCLI", "AudioAuditorCLI\AudioAuditorCLI.csproj", "{CF570AFF-52AD-49FD-B48E-F5CD35B753E5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditor.Tests", "AudioAuditor.Tests\AudioAuditor.Tests.csproj", "{55573E8A-F64B-4EFA-ABEA-CE3532BA681D}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditor.Core", "AudioAuditor.Core\AudioAuditor.Core.csproj", "{A1B2C3D4-1234-5678-9ABC-DEF012345678}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditor.Avalonia", "AudioAuditor.Avalonia\AudioAuditor.Avalonia.csproj", "{B2C3D4E5-2345-6789-ABCD-EF0123456789}"
@@ -26,10 +24,6 @@ Global
 		{CF570AFF-52AD-49FD-B48E-F5CD35B753E5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CF570AFF-52AD-49FD-B48E-F5CD35B753E5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CF570AFF-52AD-49FD-B48E-F5CD35B753E5}.Release|Any CPU.Build.0 = Release|Any CPU
-		{55573E8A-F64B-4EFA-ABEA-CE3532BA681D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{55573E8A-F64B-4EFA-ABEA-CE3532BA681D}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{55573E8A-F64B-4EFA-ABEA-CE3532BA681D}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{55573E8A-F64B-4EFA-ABEA-CE3532BA681D}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A1B2C3D4-1234-5678-9ABC-DEF012345678}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A1B2C3D4-1234-5678-9ABC-DEF012345678}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1B2C3D4-1234-5678-9ABC-DEF012345678}.Release|Any CPU.ActiveCfg = Release|Any CPU

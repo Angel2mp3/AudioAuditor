@@ -265,6 +265,8 @@ namespace AudioQualityChecker.Services
         /// </summary>
         private static async Task FetchAlbumArtAsync(string artist, string title)
         {
+            if (ThemeManager.OfflineModeEnabled) return;
+
             string cacheKey = $"{artist}|{title}";
             if (_artCache.ContainsKey(cacheKey)) return;
 

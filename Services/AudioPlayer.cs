@@ -12,6 +12,13 @@ using NAudio.Vorbis;
 
 namespace AudioQualityChecker.Services
 {
+    public enum CrossfadeType
+    {
+        Linear,      // straight amplitude lines — simple, slight volume dip at midpoint
+        EqualPower,  // sin/cos curves — constant perceived loudness, industry standard
+        Natural,     // complementary quadratic — fast initial crossover, no amplitude sum dip
+        Sequential,  // fade-out completes before fade-in begins — breathing room between tracks
+    }
 
     public class AudioPlayer : IDisposable
     {
@@ -33,8 +40,10 @@ namespace AudioQualityChecker.Services
         private MediaFoundationReader? _fadeOutMfReader;
         private SampleChannel? _fadeOutSampleChannel;
         private System.Threading.Timer? _fadeTimer;
-        private int _crossfadeDurationMs = 3000;
+        private System.Threading.Timer? _startFadeTimer; // ramps volume at playback start to avoid clicks
+        private int _crossfadeDurationMs = 5000;
         private const int FadeStepMs = 40;
+        public CrossfadeType CrossfadeCurve { get; set; } = CrossfadeType.EqualPower;
 
         // Visualizer sample capture
         private readonly float[] _vizBuffer = new float[8192];
@@ -51,6 +60,12 @@ namespace AudioQualityChecker.Services
         private int _seekFadeSamplesRemaining;
         private readonly int _seekFadeTotalSamples = 1764; // ~40ms at 44.1kHz
 
+        // Serializes reader state mutations (Seek) against the audio thread's Read so
+        // that NAudio's internal state can't be corrupted by a concurrent CurrentTime=
+        // write. Without this, a lyric click while scanning (heavy ThreadPool load)
+        // can crash the process inside the MP3/MediaFoundation decoder.
+        internal readonly object _readerLock = new();
+
         // Equalizer
         private Equalizer? _equalizer;
         public Equalizer? CurrentEqualizer => _equalizer;
@@ -58,6 +73,11 @@ namespace AudioQualityChecker.Services
         // Spatial Audio
         private SpatialAudioProcessor? _spatialAudio;
         public SpatialAudioProcessor? CurrentSpatialAudio => _spatialAudio;
+
+        // Gapless playback
+        private GaplessSampleProvider? _gaplessProvider;
+        private GaplessNextTrack? _gaplessNext; // pre-loaded next track
+        public event EventHandler? GaplessTrackChanged; // fired on seamless track switch
 
         public float[] GetVisualizerSamples(int count)
         {
@@ -133,7 +153,13 @@ namespace AudioQualityChecker.Services
                 // Snapshot generation BEFORE reading from the pipeline
                 int genBefore = System.Threading.Volatile.Read(ref _player._seekGeneration);
 
-                int read = _source.Read(buffer, offset, count);
+                // Serialize against Seek() so the underlying reader's state can't be
+                // mutated mid-decode. Prevents process crashes when seeking under load.
+                int read;
+                lock (_player._readerLock)
+                {
+                    read = _source.Read(buffer, offset, count);
+                }
                 if (read <= 0) return read;
 
                 // CHECK 1: Did a seek happen DURING _source.Read()?
@@ -204,12 +230,110 @@ namespace AudioQualityChecker.Services
         }
 
         /// <summary>
-        /// Crossfade duration in seconds (1-10). Default is 3.
+        /// ISampleProvider that concatenates the current source with a pre-loaded next source
+        /// for gapless playback. When the current source is exhausted, seamlessly switches to
+        /// the next source without dropping any samples.
+        /// </summary>
+        private class GaplessSampleProvider : ISampleProvider
+        {
+            private ISampleProvider _current;
+            private ISampleProvider? _next;
+            private readonly object _lock = new();
+            private bool _ended;
+
+            public event Action? TrackSwitched;
+
+            public GaplessSampleProvider(ISampleProvider initial)
+            {
+                _current = initial;
+            }
+
+            public WaveFormat WaveFormat => _current.WaveFormat;
+
+            public void SetNext(ISampleProvider? next)
+            {
+                lock (_lock) _next = next;
+            }
+
+            /// <summary>
+            /// Replace the current source entirely (used when the UI seeks or the track
+            /// is changed manually while gapless is active).
+            /// </summary>
+            public void ReplaceCurrent(ISampleProvider newSource)
+            {
+                lock (_lock)
+                {
+                    _current = newSource;
+                    _ended = false;
+                }
+            }
+
+            public int Read(float[] buffer, int offset, int count)
+            {
+                if (_ended) return 0;
+
+                int read = _current.Read(buffer, offset, count);
+
+                if (read < count)
+                {
+                    // Current source exhausted — try switching to next
+                    ISampleProvider? next;
+                    lock (_lock)
+                    {
+                        next = _next;
+                        _next = null;
+                    }
+
+                    if (next != null)
+                    {
+                        _current = next;
+                        int remaining = count - read;
+                        read += _current.Read(buffer, offset + read, remaining);
+                        TrackSwitched?.Invoke();
+                    }
+                    else if (read == 0)
+                    {
+                        _ended = true;
+                    }
+                }
+
+                return read;
+            }
+        }
+
+        /// <summary>
+        /// Holds pre-loaded resources for the next gapless track.
+        /// </summary>
+        private class GaplessNextTrack : IDisposable
+        {
+            public string FilePath = "";
+            public AudioFileReader? Reader;
+            public MediaFoundationReader? MfReader;
+            public WaveStream? WaveStreamReader;
+            public SampleChannel? SampleChannel;
+            public IDisposable? ExtraDisposable;
+            public IDisposable? ExtraDisposable2;
+            public ISampleProvider? Source;
+            public float NormalizationGain = 1f;
+
+            public void Dispose()
+            {
+                Reader?.Dispose();
+                MfReader?.Dispose();
+                if (WaveStreamReader != null && WaveStreamReader != Reader)
+                    (WaveStreamReader as IDisposable)?.Dispose();
+                ExtraDisposable?.Dispose();
+                ExtraDisposable2?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Crossfade duration in seconds (1-15). Default is 5.
         /// </summary>
         public int CrossfadeDurationSeconds
         {
             get => _crossfadeDurationMs / 1000;
-            set => _crossfadeDurationMs = Math.Clamp(value, 1, 10) * 1000;
+            set => _crossfadeDurationMs = Math.Clamp(value, 1, 15) * 1000;
         }
 
         /// <summary>
@@ -272,10 +396,50 @@ namespace AudioQualityChecker.Services
 
         private void ApplyVolume()
         {
+            _startFadeTimer?.Dispose();
+            _startFadeTimer = null;
             float effective = _userVolume * _normalizationGain;
             effective = Math.Clamp(effective, 0f, 1f);
             if (_reader != null) _reader.Volume = effective;
             if (_sampleChannel != null) _sampleChannel.Volume = effective;
+        }
+
+        /// <summary>
+        /// Ramps volume from 0 to the target effective volume over a short period.
+        /// Prevents clicks / spikes at the very start of playback or gapless switches.
+        /// </summary>
+        private void StartPlaybackFadeIn(int durationMs = 150)
+        {
+            float targetVol = _userVolume * _normalizationGain;
+            targetVol = Math.Clamp(targetVol, 0f, 1f);
+
+            // If a fade is already running, let it continue unless we're forcing a restart
+            if (_startFadeTimer != null)
+            {
+                _startFadeTimer?.Dispose();
+                _startFadeTimer = null;
+            }
+
+            // Start from silence
+            if (_reader != null) _reader.Volume = 0f;
+            if (_sampleChannel != null) _sampleChannel.Volume = 0f;
+
+            int steps = Math.Max(1, durationMs / FadeStepMs);
+            int currentStep = 0;
+            _startFadeTimer = new System.Threading.Timer(_ =>
+            {
+                currentStep++;
+                float progress = Math.Min(1f, (float)currentStep / steps);
+                float vol = targetVol * progress;
+                if (_reader != null) _reader.Volume = vol;
+                if (_sampleChannel != null) _sampleChannel.Volume = vol;
+                if (currentStep >= steps)
+                {
+                    _startFadeTimer?.Dispose();
+                    _startFadeTimer = null;
+                    ApplyVolume(); // ensure exact final volume
+                }
+            }, null, FadeStepMs, FadeStepMs);
         }
 
         /// <summary>
@@ -295,6 +459,11 @@ namespace AudioQualityChecker.Services
             if (_currentFile == filePath && _waveOut?.PlaybackState == PlaybackState.Paused)
             {
                 _waveOut.Play();
+                float currentEffective = _userVolume * _normalizationGain;
+                currentEffective = Math.Clamp(currentEffective, 0f, 1f);
+                float actualVol = _reader?.Volume ?? (_sampleChannel?.Volume ?? currentEffective);
+                if (Math.Abs(actualVol - currentEffective) > 0.05f)
+                    StartPlaybackFadeIn(80);
                 PlaybackStarted?.Invoke(this, EventArgs.Empty);
                 return;
             }
@@ -585,8 +754,9 @@ namespace AudioQualityChecker.Services
 
                 if (!opened)
                 {
+                    string fileExt = System.IO.Path.GetExtension(filePath);
                     throw new InvalidOperationException(
-                        "This audio format is not supported for playback. " +
+                        $"This audio format ({fileExt}) is not supported for playback. " +
                         "The file may use an unsupported codec or proprietary encoding.");
                 }
 
@@ -595,6 +765,7 @@ namespace AudioQualityChecker.Services
                     CalculateNormalizationGain();
 
                 ApplyVolume();
+                StartPlaybackFadeIn();
 
                 // Insert equalizer into pipeline
                 ISampleProvider sampleSource;
@@ -602,6 +773,18 @@ namespace AudioQualityChecker.Services
                     sampleSource = _reader;
                 else
                     sampleSource = _sampleChannel!;
+
+                // Wrap in gapless provider when gapless playback is enabled
+                if (ThemeManager.GaplessEnabled && !ThemeManager.Crossfade)
+                {
+                    _gaplessProvider = new GaplessSampleProvider(sampleSource);
+                    _gaplessProvider.TrackSwitched += OnGaplessTrackSwitched;
+                    sampleSource = _gaplessProvider;
+                }
+                else
+                {
+                    _gaplessProvider = null;
+                }
 
                 // Build processing chain and try to init WaveOut.
                 // Use larger buffers for fallback readers (MediaFoundation, etc.)
@@ -691,6 +874,15 @@ namespace AudioQualityChecker.Services
                 // Nothing playing, just play normally
                 Play(filePath, normalize);
                 return;
+            }
+
+            // Clean up any gapless preparation before crossfade takes over
+            _gaplessNext?.Dispose();
+            _gaplessNext = null;
+            if (_gaplessProvider != null)
+            {
+                _gaplessProvider.TrackSwitched -= OnGaplessTrackSwitched;
+                _gaplessProvider = null;
             }
 
             // Move current playback to fade-out — unhook events FIRST
@@ -891,28 +1083,39 @@ namespace AudioQualityChecker.Services
             int steps = _crossfadeDurationMs / FadeStepMs;
             int currentStep = 0;
             float fadeOutStartVol = GetFadeOutVolume();
+            var curve = CrossfadeCurve;
 
             _fadeTimer = new System.Threading.Timer(_ =>
             {
+                // If the fade-out device hit EOF early, clean up immediately to avoid hanging
+                if (_fadeOutDevice != null && _fadeOutDevice.PlaybackState == PlaybackState.Stopped)
+                {
+                    _fadeTimer?.Dispose();
+                    _fadeTimer = null;
+                    CleanupFadeOut();
+                    ApplyVolume();
+                    return;
+                }
+
                 currentStep++;
-                float progress = Math.Min(1f, (float)currentStep / steps);
+                float t = Math.Min(1f, (float)currentStep / steps);
 
-                // Fade out old track
-                float fadeOutVol = fadeOutStartVol * (1f - progress);
-                SetFadeOutVolume(fadeOutVol);
+                float outMult = CrossfadeCurveFadeOut(t, curve);
+                float inMult  = CrossfadeCurveFadeIn(t, curve);
 
-                // Fade in new track
+                SetFadeOutVolume(fadeOutStartVol * outMult);
+
                 float targetVol = _userVolume * _normalizationGain;
-                float fadeInVol = targetVol * progress;
-                if (_reader != null) _reader.Volume = Math.Clamp(fadeInVol, 0f, 1f);
-                if (_sampleChannel != null) _sampleChannel.Volume = Math.Clamp(fadeInVol, 0f, 1f);
+                float fadeInVol = Math.Clamp(targetVol * inMult, 0f, 1f);
+                if (_reader != null) _reader.Volume = fadeInVol;
+                if (_sampleChannel != null) _sampleChannel.Volume = fadeInVol;
 
                 if (currentStep >= steps)
                 {
                     _fadeTimer?.Dispose();
                     _fadeTimer = null;
                     CleanupFadeOut();
-                    ApplyVolume(); // ensure final volume is correct
+                    ApplyVolume();
                 }
             }, null, FadeStepMs, FadeStepMs);
         }
@@ -958,6 +1161,32 @@ namespace AudioQualityChecker.Services
                 _fadeOutMfReader = null;
             }
         }
+
+        // ── Crossfade curve helpers ──────────────────────────────────────────────
+
+        private static float CrossfadeCurveFadeOut(float t, CrossfadeType curve) => curve switch
+        {
+            // Equal Power: cos(t·π/2) — constant perceived loudness, no dip
+            CrossfadeType.EqualPower => MathF.Cos(t * MathF.PI / 2f),
+            // Natural: (1-t)² — fast initial drop, smooth tail
+            CrossfadeType.Natural    => (1f - t) * (1f - t),
+            // Sequential: full volume first half, then silence
+            CrossfadeType.Sequential => t < 0.5f ? Math.Clamp(1f - t * 2f, 0f, 1f) : 0f,
+            // Linear (default)
+            _                        => 1f - t,
+        };
+
+        private static float CrossfadeCurveFadeIn(float t, CrossfadeType curve) => curve switch
+        {
+            // Equal Power: sin(t·π/2)
+            CrossfadeType.EqualPower => MathF.Sin(t * MathF.PI / 2f),
+            // Natural: t(2-t) — amplitude sum with (1-t)² always equals 1, no dip
+            CrossfadeType.Natural    => t * (2f - t),
+            // Sequential: silence first half, then full volume
+            CrossfadeType.Sequential => t > 0.5f ? Math.Clamp((t - 0.5f) * 2f, 0f, 1f) : 0f,
+            // Linear
+            _                        => t,
+        };
 
         private void CalculateNormalizationGain()
         {
@@ -1035,6 +1264,18 @@ namespace AudioQualityChecker.Services
         {
             CleanupFadeOut();
 
+            // Clean up gapless resources
+            _gaplessNext?.Dispose();
+            _gaplessNext = null;
+            if (_gaplessProvider != null)
+            {
+                _gaplessProvider.TrackSwitched -= OnGaplessTrackSwitched;
+                _gaplessProvider = null;
+            }
+
+            _startFadeTimer?.Dispose();
+            _startFadeTimer = null;
+
             if (_waveOut != null)
             {
                 _waveOut.PlaybackStopped -= OnPlaybackStopped;
@@ -1070,6 +1311,9 @@ namespace AudioQualityChecker.Services
             }
 
             _waveStreamReader = null;
+            // Drop pipeline references so a subsequent failed Play() can't observe a half-built chain
+            _equalizer = null;
+            _spatialAudio = null;
             _currentFile = null;
             _normalizationGain = 1f;
             PlaybackStopped?.Invoke(this, EventArgs.Empty);
@@ -1087,8 +1331,8 @@ namespace AudioQualityChecker.Services
             // buffer (if one is being filled right now) is tainted
             System.Threading.Interlocked.Increment(ref _seekGeneration);
 
-            // Hard-mute for 6 buffer fills while decoder stabilizes
-            System.Threading.Interlocked.Exchange(ref _seekMuteBuffers, 6);
+            // Hard-mute for 3 buffer fills while decoder stabilizes
+            System.Threading.Interlocked.Exchange(ref _seekMuteBuffers, 3);
 
             // Reset DSP processor state
             _equalizer?.ResetFilterState();
@@ -1097,20 +1341,25 @@ namespace AudioQualityChecker.Services
             // Arm post-mute fade-in
             _seekFadeSamplesRemaining = _seekFadeTotalSamples;
 
-            if (_reader != null)
+            // Serialize the actual reader-position write against the audio thread's
+            // Read() so we don't crash inside NAudio when seeking under heavy load.
+            lock (_readerLock)
             {
-                var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _reader.TotalTime.TotalSeconds));
-                _reader.CurrentTime = target;
-            }
-            else if (_mfReader != null)
-            {
-                var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _mfReader.TotalTime.TotalSeconds));
-                _mfReader.CurrentTime = target;
-            }
-            else if (_waveStreamReader != null)
-            {
-                var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _waveStreamReader.TotalTime.TotalSeconds));
-                _waveStreamReader.CurrentTime = target;
+                if (_reader != null)
+                {
+                    var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _reader.TotalTime.TotalSeconds));
+                    _reader.CurrentTime = target;
+                }
+                else if (_mfReader != null)
+                {
+                    var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _mfReader.TotalTime.TotalSeconds));
+                    _mfReader.CurrentTime = target;
+                }
+                else if (_waveStreamReader != null)
+                {
+                    var target = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _waveStreamReader.TotalTime.TotalSeconds));
+                    _waveStreamReader.CurrentTime = target;
+                }
             }
 
             // Restore WaveOut device volume — the mute buffers + fade-in in Read()
@@ -1141,6 +1390,227 @@ namespace AudioQualityChecker.Services
 
             if (reachedEnd)
                 TrackFinished?.Invoke(this, EventArgs.Empty);
+        }
+
+        // ─── Gapless Playback ───
+
+        /// <summary>
+        /// Pre-loads the next track for seamless gapless transition.
+        /// Call when the current track has a few seconds remaining.
+        /// </summary>
+        public void PrepareGapless(string filePath, bool normalize = false)
+        {
+            if (_gaplessProvider == null) return;
+
+            // Clean up any previous preparation
+            _gaplessNext?.Dispose();
+            _gaplessNext = null;
+
+            try
+            {
+                var next = new GaplessNextTrack { FilePath = filePath };
+                ISampleProvider? source = null;
+                string ext = System.IO.Path.GetExtension(filePath).ToLowerInvariant();
+
+                // Try AudioFileReader first (handles MP3, WAV, AIFF, WMA, FLAC)
+                try
+                {
+                    next.Reader = new AudioFileReader(filePath);
+                    source = next.Reader;
+                }
+                catch
+                {
+                    next.Reader?.Dispose();
+                    next.Reader = null;
+                }
+
+                // Try Opus
+                if (source == null && ext == ".opus")
+                {
+                    try
+                    {
+                        var opusReader = new OpusFileReader(filePath);
+                        next.SampleChannel = new SampleChannel(opusReader, true);
+                        source = next.SampleChannel;
+                        next.ExtraDisposable = opusReader;
+                        next.WaveStreamReader = opusReader;
+                    }
+                    catch
+                    {
+                        next.ExtraDisposable?.Dispose();
+                        next.ExtraDisposable = null;
+                        next.SampleChannel = null;
+                        next.WaveStreamReader = null;
+                    }
+                }
+
+                // Try Vorbis
+                if (source == null && ext == ".ogg")
+                {
+                    try
+                    {
+                        var vorbis = new VorbisWaveReader(filePath);
+                        next.SampleChannel = new SampleChannel(vorbis, true);
+                        source = next.SampleChannel;
+                        next.ExtraDisposable = vorbis;
+                        next.WaveStreamReader = vorbis;
+                    }
+                    catch
+                    {
+                        next.ExtraDisposable?.Dispose();
+                        next.ExtraDisposable = null;
+                        next.SampleChannel = null;
+                        next.WaveStreamReader = null;
+                    }
+                }
+
+                // Try MediaFoundationReader
+                if (source == null)
+                {
+                    try
+                    {
+                        next.MfReader = new MediaFoundationReader(filePath);
+                        next.SampleChannel = new SampleChannel(next.MfReader, true);
+                        source = next.SampleChannel;
+                    }
+                    catch
+                    {
+                        next.MfReader?.Dispose();
+                        next.MfReader = null;
+                        next.SampleChannel = null;
+                    }
+                }
+
+                // Try managed FLAC
+                if (source == null && (ext == ".flac" || ext == ".fla"))
+                {
+                    try
+                    {
+                        var flac = System.Threading.Tasks.Task.Run(() => new FlacFileReader(filePath)).Result;
+                        next.SampleChannel = new SampleChannel(flac, true);
+                        source = next.SampleChannel;
+                        next.ExtraDisposable = flac;
+                        next.WaveStreamReader = flac;
+                    }
+                    catch
+                    {
+                        next.ExtraDisposable?.Dispose();
+                        next.ExtraDisposable = null;
+                        next.SampleChannel = null;
+                        next.WaveStreamReader = null;
+                    }
+                }
+
+                if (source == null)
+                {
+                    next.Dispose();
+                    return; // will fall back to normal Play() when track ends
+                }
+
+                // Apply normalization if requested
+                if (normalize && next.Reader != null)
+                {
+                    try
+                    {
+                        float peak = 0f;
+                        float[] normBuf = new float[4096];
+                        next.Reader.Position = 0;
+                        int read2;
+                        while ((read2 = next.Reader.Read(normBuf, 0, normBuf.Length)) > 0)
+                        {
+                            for (int j = 0; j < read2; j++)
+                            {
+                                float abs = Math.Abs(normBuf[j]);
+                                if (abs > peak) peak = abs;
+                            }
+                        }
+                        next.Reader.Position = 0;
+                        if (peak > 0.001f)
+                        {
+                            float targetDb = -1f;
+                            float targetLinear = (float)Math.Pow(10, targetDb / 20);
+                            next.NormalizationGain = targetLinear / peak;
+                        }
+                    }
+                    catch { next.Reader.Position = 0; }
+                }
+
+                // Resample / remix if format doesn't match current output
+                var currentFormat = _gaplessProvider.WaveFormat;
+                if (source.WaveFormat.Channels != currentFormat.Channels)
+                {
+                    if (source.WaveFormat.Channels == 1 && currentFormat.Channels == 2)
+                        source = new MonoToStereoSampleProvider(source);
+                    else if (source.WaveFormat.Channels == 2 && currentFormat.Channels == 1)
+                        source = new StereoToMonoSampleProvider(source);
+                }
+                if (source.WaveFormat.SampleRate != currentFormat.SampleRate)
+                {
+                    source = new WdlResamplingSampleProvider(source, currentFormat.SampleRate);
+                }
+
+                next.Source = source;
+                _gaplessNext = next;
+                _gaplessProvider.SetNext(source);
+            }
+            catch
+            {
+                _gaplessNext?.Dispose();
+                _gaplessNext = null;
+                // Gapless prep failed — normal TrackFinished will handle transition
+            }
+        }
+
+        /// <summary>
+        /// Whether a gapless next track has been prepared.
+        /// </summary>
+        public bool IsGaplessPrepared => _gaplessNext != null;
+
+        /// <summary>
+        /// Whether gapless playback is currently active (provider is in the pipeline).
+        /// </summary>
+        public bool IsGaplessActive => _gaplessProvider != null;
+
+        private void OnGaplessTrackSwitched()
+        {
+            // This is called from the audio callback thread, not the UI thread.
+            // Marshal to the UI dispatcher so handlers don't get cross-thread exceptions.
+            if (System.Windows.Application.Current?.Dispatcher != null)
+            {
+                System.Windows.Application.Current.Dispatcher.BeginInvoke(() => HandleGaplessTrackSwitched());
+                return;
+            }
+            HandleGaplessTrackSwitched();
+        }
+
+        private void HandleGaplessTrackSwitched()
+        {
+            if (_gaplessNext == null) return;
+
+            var next = _gaplessNext;
+            _gaplessNext = null;
+
+            // Dispose old track resources
+            _reader?.Dispose();
+            _mfReader?.Dispose();
+            _extraDisposable?.Dispose();
+            _extraDisposable2?.Dispose();
+            if (_waveStreamReader != null && _waveStreamReader != _reader)
+                (_waveStreamReader as IDisposable)?.Dispose();
+
+            // Adopt new track resources
+            _currentFile = next.FilePath;
+            _reader = next.Reader;
+            _mfReader = next.MfReader;
+            _waveStreamReader = next.WaveStreamReader;
+            _sampleChannel = next.SampleChannel;
+            _extraDisposable = next.ExtraDisposable;
+            _extraDisposable2 = next.ExtraDisposable2;
+            _normalizationGain = next.NormalizationGain;
+            StartPlaybackFadeIn(150);
+
+            // Fire event on UI thread
+            GaplessTrackChanged?.Invoke(this, EventArgs.Empty);
         }
 
         public void Dispose()

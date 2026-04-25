@@ -55,7 +55,7 @@ public partial class NowPlayingWindow : Window
         _onShuffleToggle = onShuffleToggle;
         _getShuffleState = getShuffleState;
 
-        _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        _updateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         _updateTimer.Tick += UpdateTimer_Tick;
         _updateTimer.Start();
 
@@ -92,7 +92,7 @@ public partial class NowPlayingWindow : Window
     {
         try
         {
-            var tagFile = TagLib.File.Create(filePath);
+            using var tagFile = TagLib.File.Create(filePath);
             if (tagFile.Tag.Pictures.Length > 0)
             {
                 var pic = tagFile.Tag.Pictures[0];
@@ -179,6 +179,16 @@ public partial class NowPlayingWindow : Window
 
         _currentLyricIndex = -1;
         BuildLyricLines();
+
+        // Force immediate lyric sync so timed lyrics start highlighting right away
+        if (_currentLyrics.IsTimed && _player != null)
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (version != _lyricsVersion) return;
+                UpdateLyricHighlight(_player.CurrentPosition);
+            }, System.Windows.Threading.DispatcherPriority.Loaded);
+        }
     }
 
     private void BuildLyricLines()
@@ -229,10 +239,12 @@ public partial class NowPlayingWindow : Window
     {
         if (!_currentLyrics.IsTimed || _lyricTextBlocks.Count == 0) return;
 
+        var lookAhead = position + TimeSpan.FromMilliseconds(80);
+
         int newIdx = -1;
         for (int i = _currentLyrics.Lines.Count - 1; i >= 0; i--)
         {
-            if (position >= _currentLyrics.Lines[i].Time)
+            if (lookAhead >= _currentLyrics.Lines[i].Time)
             {
                 newIdx = i;
                 break;
@@ -376,10 +388,7 @@ public partial class NowPlayingWindow : Window
 
     private void NpSeekSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        // Only seek when user is dragging
-        if (!_isSeeking || _player == null) return;
-        var sliderVal = NpSeekSlider.Value;
-        _player.Seek(sliderVal);
+        // Visual-only update during drag — actual seek happens on MouseUp
     }
 
     private void NpSeekSlider_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)

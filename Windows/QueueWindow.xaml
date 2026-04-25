@@ -15,6 +15,8 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="10"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="10"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="10"/>
                 <RowDefinition Height="Auto"/>
@@ -56,8 +58,16 @@
                 </Button>
             </Grid>
 
+            <!-- Up Next -->
+            <StackPanel Grid.Row="2" x:Name="UpNextPanel" Visibility="Collapsed">
+                <TextBlock Text="Up Next" FontSize="12" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource AccentColor}"
+                           Margin="0,0,0,4"/>
+                <StackPanel x:Name="UpNextItems" Orientation="Vertical"/>
+            </StackPanel>
+
             <!-- Queue ListBox -->
-            <Border Grid.Row="2" Background="{DynamicResource GridBg}"
+            <Border Grid.Row="4" Background="{DynamicResource GridBg}"
                     BorderBrush="{DynamicResource BorderColor}" BorderThickness="1" CornerRadius="3">
                 <ListBox x:Name="QueueList"
                          Background="Transparent"
@@ -123,7 +133,7 @@
             </Border>
 
             <!-- Action buttons -->
-            <Grid Grid.Row="4">
+            <Grid Grid.Row="6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
@@ -225,7 +235,7 @@
             </Grid>
 
             <!-- Close button -->
-            <Button Grid.Row="6" Content="Done" Width="90" HorizontalAlignment="Right"
+            <Button Grid.Row="8" Content="Done" Width="90" HorizontalAlignment="Right"
                     Click="Close_Click" Padding="12,6"
                     Background="{DynamicResource ButtonBg}"
                     Foreground="{DynamicResource TextPrimary}"

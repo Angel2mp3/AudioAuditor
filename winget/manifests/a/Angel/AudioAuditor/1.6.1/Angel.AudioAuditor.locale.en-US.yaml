@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: Angel.AudioAuditor
+PackageVersion: 1.6.1
+PackageLocale: en-US
+Publisher: Angel
+PublisherUrl: https://audioauditor.org
+PublisherSupportUrl: https://github.com/Angel2mp3/AudioAuditor/issues
+PackageName: AudioAuditor
+PackageUrl: https://github.com/Angel2mp3/AudioAuditor
+License: Apache-2.0
+LicenseUrl: https://github.com/Angel2mp3/AudioAuditor/blob/main/LICENSE
+Copyright: Copyright (c) Angel
+ShortDescription: Desktop audio quality analyzer — detect fake lossless, clipping, MQA, AI-generated audio, and more
+Description: |-
+  AudioAuditor is a feature-rich desktop application for Windows that analyzes audio files to detect
+  fake lossless, verify true quality, identify clipping, detect MQA encoding, detect AI-generated audio,
+  estimate effective frequency cutoffs, and more. Includes a built-in audio player with loop modes,
+  seek tooltip, equalizer, spatial audio, spectrogram viewer, real-time visualizer, synced lyrics,
+  Now Playing panel, and themeable interface.
+Tags:
+  - audio
+  - music
+  - analysis
+  - lossless
+  - flac
+  - spectrogram
+  - audiophile
+  - fake-lossless
+  - mqa
+ReleaseNotesUrl: https://github.com/Angel2mp3/AudioAuditor/blob/main/CHANGELOG.md
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

@@ -80,9 +80,9 @@ public static class AlbumColorExtractor
             .OrderByDescending(x => x.Score)
             .ToList();
 
-        var primary = scored[0].Cluster.Center;
-        var secondary = PickDistinct(scored.Select(s => s.Cluster).ToList(), primary, minDistance: 60)
-            ?? scored[Math.Min(1, scored.Count - 1)].Cluster.Center;
+        var primary = EnsureReadable(scored[0].Cluster.Center);
+        var secondary = EnsureReadable(PickDistinct(scored.Select(s => s.Cluster).ToList(), primary, minDistance: 60)
+            ?? scored[Math.Min(1, scored.Count - 1)].Cluster.Center);
         var tertiary = PickDistinct(scored.Select(s => s.Cluster).ToList(), primary, minDistance: 40, exclude: secondary)
             ?? scored[Math.Min(2, scored.Count - 1)].Cluster.Center;
 
@@ -157,7 +157,7 @@ public static class AlbumColorExtractor
                 // Skip fully transparent or near-black/near-white (uninteresting)
                 if (a < 128) continue;
                 int brightness = (r + g + b) / 3;
-                if (brightness < 15 || brightness > 240) continue;
+                if (brightness < 25 || brightness > 230) continue;
 
                 result.Add((r, g, b));
             }
@@ -295,6 +295,17 @@ public static class AlbumColorExtractor
         return null;
     }
 
+    private static Color EnsureReadable(Color c)
+    {
+        double lum = c.Luminance;
+        if (lum >= 100) return c;
+        double factor = 100.0 / Math.Max(lum, 1);
+        return new Color(
+            (byte)Math.Min(255, (int)(c.R * factor)),
+            (byte)Math.Min(255, (int)(c.G * factor)),
+            (byte)Math.Min(255, (int)(c.B * factor)));
+    }
+
     private static Color Darken(Color c, double factor)
     {
         return new Color(
@@ -314,8 +325,8 @@ public static class AlbumColorExtractor
         double brightness = c.Center.Luminance / 255.0;
         // Penalize dark or washed-out colors more aggressively
         double brightPenalty = 1.0;
-        if (brightness < 0.15 || brightness > 0.85) brightPenalty = 0.2;
-        else if (brightness < 0.25 || brightness > 0.75) brightPenalty = 0.6;
+        if (brightness < 0.25 || brightness > 0.75) brightPenalty = 0.15;
+        else if (brightness < 0.35 || brightness > 0.65) brightPenalty = 0.5;
         // Penalize very desaturated colors
         double satPenalty = saturation < 0.1 ? 0.3 : (saturation < 0.2 ? 0.6 : 1.0);
         // Blend frequency with vibrancy: 30% frequency, 70% saturation

@@ -1,0 +1,184 @@
+<Window x:Class="AudioQualityChecker.Windows.OnlineOfflineDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AudioAuditor — Choose Connection Mode"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        Width="680" Height="460"
+        WindowStartupLocation="CenterOwner"
+        AllowsTransparency="True"
+        Background="Transparent"
+        MouseLeftButtonDown="Window_MouseDown">
+
+    <Border Background="#FF151515" BorderBrush="#FF333333" BorderThickness="1.5" CornerRadius="10">
+        <Grid Margin="28,22,28,24">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <StackPanel Grid.Row="0" Margin="0,0,0,6">
+                <TextBlock Text="Welcome to AudioAuditor" FontSize="20" FontWeight="Bold"
+                           FontFamily="Segoe UI" Foreground="#FFEEEEEE" HorizontalAlignment="Center"/>
+                <TextBlock Text="How should AudioAuditor connect to the internet?"
+                           FontSize="13" FontFamily="Segoe UI" Foreground="#FF888888"
+                           HorizontalAlignment="Center" Margin="0,6,0,0"/>
+                <TextBlock Text="Every option listed below is fully optional — you can disable or skip any of them at any time in Settings."
+                           FontSize="11" FontFamily="Segoe UI" Foreground="#FF666677"
+                           HorizontalAlignment="Center" Margin="0,6,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- Divider -->
+            <Border Grid.Row="1" Height="1" Background="#FF2A2A2A" Margin="0,8,0,14"/>
+
+            <!-- Two panels -->
+            <Grid Grid.Row="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Online Panel (left, highlighted) -->
+                <Border Grid.Column="0" Background="#FF1A1A2A" CornerRadius="8"
+                        BorderThickness="2" x:Name="OnlinePanelBorder"
+                        Cursor="Hand" MouseLeftButtonDown="OnlinePanel_Click">
+                    <Border.BorderBrush>
+                        <SolidColorBrush Color="#FF5588FF"/>
+                    </Border.BorderBrush>
+                    <StackPanel Margin="18,16">
+                        <!-- Title row with badge -->
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Online Mode" FontSize="15" FontWeight="Bold"
+                                       FontFamily="Segoe UI" Foreground="#FF88AAFF"/>
+                            <Border Grid.Column="1" Background="#FF223355" CornerRadius="3"
+                                    Padding="6,2" VerticalAlignment="Center">
+                                <TextBlock Text="★ Recommended" FontSize="10" FontFamily="Segoe UI"
+                                           Foreground="#FF88AAFF" FontWeight="SemiBold"/>
+                            </Border>
+                        </Grid>
+
+                        <TextBlock Text="Full features enabled:" FontSize="11" Foreground="#FF666688"
+                                   FontFamily="Segoe UI" Margin="0,6,0,6"/>
+
+                        <StackPanel>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FFBBBBDD" Margin="0,3,0,0"
+                                       Text="● Automatic lyrics for Now Playing"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FFBBBBDD" Margin="0,3,0,0"
+                                       Text="● SH Labs AI detection"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FFBBBBDD" Margin="0,3,0,0"
+                                       Text="● Automatic update notifications"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FFBBBBDD" Margin="0,3,0,0"
+                                       Text="● Last.fm scrobbling &amp; history"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FFBBBBDD" Margin="0,3,0,0"
+                                       Text="● Lyric translation"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FFBBBBDD" Margin="0,3,0,0"
+                                       Text="● Discord Rich Presence"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FFBBBBDD" Margin="0,3,0,0"
+                                       Text="● AcoustID audio fingerprinting"/>
+                        </StackPanel>
+
+                        <TextBlock Text="You can switch modes at any time in Settings."
+                                   FontSize="11" Foreground="#FF555577" FontFamily="Segoe UI"
+                                   Margin="0,12,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Offline Panel (right, dimmed) -->
+                <Border Grid.Column="2" Background="#FF181818" CornerRadius="8"
+                        BorderThickness="1.5" x:Name="OfflinePanelBorder" BorderBrush="#FF2D2D2D"
+                        Cursor="Hand" MouseLeftButtonDown="OfflinePanel_Click">
+                    <StackPanel Margin="18,16">
+                        <TextBlock Text="Offline Mode" FontSize="15" FontWeight="Bold"
+                                   FontFamily="Segoe UI" Foreground="#FF888888" Margin="0,0,0,4"/>
+
+                        <TextBlock Text="These features will be disabled:" FontSize="11" Foreground="#FF555555"
+                                   FontFamily="Segoe UI" Margin="0,6,0,6"/>
+
+                        <StackPanel>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FF666666" Margin="0,3,0,0"
+                                       Text="✕ Lyrics fetching"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FF666666" Margin="0,3,0,0"
+                                       Text="✕ SH Labs AI detection"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FF666666" Margin="0,3,0,0"
+                                       Text="✕ Update notifications"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FF666666" Margin="0,3,0,0"
+                                       Text="✕ Last.fm scrobbling"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FF666666" Margin="0,3,0,0"
+                                       Text="✕ Lyric translation"/>
+                            <TextBlock FontFamily="Segoe UI" FontSize="12" Foreground="#FF666666" Margin="0,3,0,0"
+                                       Text="✕ Discord Rich Presence"/>
+                        </StackPanel>
+
+                        <TextBlock FontFamily="Segoe UI" FontSize="11" Foreground="#FF555555"
+                                   Margin="0,10,0,0" TextWrapping="Wrap">
+                            <Run Text="Still works fully offline:"/>
+                            <LineBreak/>
+                            <Run Text="File analysis, BPM, spectrogram, playback, EQ, metadata editing, and all local scanning features."/>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Buttons -->
+            <Grid Grid.Row="3" Margin="0,18,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Continue with Online (primary, pre-selected) -->
+                <Button Grid.Column="0" x:Name="BtnOnline" Click="BtnOnline_Click"
+                        Padding="0,10" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="#FF2244AA" BorderBrush="#FF5588FF"
+                                    BorderThickness="1.5" CornerRadius="5">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#FF3355CC"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="#FF77AAFF"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Continue with Online Mode" FontFamily="Segoe UI" FontSize="13"
+                                   FontWeight="SemiBold" Foreground="#FFEEEEFF"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Use Offline Mode (secondary) -->
+                <Button Grid.Column="2" x:Name="BtnOffline" Click="BtnOffline_Click"
+                        Padding="0,10" Cursor="Hand">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="#FF222222" BorderBrush="#FF444444"
+                                    BorderThickness="1" CornerRadius="5">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#FF2A2A2A"/>
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="#FF666666"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <TextBlock Text="Use Offline Mode" FontFamily="Segoe UI" FontSize="13"
+                               Foreground="#FF888888"/>
+                </Button>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
