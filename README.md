@@ -43,9 +43,11 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 ## Screenshots
 
 <p align="center">
-  <img width="1547" height="867" alt="Blurple theme" src="https://github.com/user-attachments/assets/2c4f27df-1ba0-4479-a89d-362502d80d6d" />
+  <img width="1599" height="867" alt="blurple-theme" src="https://github.com/user-attachments/assets/f3ff6ceb-bea6-483f-8d38-53395e0dbfe0" />
   <br/>
-  <img width="1547" height="867" alt="Amethyst theme" src="https://github.com/user-attachments/assets/bf064074-c27c-4e58-afb9-74a7dd9842dc" />
+  <img width="1599" height="867" alt="amethyst-theme" src="https://github.com/user-attachments/assets/ae5a5a01-ebad-453d-9bed-a105de3be576" />
+  <img width="1483" height="762" alt="CLI" src="https://github.com/user-attachments/assets/4efa884a-0e9e-4ed6-a90e-4505baa33c50" />
+
 </p>
 
 ---
