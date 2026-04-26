@@ -38,7 +38,10 @@ namespace AudioQualityChecker.Services
         private WaveOutEvent? _fadeOutDevice;
         private AudioFileReader? _fadeOutReader;
         private MediaFoundationReader? _fadeOutMfReader;
+        private WaveStream? _fadeOutWaveStreamReader;
         private SampleChannel? _fadeOutSampleChannel;
+        private IDisposable? _fadeOutExtraDisposable;
+        private IDisposable? _fadeOutExtraDisposable2;
         private System.Threading.Timer? _fadeTimer;
         private System.Threading.Timer? _startFadeTimer; // ramps volume at playback start to avoid clicks
         private int _crossfadeDurationMs = 5000;
@@ -839,8 +842,8 @@ namespace AudioQualityChecker.Services
                 IWaveProvider finalSource = new SampleToWaveProvider(_spatialAudio);
 
                 int sampleRate = _spatialAudio.WaveFormat.SampleRate;
-                int baseLatency = sampleRate > 48000 ? 400 : 250;
-                int baseBuffers = sampleRate > 48000 ? 5 : 3;
+                int baseLatency = sampleRate > 48000 ? 500 : 320;
+                int baseBuffers = sampleRate > 48000 ? 6 : 4;
                 _waveOut = new WaveOutEvent
                 {
                     DesiredLatency = useLargeBuffers ? Math.Max(baseLatency, 400) : baseLatency,
@@ -891,13 +894,18 @@ namespace AudioQualityChecker.Services
             _fadeOutDevice = _waveOut;
             _fadeOutReader = _reader;
             _fadeOutMfReader = _mfReader;
+            _fadeOutWaveStreamReader = _waveStreamReader;
             _fadeOutSampleChannel = _sampleChannel;
+            _fadeOutExtraDisposable = _extraDisposable;
+            _fadeOutExtraDisposable2 = _extraDisposable2;
 
             _waveOut = null;
             _reader = null;
             _mfReader = null;
             _sampleChannel = null;
             _waveStreamReader = null;
+            _extraDisposable = null;
+            _extraDisposable2 = null;
             _currentFile = null;
 
             // Start the new track
@@ -1148,6 +1156,30 @@ namespace AudioQualityChecker.Services
             }
 
             _fadeOutSampleChannel = null;
+            var fadeOutExtra = _fadeOutExtraDisposable;
+            var fadeOutExtra2 = _fadeOutExtraDisposable2;
+
+            if (fadeOutExtra2 != null)
+            {
+                try { fadeOutExtra2.Dispose(); } catch { }
+                _fadeOutExtraDisposable2 = null;
+            }
+
+            if (fadeOutExtra != null)
+            {
+                try { fadeOutExtra.Dispose(); } catch { }
+                _fadeOutExtraDisposable = null;
+            }
+
+            if (_fadeOutWaveStreamReader != null
+                && !ReferenceEquals(_fadeOutWaveStreamReader, _fadeOutReader)
+                && !ReferenceEquals(_fadeOutWaveStreamReader, _fadeOutMfReader)
+                && !ReferenceEquals(_fadeOutWaveStreamReader, fadeOutExtra)
+                && !ReferenceEquals(_fadeOutWaveStreamReader, fadeOutExtra2))
+            {
+                try { _fadeOutWaveStreamReader.Dispose(); } catch { }
+            }
+            _fadeOutWaveStreamReader = null;
 
             if (_fadeOutReader != null)
             {

@@ -55,6 +55,8 @@
 #### GUI — Now Playing Polish
 - **Tray context menu** was fixed to more match the ColorMatch option when enabled
 - **Queue button** added a queue button that syncs with the main window with the same Move Up/Down/Remove/Clear controls, plus an **Up Next** preview
+- **Fullscreen/windowed layout presets** now save separately, so custom cover/text/lyrics/visualizer sizes and offsets persist cleanly for each Now Playing mode
+- Fixed a corrupted column-visibility state that could collapse the main DataGrid down to only the AI column; the grid now repairs unusable saved/session layouts automatically
 - Fixed karaoke apostrophe rendering ("it's" no longer shows as "it s")
 - Fixed crash when clicking a lyric line to seek
 - Fixed visualizer style dropdown highlight getting out of sync between main window and NP panel
