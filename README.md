@@ -9,20 +9,20 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/.NET-8.0-purple?style=plastic&logo=dotnet" alt=".NET 8"/>
-  <img src="https://img.shields.io/badge/Platform-Windows-blue?style=plastic&logo=windows" alt="Windows"/>
-  <img src="https://img.shields.io/badge/UI-WPF-0078D4?style=plastic" alt="WPF"/>
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=plastic" alt="License"/>
-  <img src="https://img.shields.io/badge/Version-1.7.0-7c5cff?style=plastic" alt="Version 1.7.0"/>
+  <img src="https://img.shields.io/badge/.NET-8.0-8366e0?style=plastic&logo=dotnet" alt=".NET 8"/>
+  <img src="https://img.shields.io/badge/Platform-Windows-1fa8fd?style=plastic&logo=windows" alt="Windows"/>
+  <img src="https://img.shields.io/badge/UI-WPF-55a4f7?style=plastic" alt="WPF"/>
+  <img src="https://img.shields.io/badge/License-Apache%202.0-89276f?style=plastic" alt="License"/>
+  <img src="https://img.shields.io/badge/Version-1.7.0-4f50c6?style=plastic" alt="Version 1.7.0"/>
   <br/>
   <a href="https://ko-fi.com/angelsoftware">
-    <img src="https://img.shields.io/badge/Support_on-Ko--fi-FF5E5B?style=plastic&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
+    <img src="https://img.shields.io/badge/Support_on-Ko--fi-f26b2e?style=plastic&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
   <a href="https://audioauditor.org">
-    <img src="https://img.shields.io/badge/Website-audioauditor.org-7c5cff?style=plastic&logo=googlechrome&logoColor=white" alt="Website"/>
+    <img src="https://img.shields.io/badge/Website-audioauditor.org-4f50c6?style=plastic&logo=googlechrome&logoColor=white" alt="Website"/>
   </a>
   <a href="https://fmhy.net/audio#spectrum-analyzers">
-    <img src="https://img.shields.io/badge/Featured%20on-FMHY-9b59b6?style=plastic" alt="Featured on FMHY"/>
+    <img src="https://img.shields.io/badge/Featured%20on-FMHY-b051d4?style=plastic" alt="Featured on FMHY"/>
   </a>
 </p>
 
