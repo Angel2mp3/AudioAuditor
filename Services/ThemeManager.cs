@@ -250,6 +250,21 @@ namespace AudioQualityChecker.Services
         public static int NpArtistOffsetY { get; set; }
         public static int NpVizOffsetY { get; set; }
 
+        // Separate fullscreen NP layout preset. Windowed layout keeps the legacy keys above.
+        public static int NpFullscreenCoverSize { get; set; }
+        public static int NpFullscreenTitleSize { get; set; }
+        public static int NpFullscreenSubTextSize { get; set; }
+        public static int NpFullscreenLyricsSize { get; set; }
+        public static int NpFullscreenVizSize { get; set; }
+        public static int NpFullscreenLyricsOffsetX { get; set; }
+        public static int NpFullscreenCoverOffsetX { get; set; }
+        public static int NpFullscreenCoverOffsetY { get; set; }
+        public static int NpFullscreenTitleOffsetX { get; set; }
+        public static int NpFullscreenTitleOffsetY { get; set; }
+        public static int NpFullscreenArtistOffsetX { get; set; }
+        public static int NpFullscreenArtistOffsetY { get; set; }
+        public static int NpFullscreenVizOffsetY { get; set; }
+
 
         // Donation popup dismissed — never show again once dismissed
         public static bool DonationDismissed { get; set; }
@@ -332,6 +347,8 @@ namespace AudioQualityChecker.Services
             "Clipping", "MQA", "AI", "Fake Stereo"
         };
 
+        private const int MinimumUsableVisibleColumns = 4;
+
         public static string DefaultHiddenColumns => string.Join(",", DefaultHiddenColumnHeaders);
 
         // Hidden columns — comma-separated canonical column headers that are permanently hidden
@@ -355,6 +372,7 @@ namespace AudioQualityChecker.Services
                     hidden.Add(header);
             }
 
+            EnsureUsableColumnSet(hidden);
             return hidden;
         }
 
@@ -444,11 +462,33 @@ namespace AudioQualityChecker.Services
                     hidden.Add(header);
             }
 
+            EnsureUsableColumnSet(hidden);
             var synced = FormatHiddenColumns(hidden);
             if (string.Equals(HiddenColumns, synced, StringComparison.Ordinal))
                 return false;
 
             HiddenColumns = synced;
+            return true;
+        }
+
+        private static bool EnsureUsableColumnSet(HashSet<string> hidden)
+        {
+            int visibleCount = ColumnHeaderOrder.Count(header => !hidden.Contains(header));
+            if (visibleCount >= MinimumUsableVisibleColumns)
+                return false;
+
+            hidden.Clear();
+            foreach (var header in DefaultHiddenColumnHeaders)
+                hidden.Add(header);
+
+            foreach (var header in AnalysisColumnHeaders)
+            {
+                if (IsAnalysisColumnEnabled(header))
+                    hidden.Remove(header);
+                else
+                    hidden.Add(header);
+            }
+
             return true;
         }
 
@@ -1044,6 +1084,19 @@ namespace AudioQualityChecker.Services
                     $"NpArtistOffsetX={NpArtistOffsetX}",
                     $"NpArtistOffsetY={NpArtistOffsetY}",
                     $"NpVizOffsetY={NpVizOffsetY}",
+                    $"NpFullscreenCoverSize={NpFullscreenCoverSize}",
+                    $"NpFullscreenTitleSize={NpFullscreenTitleSize}",
+                    $"NpFullscreenSubTextSize={NpFullscreenSubTextSize}",
+                    $"NpFullscreenLyricsSize={NpFullscreenLyricsSize}",
+                    $"NpFullscreenVizSize={NpFullscreenVizSize}",
+                    $"NpFullscreenLyricsOffsetX={NpFullscreenLyricsOffsetX}",
+                    $"NpFullscreenCoverOffsetX={NpFullscreenCoverOffsetX}",
+                    $"NpFullscreenCoverOffsetY={NpFullscreenCoverOffsetY}",
+                    $"NpFullscreenTitleOffsetX={NpFullscreenTitleOffsetX}",
+                    $"NpFullscreenTitleOffsetY={NpFullscreenTitleOffsetY}",
+                    $"NpFullscreenArtistOffsetX={NpFullscreenArtistOffsetX}",
+                    $"NpFullscreenArtistOffsetY={NpFullscreenArtistOffsetY}",
+                    $"NpFullscreenVizOffsetY={NpFullscreenVizOffsetY}",
                     $"LoopMode={LoopMode}",
                     $"RenamePatternIndex={RenamePatternIndex}",
                     $"DefaultCopyFolder={DefaultCopyFolder}",
@@ -1091,6 +1144,8 @@ namespace AudioQualityChecker.Services
             MusicServiceSlots[3] = "Qobuz";
             MusicServiceSlots[4] = "Amazon Music";
             MusicServiceSlots[5] = "Apple Music";
+
+            bool hasNpFullscreenLayout = false;
 
             try
             {
@@ -1271,6 +1326,19 @@ namespace AudioQualityChecker.Services
                         case "NpArtistOffsetX": if (int.TryParse(val, out var naox) && naox >= -200 && naox <= 200) NpArtistOffsetX = naox; break;
                         case "NpArtistOffsetY": if (int.TryParse(val, out var naoy) && naoy >= -200 && naoy <= 200) NpArtistOffsetY = naoy; break;
                         case "NpVizOffsetY": if (int.TryParse(val, out var nvoy) && nvoy >= -200 && nvoy <= 200) NpVizOffsetY = nvoy; break;
+                        case "NpFullscreenCoverSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfcs) && nfcs >= 0 && nfcs <= 900) NpFullscreenCoverSize = nfcs; break;
+                        case "NpFullscreenTitleSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfts) && nfts >= 0 && nfts <= 72) NpFullscreenTitleSize = nfts; break;
+                        case "NpFullscreenSubTextSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfss) && nfss >= 0 && nfss <= 36) NpFullscreenSubTextSize = nfss; break;
+                        case "NpFullscreenLyricsSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfls) && nfls >= 0 && nfls <= 72) NpFullscreenLyricsSize = nfls; break;
+                        case "NpFullscreenVizSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfvz) && nfvz >= 0 && nfvz <= 400) NpFullscreenVizSize = nfvz; break;
+                        case "NpFullscreenLyricsOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nflx) && nflx >= 0 && nflx <= 500) NpFullscreenLyricsOffsetX = nflx; break;
+                        case "NpFullscreenCoverOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfcox) && nfcox >= -200 && nfcox <= 200) NpFullscreenCoverOffsetX = nfcox; break;
+                        case "NpFullscreenCoverOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfcoy) && nfcoy >= -200 && nfcoy <= 200) NpFullscreenCoverOffsetY = nfcoy; break;
+                        case "NpFullscreenTitleOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nftox) && nftox >= -200 && nftox <= 200) NpFullscreenTitleOffsetX = nftox; break;
+                        case "NpFullscreenTitleOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nftoy) && nftoy >= -200 && nftoy <= 200) NpFullscreenTitleOffsetY = nftoy; break;
+                        case "NpFullscreenArtistOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfaox) && nfaox >= -200 && nfaox <= 200) NpFullscreenArtistOffsetX = nfaox; break;
+                        case "NpFullscreenArtistOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfaoy) && nfaoy >= -200 && nfaoy <= 200) NpFullscreenArtistOffsetY = nfaoy; break;
+                        case "NpFullscreenVizOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfvoy) && nfvoy >= -200 && nfvoy <= 200) NpFullscreenVizOffsetY = nfvoy; break;
                         case "LoopMode": if (Enum.TryParse<LoopMode>(val, out var lm)) LoopMode = lm; break;
                         case "RenamePatternIndex": if (int.TryParse(val, out var rpi) && rpi >= 0 && rpi <= 2) RenamePatternIndex = rpi; break;
                         case "DefaultCopyFolder": DefaultCopyFolder = val; break;
@@ -1285,6 +1353,23 @@ namespace AudioQualityChecker.Services
                 }
             }
             catch { }
+
+            if (!hasNpFullscreenLayout)
+            {
+                NpFullscreenCoverSize = NpCoverSize;
+                NpFullscreenTitleSize = NpTitleSize;
+                NpFullscreenSubTextSize = NpSubTextSize;
+                NpFullscreenLyricsSize = NpLyricsSize;
+                NpFullscreenVizSize = NpVizSize;
+                NpFullscreenLyricsOffsetX = NpLyricsOffsetX;
+                NpFullscreenCoverOffsetX = NpCoverOffsetX;
+                NpFullscreenCoverOffsetY = NpCoverOffsetY;
+                NpFullscreenTitleOffsetX = NpTitleOffsetX;
+                NpFullscreenTitleOffsetY = NpTitleOffsetY;
+                NpFullscreenArtistOffsetX = NpArtistOffsetX;
+                NpFullscreenArtistOffsetY = NpArtistOffsetY;
+                NpFullscreenVizOffsetY = NpVizOffsetY;
+            }
 
             // Load sensitive Last.fm data from Documents
             LoadSensitiveData();

@@ -169,7 +169,8 @@ namespace AudioQualityChecker
         private int _npTitleOffsetY;              // title vertical position offset
         private int _npArtistOffsetX;             // artist horizontal position offset
         private int _npArtistOffsetY;             // artist vertical position offset
-        private int _npVizOffsetY;                // visualizer vertical position offset
+        private int _npVizOffsetY;                 // visualizer vertical position offset
+        private bool _npLayoutProfileIsFullscreen; // active persisted layout profile
         private DispatcherTimer? _npBgAnimTimer;  // animated background timer
 
         // Active visualizer canvas (NP or main)
@@ -762,12 +763,29 @@ namespace AudioQualityChecker
         /// </summary>
         public void ApplyColumnVisibility()
         {
-            ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
+            if (ThemeManager.SyncHiddenColumnsWithAnalysisOptions())
+                ThemeManager.SavePlayOptions();
+
             var hidden = ThemeManager.GetHiddenColumnSet();
 
             // Add session hidden columns
             foreach (var h in _sessionHiddenColumns)
                 hidden.Add(ThemeManager.NormalizeColumnHeader(h));
+
+            int visibleCount = FileGrid.Columns.Count(col =>
+            {
+                string header = ThemeManager.NormalizeColumnHeader(col.Header?.ToString() ?? "");
+                return !string.IsNullOrWhiteSpace(header) && !hidden.Contains(header);
+            });
+
+            if (visibleCount < 4)
+            {
+                _sessionHiddenColumns.Clear();
+                ThemeManager.HiddenColumns = "";
+                ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
+                ThemeManager.SavePlayOptions();
+                hidden = ThemeManager.GetHiddenColumnSet();
+            }
 
             foreach (var col in FileGrid.Columns)
             {
@@ -2516,7 +2534,13 @@ exit
 
         private void NextTrack_Click(object sender, RoutedEventArgs e)
         {
-            _crossfadeEarlyTriggered = false;
+            AdvanceToNextTrack(isManualSkip: true, preserveCrossfadeGuard: false);
+        }
+
+        private void AdvanceToNextTrack(bool isManualSkip, bool preserveCrossfadeGuard)
+        {
+            if (!preserveCrossfadeGuard)
+                _crossfadeEarlyTriggered = false;
             // Check queue first
             if (_queue.Count > 0)
             {
@@ -2526,7 +2550,7 @@ exit
                 {
                     FileGrid.SelectedItem = nextFile;
                     FileGrid.ScrollIntoView(nextFile);
-                    PlayFile(nextFile, isManualSkip: true);
+                    PlayFile(nextFile, isManualSkip, preserveCrossfadeGuard);
                     return;
                 }
             }
@@ -2542,7 +2566,7 @@ exit
                     FileGrid.SelectedItem = candidate;
                     FileGrid.ScrollIntoView(candidate);
                     if (candidate.Status != AudioStatus.Corrupt)
-                        PlayFile(candidate, isManualSkip: true);
+                        PlayFile(candidate, isManualSkip, preserveCrossfadeGuard);
                 }
                 return;
             }
@@ -2560,7 +2584,7 @@ exit
             FileGrid.SelectedItem = nextInList;
             FileGrid.ScrollIntoView(nextInList);
             if (nextInList.Status != AudioStatus.Corrupt)
-                PlayFile(nextInList, isManualSkip: true);
+                PlayFile(nextInList, isManualSkip, preserveCrossfadeGuard);
         }
 
         private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -2686,9 +2710,10 @@ exit
         private int _consecutiveFailedPlays;
         private const int MaxConsecutiveFailedPlays = 3;
 
-        private void PlayFile(AudioFileInfo file, bool isManualSkip = false)
+        private void PlayFile(AudioFileInfo file, bool isManualSkip = false, bool preserveCrossfadeGuard = false)
         {
-            _crossfadeEarlyTriggered = false;
+            if (!preserveCrossfadeGuard)
+                _crossfadeEarlyTriggered = false;
             _npColorGeneration++;
             try
             {
@@ -2727,40 +2752,7 @@ exit
                     _player.Play(file.FilePath, normalize);
                     _player.Volume = (float)(VolumeSlider.Value / 100.0);
                 }
-                SeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
-                // Also set NP seek slider maximum for Now Playing panel
-                NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
-                NpSeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
-                NpSeekSlider.Value = 0;
-                NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
-                _playerTimer.Start();
-                UpdatePlayerUI();
-                DrawWaveformBackground();
-                if (_visualizerMode) StartVisualizer();
-
-                // Update spectrogram/visualizer title to reflect the now-playing file
-                _currentSpectrogramFile = file;
-                SpectrogramTitle.Text = BuildSpectrogramTitle(file);
-
-                // Update album cover for the playing track
-                UpdateAlbumCoverAsync();
-
-                // Main-window color match
-                LoadMainCoverColors(file.FilePath);
-
-                // Discord Rich Presence
-                _discord.UpdatePresence(file.Artist, file.Title, file.FileName,
-                    _player.TotalDuration, TimeSpan.Zero, false);
-
-                // Last.fm now playing
-                _lastFm.TrackStarted(file.Artist, file.Title, _player.TotalDuration.TotalSeconds);
-
-                // SMTC media session (FluentFlyout / Windows media overlay)
-                _smtc?.UpdateNowPlayingFromTags(file.FilePath);
-                _smtc?.UpdatePlaybackState(true, false);
-
-                // Update Now Playing panel if visible
-                UpdateNowPlayingView();
+                ApplyPlaybackTrackUi(file);
 
                 // Successful playback — reset the failure counter
                 _consecutiveFailedPlays = 0;
@@ -2791,6 +2783,65 @@ exit
                         this);
                 }
             }
+        }
+
+        private void ApplyPlaybackTrackUi(AudioFileInfo file, bool updateQueuePopup = false)
+        {
+            double duration = _player.TotalDuration.TotalSeconds;
+            _cachedPositionSec = _player.CurrentPosition.TotalSeconds;
+            _cachedDurationSec = duration;
+            _cachedPositionTime = DateTime.UtcNow;
+            _isPlayingCached = _player.IsPlaying;
+
+            SeekSlider.Maximum = duration;
+            if (!_isSeeking)
+                SeekSlider.Value = Math.Clamp(_cachedPositionSec, 0, Math.Max(0, duration));
+
+            NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
+            NpSeekSlider.Maximum = duration;
+            NpSeekSlider.Value = Math.Clamp(_cachedPositionSec, 0, Math.Max(0, duration));
+            NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
+
+            _playerTimer.Start();
+            UpdatePlayerUI();
+            DrawWaveformBackground();
+
+            _currentSpectrogramFile = file;
+            SpectrogramTitle.Text = BuildSpectrogramTitle(file);
+
+            ResetVisualizerForTrackChange();
+            UpdateAlbumCoverAsync(file.FilePath, _npColorGeneration);
+            LoadMainCoverColors(file.FilePath);
+
+            _discord.UpdatePresence(file.Artist, file.Title, file.FileName,
+                _player.TotalDuration, _player.CurrentPosition, false);
+            _lastFm.TrackStarted(file.Artist, file.Title, _player.TotalDuration.TotalSeconds);
+            _smtc?.UpdateNowPlayingFromTags(file.FilePath);
+            _smtc?.UpdatePlaybackState(true, false);
+
+            if (_npVisible)
+            {
+                NpSetTrack(file);
+                if (updateQueuePopup)
+                    NpUpdateQueuePopup();
+            }
+
+            UpdatePlayerTimeText();
+        }
+
+        private void ResetVisualizerForTrackChange()
+        {
+            Array.Clear(_vizSmoothed, 0, _vizSmoothed.Length);
+            Array.Clear(_vizBarValues, 0, _vizBarValues.Length);
+            ClearVisualizerCaches();
+            VisualizerCanvas.Children.Clear();
+            NpVisualizerCanvas.Children.Clear();
+            NpUnderCoverVizCanvas.Children.Clear();
+
+            if (_npVisible && _npVisualizerEnabled)
+                NpStartVisualizer();
+            else if (_visualizerMode)
+                StartVisualizer();
         }
 
         private void PlayFile_Click(object sender, RoutedEventArgs e)
@@ -2910,7 +2961,7 @@ exit
                 && remaining > 0.5 && remaining <= crossfadeDuration + 0.1)
             {
                 _crossfadeEarlyTriggered = true;
-                NextTrack_Click(this, new RoutedEventArgs());
+                AdvanceToNextTrack(isManualSkip: false, preserveCrossfadeGuard: true);
             }
         }
 
@@ -3145,37 +3196,10 @@ exit
                     string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
                 if (newFile != null)
                 {
+                    _npColorGeneration++;
                     FileGrid.SelectedItem = newFile;
                     FileGrid.ScrollIntoView(newFile);
-                    _currentSpectrogramFile = newFile;
-                    SpectrogramTitle.Text = BuildSpectrogramTitle(newFile);
-
-                    // Reset seek sliders for new track duration
-                    SeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
-                    NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
-                    NpSeekSlider.Maximum = _player.TotalDuration.TotalSeconds;
-                    NpSeekSlider.Value = 0;
-                    NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
-
-                    UpdatePlayerUI();
-                    DrawWaveformBackground();
-
-                    // Update Now Playing panel if it's open
-                    if (_npVisible)
-                    {
-                        NpSetTrack(newFile);
-                        NpUpdateQueuePopup();
-                    }
-
-                    // Main-window color match for gapless switch
-                    LoadMainCoverColors(newFile.FilePath);
-
-                    // Update integrations
-                    if (_lastFm.IsEnabled)
-                        _lastFm.TrackStarted(newFile.Artist, newFile.Title, _player.TotalDuration.TotalSeconds);
-                    if (_discord.IsEnabled)
-                        _discord.UpdatePresence(newFile.Artist, newFile.Title, newFile.FileName,
-                            _player.TotalDuration, TimeSpan.Zero, false);
+                    ApplyPlaybackTrackUi(newFile, updateQueuePopup: true);
                 }
             });
         }
@@ -3555,33 +3579,43 @@ exit
             }
         }
 
-        private async void UpdateAlbumCoverAsync()
+        private async void UpdateAlbumCoverAsync(string? expectedPath = null, int generation = -1)
         {
             try
             {
-            if (!_showAlbumCover) return;
+                if (!_showAlbumCover) return;
 
-            AudioFileInfo? file = null;
-            if (_player.CurrentFile != null)
-                file = _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
-            if (file == null)
-                file = FileGrid.SelectedItem as AudioFileInfo;
+                AudioFileInfo? file = null;
+                if (!string.IsNullOrEmpty(expectedPath))
+                    file = _files.FirstOrDefault(f => string.Equals(f.FilePath, expectedPath, StringComparison.OrdinalIgnoreCase));
+                if (file == null && _player.CurrentFile != null)
+                    file = _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+                if (file == null)
+                    file = FileGrid.SelectedItem as AudioFileInfo;
 
-            if (file == null || string.IsNullOrEmpty(file.FilePath))
-            {
-                AlbumCoverImage.Source = null;
-                return;
-            }
+                if (file == null || string.IsNullOrEmpty(file.FilePath))
+                {
+                    AlbumCoverImage.Source = null;
+                    return;
+                }
 
-            try
-            {
-                var cover = await Task.Run(() => ExtractAlbumCover(file.FilePath));
-                AlbumCoverImage.Source = cover;
-            }
-            catch
-            {
-                AlbumCoverImage.Source = null;
-            }
+                string filePath = file.FilePath;
+                int coverGeneration = generation >= 0 ? generation : _npColorGeneration;
+
+                try
+                {
+                    var cover = await Task.Run(() => ExtractAlbumCover(filePath));
+                    if (coverGeneration != _npColorGeneration) return;
+                    if (!string.IsNullOrEmpty(_player.CurrentFile) &&
+                        !string.Equals(_player.CurrentFile, filePath, StringComparison.OrdinalIgnoreCase))
+                        return;
+                    AlbumCoverImage.Source = cover;
+                }
+                catch
+                {
+                    if (coverGeneration == _npColorGeneration)
+                        AlbumCoverImage.Source = null;
+                }
             }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[UpdateAlbumCoverAsync] {ex}"); }
         }
@@ -5027,6 +5061,8 @@ exit
                 _isPausedForOcclusion = false;
                 ResumeAnimations();
             }
+            if (_npVisible)
+                NpEnsureLayoutProfileForCurrentWindowState();
             if (_npVisible)
                 NpApplyVizPlacement();
         }
@@ -7153,9 +7189,13 @@ exit
         private void NpSetTrack(AudioFileInfo file)
         {
             // Reset Now Playing seek slider to prevent stale seeks on track change
+            double duration = string.Equals(_player.CurrentFile, file.FilePath, StringComparison.OrdinalIgnoreCase)
+                ? _player.TotalDuration.TotalSeconds
+                : 0;
+            double position = duration > 0 ? Math.Clamp(_player.CurrentPosition.TotalSeconds, 0, duration) : 0;
             NpSeekSlider.ValueChanged -= NpSeekSlider_ValueChanged;
-            NpSeekSlider.Value = 0;
-            NpSeekSlider.Maximum = 0;
+            NpSeekSlider.Maximum = duration;
+            NpSeekSlider.Value = position;
             NpSeekSlider.ValueChanged += NpSeekSlider_ValueChanged;
 
             var displayTitle = file.Title
@@ -8738,13 +8778,17 @@ exit
         private void ClearVisualizerCaches()
         {
             _vizBars = null;
+            _vizBrushes = null;
             _vizMirrorBars = null;
+            _vizMirrorBrushes = null;
             _particles = null;
             _particleElements = null;
+            _particleBrushes = null;
             _circleElements = null;
+            _circleBrushes = null;
             _scopeLine = null;
-           
             _vuBlocks = null;
+            _vuBrushes = null;
         }
 
         // ─── NP Visualizer Style Picker ───
@@ -9298,15 +9342,83 @@ exit
 
         private bool _npLayoutPopupInit;
 
-        private void NpLayoutCustomize_Click(object sender, RoutedEventArgs e)
+        private void NpLoadActiveLayoutProfile(bool fullscreen)
         {
-            // Seed sliders with current values (suppress change events during init)
+            if (fullscreen)
+            {
+                _npCoverSize = ThemeManager.NpFullscreenCoverSize;
+                _npTitleSize = ThemeManager.NpFullscreenTitleSize;
+                _npSubTextSize = ThemeManager.NpFullscreenSubTextSize;
+                _npLyricsSize = ThemeManager.NpFullscreenLyricsSize;
+                _npVizSize = ThemeManager.NpFullscreenVizSize;
+                _npLyricsOffsetX = ThemeManager.NpFullscreenLyricsOffsetX;
+                _npCoverOffsetX = ThemeManager.NpFullscreenCoverOffsetX;
+                _npCoverOffsetY = ThemeManager.NpFullscreenCoverOffsetY;
+                _npTitleOffsetX = ThemeManager.NpFullscreenTitleOffsetX;
+                _npTitleOffsetY = ThemeManager.NpFullscreenTitleOffsetY;
+                _npArtistOffsetX = ThemeManager.NpFullscreenArtistOffsetX;
+                _npArtistOffsetY = ThemeManager.NpFullscreenArtistOffsetY;
+                _npVizOffsetY = ThemeManager.NpFullscreenVizOffsetY;
+                return;
+            }
+
+            _npCoverSize = ThemeManager.NpCoverSize;
+            _npTitleSize = ThemeManager.NpTitleSize;
+            _npSubTextSize = ThemeManager.NpSubTextSize;
+            _npLyricsSize = ThemeManager.NpLyricsSize;
+            _npVizSize = ThemeManager.NpVizSize;
+            _npLyricsOffsetX = ThemeManager.NpLyricsOffsetX;
+            _npCoverOffsetX = ThemeManager.NpCoverOffsetX;
+            _npCoverOffsetY = ThemeManager.NpCoverOffsetY;
+            _npTitleOffsetX = ThemeManager.NpTitleOffsetX;
+            _npTitleOffsetY = ThemeManager.NpTitleOffsetY;
+            _npArtistOffsetX = ThemeManager.NpArtistOffsetX;
+            _npArtistOffsetY = ThemeManager.NpArtistOffsetY;
+            _npVizOffsetY = ThemeManager.NpVizOffsetY;
+        }
+
+        private void NpSaveActiveLayoutProfile(bool fullscreen)
+        {
+            if (fullscreen)
+            {
+                ThemeManager.NpFullscreenCoverSize = _npCoverSize;
+                ThemeManager.NpFullscreenTitleSize = _npTitleSize;
+                ThemeManager.NpFullscreenSubTextSize = _npSubTextSize;
+                ThemeManager.NpFullscreenLyricsSize = _npLyricsSize;
+                ThemeManager.NpFullscreenVizSize = _npVizSize;
+                ThemeManager.NpFullscreenLyricsOffsetX = _npLyricsOffsetX;
+                ThemeManager.NpFullscreenCoverOffsetX = _npCoverOffsetX;
+                ThemeManager.NpFullscreenCoverOffsetY = _npCoverOffsetY;
+                ThemeManager.NpFullscreenTitleOffsetX = _npTitleOffsetX;
+                ThemeManager.NpFullscreenTitleOffsetY = _npTitleOffsetY;
+                ThemeManager.NpFullscreenArtistOffsetX = _npArtistOffsetX;
+                ThemeManager.NpFullscreenArtistOffsetY = _npArtistOffsetY;
+                ThemeManager.NpFullscreenVizOffsetY = _npVizOffsetY;
+                return;
+            }
+
+            ThemeManager.NpCoverSize = _npCoverSize;
+            ThemeManager.NpTitleSize = _npTitleSize;
+            ThemeManager.NpSubTextSize = _npSubTextSize;
+            ThemeManager.NpLyricsSize = _npLyricsSize;
+            ThemeManager.NpVizSize = _npVizSize;
+            ThemeManager.NpLyricsOffsetX = _npLyricsOffsetX;
+            ThemeManager.NpCoverOffsetX = _npCoverOffsetX;
+            ThemeManager.NpCoverOffsetY = _npCoverOffsetY;
+            ThemeManager.NpTitleOffsetX = _npTitleOffsetX;
+            ThemeManager.NpTitleOffsetY = _npTitleOffsetY;
+            ThemeManager.NpArtistOffsetX = _npArtistOffsetX;
+            ThemeManager.NpArtistOffsetY = _npArtistOffsetY;
+            ThemeManager.NpVizOffsetY = _npVizOffsetY;
+        }
+
+        private void NpSeedLayoutSliders(bool fullscreen)
+        {
             _npLayoutPopupInit = true;
-            bool fs = WindowState == WindowState.Maximized;
-            NpLayoutCoverSlider.Value = _npCoverSize > 0 ? _npCoverSize : (fs ? 420 : 300);
-            NpLayoutTitleSlider.Value = _npTitleSize > 0 ? _npTitleSize : (fs ? 32 : 24);
-            NpLayoutSubSlider.Value = _npSubTextSize > 0 ? _npSubTextSize : (fs ? 12 : 10);
-            NpLayoutLyricsSlider.Value = _npLyricsSize > 0 ? _npLyricsSize : (fs ? 22 : 18);
+            NpLayoutCoverSlider.Value = _npCoverSize > 0 ? _npCoverSize : (fullscreen ? 420 : 300);
+            NpLayoutTitleSlider.Value = _npTitleSize > 0 ? _npTitleSize : (fullscreen ? 32 : 24);
+            NpLayoutSubSlider.Value = _npSubTextSize > 0 ? _npSubTextSize : (fullscreen ? 12 : 10);
+            NpLayoutLyricsSlider.Value = _npLyricsSize > 0 ? _npLyricsSize : (fullscreen ? 22 : 18);
             NpLayoutLyricsPosSlider.Value = _npLyricsOffsetX;
             NpLayoutVizSlider.Value = _npVizSize > 0 ? _npVizSize : (int)_npVizBarHeight;
             NpLayoutCoverXSlider.Value = _npCoverOffsetX;
@@ -9317,6 +9429,37 @@ exit
             NpLayoutArtistYSlider.Value = _npArtistOffsetY;
             NpLayoutVizYSlider.Value = _npVizOffsetY;
             _npLayoutPopupInit = false;
+        }
+
+        private bool NpEnsureLayoutProfileForCurrentWindowState()
+        {
+            if (WindowState == WindowState.Minimized)
+                return false;
+
+            bool fullscreen = WindowState == WindowState.Maximized;
+            if (!_npPrefsLoaded)
+            {
+                _npLayoutProfileIsFullscreen = fullscreen;
+                return false;
+            }
+
+            if (_npLayoutProfileIsFullscreen == fullscreen)
+                return false;
+
+            NpSaveActiveLayoutProfile(_npLayoutProfileIsFullscreen);
+            _npLayoutProfileIsFullscreen = fullscreen;
+            NpLoadActiveLayoutProfile(fullscreen);
+            if (NpLayoutPopup?.IsOpen == true)
+                NpSeedLayoutSliders(fullscreen);
+            ThemeManager.SavePlayOptions();
+            return true;
+        }
+
+        private void NpLayoutCustomize_Click(object sender, RoutedEventArgs e)
+        {
+            NpEnsureLayoutProfileForCurrentWindowState();
+            bool fs = WindowState == WindowState.Maximized;
+            NpSeedLayoutSliders(fs);
             NpLayoutPopup.IsOpen = true;
             NpLayoutPopup.Closed -= NpLayoutPopup_Closed;
             NpLayoutPopup.Closed += NpLayoutPopup_Closed;
@@ -9330,6 +9473,7 @@ exit
         private void NpLayoutSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_npLayoutPopupInit || !IsLoaded) return;
+            NpEnsureLayoutProfileForCurrentWindowState();
 
             _npCoverSize = (int)NpLayoutCoverSlider.Value;
             _npTitleSize = (int)NpLayoutTitleSlider.Value;
@@ -9351,6 +9495,7 @@ exit
 
         private void NpLayoutReset_Click(object sender, RoutedEventArgs e)
         {
+            NpEnsureLayoutProfileForCurrentWindowState();
             _npCoverSize = 0;
             _npTitleSize = 0;
             _npSubTextSize = 0;
@@ -10129,23 +10274,15 @@ exit
             _npVisualizerStyle = ThemeManager.NpVisualizerStyle;
             _npVizPlacement = ThemeManager.NpVizPlacement;
             _npSubCoverShowArtist = ThemeManager.NpSubCoverShowArtist;
-            _npCoverSize = ThemeManager.NpCoverSize;
-            _npTitleSize = ThemeManager.NpTitleSize;
-            _npSubTextSize = ThemeManager.NpSubTextSize;
-            _npLyricsSize = ThemeManager.NpLyricsSize;
-            _npVizSize = ThemeManager.NpVizSize;
-            _npLyricsOffsetX = ThemeManager.NpLyricsOffsetX;
-            _npCoverOffsetX = ThemeManager.NpCoverOffsetX;
-            _npCoverOffsetY = ThemeManager.NpCoverOffsetY;
-            _npTitleOffsetX = ThemeManager.NpTitleOffsetX;
-            _npTitleOffsetY = ThemeManager.NpTitleOffsetY;
-            _npArtistOffsetX = ThemeManager.NpArtistOffsetX;
-            _npArtistOffsetY = ThemeManager.NpArtistOffsetY;
-            _npVizOffsetY = ThemeManager.NpVizOffsetY;
+            _npLayoutProfileIsFullscreen = WindowState == WindowState.Maximized;
+            NpLoadActiveLayoutProfile(_npLayoutProfileIsFullscreen);
         }
 
         private void NpSavePreferences()
         {
+            if (!_npPrefsLoaded)
+                NpLoadPreferences();
+
             ThemeManager.NpVisualizerEnabled = _npVisualizerEnabled;
             ThemeManager.NpColorMatchEnabled = _npColorMatchEnabled;
             ThemeManager.NpLyricsHidden = _npLyricsHidden;
@@ -10154,19 +10291,8 @@ exit
             ThemeManager.NpVisualizerStyle = _npVisualizerStyle;
             ThemeManager.NpVizPlacement = _npVizPlacement;
             ThemeManager.NpSubCoverShowArtist = _npSubCoverShowArtist;
-            ThemeManager.NpCoverSize = _npCoverSize;
-            ThemeManager.NpTitleSize = _npTitleSize;
-            ThemeManager.NpSubTextSize = _npSubTextSize;
-            ThemeManager.NpLyricsSize = _npLyricsSize;
-            ThemeManager.NpVizSize = _npVizSize;
-            ThemeManager.NpLyricsOffsetX = _npLyricsOffsetX;
-            ThemeManager.NpCoverOffsetX = _npCoverOffsetX;
-            ThemeManager.NpCoverOffsetY = _npCoverOffsetY;
-            ThemeManager.NpTitleOffsetX = _npTitleOffsetX;
-            ThemeManager.NpTitleOffsetY = _npTitleOffsetY;
-            ThemeManager.NpArtistOffsetX = _npArtistOffsetX;
-            ThemeManager.NpArtistOffsetY = _npArtistOffsetY;
-            ThemeManager.NpVizOffsetY = _npVizOffsetY;
+            NpEnsureLayoutProfileForCurrentWindowState();
+            NpSaveActiveLayoutProfile(_npLayoutProfileIsFullscreen);
             ThemeManager.SavePlayOptions();
         }
 
