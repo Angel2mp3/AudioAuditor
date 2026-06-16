@@ -20,9 +20,6 @@
   <a href="https://ko-fi.com/angelsoftware">
     <img src="https://img.shields.io/badge/support-Ko--fi-f26b2e?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
-  <a href="https://audioauditor.org">
-    <img src="https://img.shields.io/badge/website-audioauditor.org-4f50c6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"/>
-  </a>
   <a href="https://fmhy.net/audio#spectrum-analyzers">
     <img src="https://img.shields.io/badge/featured%20on-FMHY-b051d4?style=for-the-badge" alt="Featured on FMHY"/>
   </a>
