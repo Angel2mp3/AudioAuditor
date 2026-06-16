@@ -6,6 +6,7 @@
 bin/
 obj/
 publish/
+cloudflare-pages/
 out/
 build/
 temp/
@@ -19,12 +20,25 @@ x64/
 x86/
 artifacts/
 archive/
+BenchmarkDotNet.Artifacts/
 *.exe
 *.pdb
+*.binlog
 *_wpftmp.csproj
 Experimental-Builds/
 experimental-builds/
 icon-test/
+
+
+/*.png
+/*.svg
+/*.jpg
+/*.jpeg
+/*.gif
+/*.bmp
+/*.webp
+!/Logo.png
+!/Logo.ico
 
 # NuGet
 packages/
@@ -54,6 +68,8 @@ Proxy/
 *.rsuser
 launchSettings.json
 Properties/launchSettings.json
+AudioAuditor.Windows.Tests/
+AudioAuditor.Core.Tests/
 
 # JetBrains Rider
 .idea/
@@ -81,7 +97,9 @@ session.dat
 *.secret
 
 # Dev / temp / personal files
+scripts/
 docs/
+dev-notes/
 to-do.txt
 .recovery/
 website-broken-backup/
@@ -90,8 +108,13 @@ website-broken-backup/
 *.lnk
 
 # Tooling
+.vercel/
+**/.vercel/
 .understand-anything/
 .claude/
+.codex/
+.agents/
+.omc/
 AGENTS.md
 angents.md
 .playwright-mcp/
@@ -99,17 +122,24 @@ angents.md
 
 # Cloudflare worker caches
 contact-worker/.wrangler/
+contact-worker
 
 # Temp plan files
 plan_temp.md
 
-# ═══ Cross-platform port (Avalonia NOT ready for release) ═══
+# ═══ Cross-platform port ═══
 AudioAuditor.Avalonia/
 AVALONIA_PORT_PLAN.md
 
-# Unreleased web app (not yet public)
+# ═══ Web app  ═══
+website/
+website/
 website/app/
+website/DEPLOYMENT.md
+
+# Generated/local web files 
 website/app-dist/
+website/cloudflare-pages/
 
 # SH Labs secrets (any location)
 **/SHLabsSecrets.cs
@@ -120,9 +150,16 @@ SECURITY_INTERNALS.md
 # Node / Wrangler
 node_modules/
 .wrangler/
-website/
-Website/
-to-do.txt
+website/app/node_modules/
+website/app/proxy/.env
+website/app/proxy/.env.*
+website/app/proxy/*.local
+website/app/proxy/*.log
+website/.wrangler/
+website/.env
+website/.env.*
+website/.dev.vars
+website/*.local
 todo.txt
 TODO.txt
 notes.txt
@@ -130,6 +167,8 @@ notes.txt
 *.bak
 *.swp
 *.log
+*.lcov
+*.tsbuildinfo
 *.orig
 *.cache
 ~$*
@@ -143,6 +182,12 @@ Properties/PublishProfiles/
 *.msm
 *.msp
 *.cab
+*.iss~
+final-releases/Setup/
+final-releases/Portable/
+final-releases/
+installer/
+winget/
 
 # Crash dumps
 *.dmp
@@ -151,5 +196,25 @@ crashdumps/
 # Test results
 TestResults/
 *.trx
+coverage/
+**/coverage/
+.coverage/
+**/.coverage/
+*.coverage
+*.coveragexml
+*.opencover.xml
+coverage.cobertura.xml
+lcov.info
+junit*.xml
+playwright-report/
+test-results/
+.nyc_output/
+
+# Smoke and local verification output
+AudioAuditorSmoke*/
+smoke-output/
+smoke-results/
 contact-worker/wrangler.toml
 contact-worker/worker.js
+.hermes/
+.superpowers/

@@ -36,6 +36,7 @@ namespace AudioQualityChecker
             _renderDebounce.Tick += (_, _) => { _renderDebounce.Stop(); RenderWaveforms(); };
 
             Loaded += async (_, _) => await LoadAndRender();
+            Closed += (_, _) => _renderDebounce.Stop();
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

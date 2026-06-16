@@ -11,4 +11,11 @@ public static class AudioAuditorSettings
     /// Mirrors ThemeManager.OfflineModeEnabled.
     /// </summary>
     public static bool OfflineMode { get; set; } = false;
+
+    /// <summary>
+    /// When true, online lyric providers that return obviously censored results
+    /// (e.g. lots of asterisks/hashes covering profanity) are skipped in favor
+    /// of the next provider. Mirrors ThemeManager.LyricsAvoidCensored.
+    /// </summary>
+    public static bool AvoidCensoredLyrics { get; set; } = false;
 }

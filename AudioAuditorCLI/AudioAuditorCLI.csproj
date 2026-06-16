@@ -7,15 +7,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditorCLI</AssemblyName>
-    <Version>1.7.0</Version>
+    <Version>1.8.0</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <DefineConstants>CROSS_PLATFORM</DefineConstants>
+    <RuntimeIdentifiers>win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.NativeAssets.macOS" Version="2.88.9" />
   </ItemGroup>

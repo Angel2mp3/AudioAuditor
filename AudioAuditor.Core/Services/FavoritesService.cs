@@ -9,8 +9,7 @@ namespace AudioQualityChecker.Services
 {
     public static class FavoritesService
     {
-        private static readonly string DataDir =
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AudioAuditor");
+        private static readonly string DataDir = AppPaths.AppDataDirectory;
         private static readonly string FavFile = Path.Combine(DataDir, "favorites.json");
 
         // path → order (1-based; 0 means not in set)

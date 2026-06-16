@@ -115,31 +115,45 @@ namespace AudioQualityChecker.Services
         {
             if (_smtc == null) return;
 
-            string? artist = null;
-            string? title = null;
-            string? coverPath = null;
-
-            try
+            // Tag parsing + extracting/writing the (often multi-MB) embedded cover art is real
+            // disk I/O. It used to run on the UI thread at the exact moment of a track transition,
+            // contributing to the visible stutter. Do that heavy work on a background thread, then
+            // marshal the actual SMTC update back to the UI thread (the control is tied to the app
+            // window; the StorageFile lookup of the already-written temp file + updater.Update()
+            // are light).
+            _ = Task.Run(() =>
             {
-                using var tagFile = TagLib.File.Create(filePath);
-                artist = tagFile.Tag.FirstPerformer;
-                title = tagFile.Tag.Title;
+                string? artist = null;
+                string? title = null;
+                string? coverPath = null;
 
-                // Extract embedded album art to temp file for SMTC
-                if (tagFile.Tag.Pictures?.Length > 0)
+                try
                 {
-                    var pic = tagFile.Tag.Pictures[0];
-                    // Per-session GUID filename to avoid predictable temp file names
-                    coverPath = Path.Combine(Path.GetTempPath(), $"audioauditor_smtc_cover_{_sessionGuid}.jpg");
-                    File.WriteAllBytes(coverPath, pic.Data.Data);
+                    using var tagFile = TagLib.File.Create(filePath);
+                    artist = tagFile.Tag.FirstPerformer;
+                    title = tagFile.Tag.Title;
+
+                    // Extract embedded album art to temp file for SMTC
+                    if (tagFile.Tag.Pictures?.Length > 0)
+                    {
+                        var pic = tagFile.Tag.Pictures[0];
+                        // Per-session GUID filename to avoid predictable temp file names
+                        coverPath = Path.Combine(Path.GetTempPath(), $"audioauditor_smtc_cover_{_sessionGuid}.jpg");
+                        File.WriteAllBytes(coverPath, pic.Data.Data);
+                    }
                 }
-            }
-            catch { }
+                catch { }
 
-            if (string.IsNullOrWhiteSpace(title))
-                title = Path.GetFileNameWithoutExtension(filePath);
+                if (string.IsNullOrWhiteSpace(title))
+                    title = Path.GetFileNameWithoutExtension(filePath);
 
-            _ = UpdateNowPlaying(artist, title, coverPath);
+                void PushUpdate() { try { _ = UpdateNowPlaying(artist, title, coverPath); } catch { } }
+                var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                if (dispatcher != null)
+                    dispatcher.InvokeAsync(PushUpdate);
+                else
+                    PushUpdate();
+            });
         }
 
         public void Dispose()

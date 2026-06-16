@@ -8,6 +8,10 @@ public partial class WelcomeDialog : Window
 {
     public bool SelectedOffline { get; private set; } = false;
 
+    // Privacy / opt-in choices
+    public bool EnableStatsCollection { get; private set; } = true;
+    public bool EnableCrashLogging { get; private set; } = true;
+
     // Feature choices
     public bool EnableSilenceDetection { get; private set; } = false;
     public bool EnableFakeStereoDetection { get; private set; } = true;
@@ -68,6 +72,10 @@ public partial class WelcomeDialog : Window
 
     private void BtnGetStarted_Click(object sender, RoutedEventArgs e)
     {
+        // Capture privacy / opt-in choices
+        EnableStatsCollection = ChkStatsCollection.IsChecked == true;
+        EnableCrashLogging = ChkCrashLogging.IsChecked == true;
+
         // Capture feature choices
         EnableSilenceDetection = ChkSilence.IsChecked == true;
         EnableFakeStereoDetection = ChkFakeStereo.IsChecked == true;
