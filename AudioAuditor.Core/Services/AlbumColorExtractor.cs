@@ -40,14 +40,20 @@ public static class AlbumColorExtractor
     {
         if (stride == 0) stride = width * 4;
 
-        // Sample pixels (downsample to ~4000 for better coverage)
-        var samples = SamplePixels(pixelData, width, height, stride, maxSamples: 4000);
+        // Sample pixels (downsample to ~4000 for better coverage). Keep a raw
+        // sample for neutral/noise detection before filtering display colors.
+        var rawSamples = SamplePixels(pixelData, width, height, stride, maxSamples: 4000, includeNearNeutral: true);
+        var paletteStats = AnalyzePalette(rawSamples);
+
+        if (paletteStats.IsMostlyNeutralWithoutAccent)
+            return CreateNeutralPalette(paletteStats);
+
+        var samples = SamplePixels(pixelData, width, height, stride, maxSamples: 4000, includeNearNeutral: false);
+        if (samples.Count < 50 && rawSamples.Count >= 3)
+            samples = rawSamples;
 
         if (samples.Count < 3)
-        {
-            var fallback = new Color(80, 80, 80);
-            return new DominantColors(fallback, fallback, fallback, new Color(20, 20, 20), new Color(240, 240, 240));
-        }
+            return CreateNeutralFallbackPalette();
 
         // K-means clustering with k=8 for finer color separation
         var clusters = KMeans(samples, 8, maxIterations: 30);
@@ -73,6 +79,18 @@ public static class AlbumColorExtractor
         // Sort by cluster size (most frequent first)
         clusters.Sort((a, b) => b.Count.CompareTo(a.Count));
 
+        // Honor predominantly white/black covers. If the single most common color is a
+        // strong neutral that covers most of the art, USE that neutral (white or black)
+        // directly instead of promoting a faint tinted minority cluster — that promotion
+        // is what produced the jarring pink/orange accent on mono covers.
+        {
+            int totalCount = Math.Max(1, clusters.Sum(c => c.Count));
+            var top = clusters[0];
+            double topShare = (double)top.Count / totalCount;
+            if (IsStrongNeutral(top.Center) && topShare >= 0.45)
+                return SanitizeDominantColors(BuildMonochromePalette(top.Center.Luminance));
+        }
+
         // Score each cluster: prefer vibrant (saturated) colors over grey/muddy ones
         // while still respecting frequency. This ensures the UI looks colorful.
         var scored = clusters
@@ -85,6 +103,12 @@ public static class AlbumColorExtractor
             ?? scored[Math.Min(1, scored.Count - 1)].Cluster.Center);
         var tertiary = PickDistinct(scored.Select(s => s.Cluster).ToList(), primary, minDistance: 40, exclude: secondary)
             ?? scored[Math.Min(2, scored.Count - 1)].Cluster.Center;
+
+        // Detect near-white OR near-black images. Instead of inventing a tint
+        // (warm white → pink, cool white → blue) or forcing grey, USE the actual
+        // white/black the cover is made of, graded for visualizer contrast.
+        if (IsStrongNeutral(primary) && (IsStrongNeutral(secondary) || scored.Count <= 2))
+            return SanitizeDominantColors(BuildMonochromePalette(primary.Luminance));
 
         // If primary is too grey (low saturation), try to swap with a more vibrant option
         if (GetSaturation(primary) < 0.20 && scored.Count > 1 && GetSaturation(scored[1].Cluster.Center) > 0.20)
@@ -118,7 +142,7 @@ public static class AlbumColorExtractor
             ? new Color(240, 240, 240)
             : new Color(30, 30, 30);
 
-        return new DominantColors(primary, secondary, tertiary, bg, text);
+        return SanitizeDominantColors(new DominantColors(primary, secondary, tertiary, bg, text));
     }
 
     /// <summary>
@@ -128,19 +152,42 @@ public static class AlbumColorExtractor
     /// </summary>
     public static DominantColors ExtractFromImageBytes(byte[] imageBytes)
     {
-        // This is a fallback. Each UI platform should decode to BGRA and call Extract().
-        // Return default appealing colors for now.  
-        // Platform-specific code will call the main Extract() method.
-        var fallback = new Color(90, 90, 140);
-        return new DominantColors(fallback, new Color(140, 100, 90), new Color(60, 120, 100),
-            new Color(20, 20, 30), new Color(240, 240, 240));
+        // This fallback is used only when platform-specific image decoding is unavailable.
+        // Keep it neutral so missing/unsupported art never invents pink, blue, or purple accents.
+        return CreateNeutralFallbackPalette();
     }
 
-    private static List<(byte R, byte G, byte B)> SamplePixels(byte[] data, int w, int h, int stride, int maxSamples)
+    public static DominantColors SanitizeDominantColors(DominantColors colors)
+    {
+        var stats = AnalyzePalette(new List<(byte R, byte G, byte B)>
+        {
+            (colors.Primary.R, colors.Primary.G, colors.Primary.B),
+            (colors.Secondary.R, colors.Secondary.G, colors.Secondary.B),
+            (colors.Tertiary.R, colors.Tertiary.G, colors.Tertiary.B)
+        });
+
+        if (stats.IsMostlyNeutralWithoutAccent)
+            return CreateNeutralPalette(stats);
+
+        bool primaryUsable = IsUsableAccent(colors.Primary);
+        bool secondaryUsable = IsUsableAccent(colors.Secondary);
+        bool tertiaryUsable = IsUsableAccent(colors.Tertiary);
+        if (!primaryUsable && !secondaryUsable && !tertiaryUsable)
+            return CreateNeutralPalette(stats);
+
+        return colors;
+    }
+
+    private static List<(byte R, byte G, byte B)> SamplePixels(
+        byte[] data,
+        int w,
+        int h,
+        int stride,
+        int maxSamples,
+        bool includeNearNeutral)
     {
         var result = new List<(byte, byte, byte)>(maxSamples);
         int step = Math.Max(1, (int)Math.Sqrt((double)w * h / maxSamples));
-        var rng = new Random(42); // deterministic
 
         for (int y = 0; y < h; y += step)
         {
@@ -154,32 +201,113 @@ public static class AlbumColorExtractor
                 byte r = data[idx + 2];
                 byte a = data[idx + 3];
 
-                // Skip fully transparent or near-black/near-white (uninteresting)
+                // Skip fully transparent pixels. Near-neutral colors are only
+                // filtered for clustering, not for neutral/noise detection.
                 if (a < 128) continue;
-                int brightness = (r + g + b) / 3;
-                if (brightness < 25 || brightness > 230) continue;
+                if (!includeNearNeutral)
+                {
+                    int brightness = (r + g + b) / 3;
+                    double saturation = GetSaturation(new Color(r, g, b));
+                    if ((brightness < 25 || brightness > 230) && saturation < 0.22)
+                        continue;
+                }
 
                 result.Add((r, g, b));
             }
         }
 
-        // If we filtered too aggressively, sample again without brightness filter
-        if (result.Count < 50)
-        {
-            result.Clear();
-            for (int y = 0; y < h; y += step)
-            {
-                for (int x = 0; x < w; x += step)
-                {
-                    int idx = y * stride + x * 4;
-                    if (idx + 3 >= data.Length) continue;
-                    result.Add((data[idx + 2], data[idx + 1], data[idx]));
-                }
-            }
-        }
-
         return result;
     }
+
+    private readonly record struct PaletteStats(
+        int Count,
+        double AverageLuminance,
+        double NeutralRatio,
+        double MeaningfulAccentRatio)
+    {
+        public bool IsMostlyNeutralWithoutAccent =>
+            Count > 0 && NeutralRatio >= 0.75 && MeaningfulAccentRatio < 0.05;
+    }
+
+    private static PaletteStats AnalyzePalette(List<(byte R, byte G, byte B)> samples)
+    {
+        if (samples.Count == 0)
+            return new PaletteStats(0, 0, 0, 0);
+
+        double totalLum = 0;
+        int neutral = 0;
+        int meaningfulAccent = 0;
+
+        foreach (var (r, g, b) in samples)
+        {
+            var color = new Color(r, g, b);
+            double saturation = GetSaturation(color);
+            double luminance = color.Luminance;
+            totalLum += luminance;
+
+            if (saturation < 0.18 || luminance < 28 || luminance > 232)
+                neutral++;
+
+            if (saturation >= 0.24 && luminance >= 36 && luminance <= 224)
+                meaningfulAccent++;
+        }
+
+        return new PaletteStats(
+            samples.Count,
+            totalLum / samples.Count,
+            (double)neutral / samples.Count,
+            (double)meaningfulAccent / samples.Count);
+    }
+
+    private static DominantColors CreateNeutralPalette(PaletteStats stats)
+        => BuildMonochromePalette(stats.AverageLuminance);
+
+    /// <summary>
+    /// True when a color is essentially white or black (very low saturation and
+    /// luminance pinned to either extreme). These covers should USE white/black,
+    /// not a manufactured tint.
+    /// </summary>
+    private static bool IsStrongNeutral(Color c)
+    {
+        double sat = GetSaturation(c);
+        double lum = c.Luminance;
+        return sat < 0.20 && (lum >= 195 || lum <= 65);
+    }
+
+    /// <summary>
+    /// Builds a palette anchored on the cover's actual white/black instead of a
+    /// fabricated accent. Colors are graded across the luminance range so the
+    /// visualizer still has visible internal contrast.
+    /// </summary>
+    private static DominantColors BuildMonochromePalette(double luminance)
+    {
+        if (luminance >= 200) // white / very bright cover → use whites
+            return new DominantColors(
+                new Color(236, 236, 236),
+                new Color(188, 188, 188),
+                new Color(136, 136, 136),
+                new Color(18, 18, 18),
+                new Color(240, 240, 240));
+
+        if (luminance <= 60) // black / very dark cover → use near-black, graded up
+            return new DominantColors(
+                new Color(34, 34, 34),
+                new Color(108, 108, 108),
+                new Color(178, 178, 178),
+                new Color(10, 10, 10),
+                new Color(240, 240, 240));
+
+        // genuine mid-grey cover
+        return new DominantColors(
+            new Color(128, 128, 128),
+            new Color(166, 166, 166),
+            new Color(202, 202, 202),
+            new Color(22, 22, 22),
+            new Color(240, 240, 240));
+    }
+
+    private static DominantColors CreateNeutralFallbackPalette() =>
+        CreateNeutralPalette(new PaletteStats(1, 128, 1, 0));
 
     private class Cluster
     {
@@ -331,6 +459,13 @@ public static class AlbumColorExtractor
         double satPenalty = saturation < 0.1 ? 0.3 : (saturation < 0.2 ? 0.6 : 1.0);
         // Blend frequency with vibrancy: 30% frequency, 70% saturation
         return (c.Count * 0.3) + (saturation * c.Count * 0.7) * brightPenalty * satPenalty;
+    }
+
+    private static bool IsUsableAccent(Color color)
+    {
+        double saturation = GetSaturation(color);
+        double luminance = color.Luminance;
+        return saturation >= 0.18 && luminance >= 32 && luminance <= 226;
     }
 
     /// <summary>

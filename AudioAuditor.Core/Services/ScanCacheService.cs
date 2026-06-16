@@ -5,14 +5,14 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AudioQualityChecker.Abstractions;
 using AudioQualityChecker.Models;
 
 namespace AudioQualityChecker.Services
 {
     public static class ScanCacheService
     {
-        private static readonly string CacheDir =
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AudioAuditor");
+        private static readonly string CacheDir = AppPaths.AppDataDirectory;
         private static readonly string CacheFile = Path.Combine(CacheDir, "scan_cache.json");
 
         private static ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
@@ -52,6 +52,18 @@ namespace AudioQualityChecker.Services
 
         public static bool TryGet(string filePath, long fileSizeBytes, DateTime lastWriteUtc, out AudioFileInfo? result)
         {
+            return TryGet(filePath, fileSizeBytes, lastWriteUtc, settingsFingerprint: null, out result);
+        }
+
+        public static bool TryGet(string filePath, long fileSizeBytes, DateTime lastWriteUtc, IAnalysisSettings settings, out AudioFileInfo? result)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+            var settingsFingerprint = AnalysisSettingsSnapshot.From(settings).CacheFingerprint;
+            return TryGet(filePath, fileSizeBytes, lastWriteUtc, settingsFingerprint, out result);
+        }
+
+        private static bool TryGet(string filePath, long fileSizeBytes, DateTime lastWriteUtc, string? settingsFingerprint, out AudioFileInfo? result)
+        {
             result = null;
             if (!_cache.TryGetValue(filePath, out var entry)) return false;
             if (entry.FileSizeBytes != fileSizeBytes ||
@@ -61,18 +73,35 @@ namespace AudioQualityChecker.Services
                 _dirty = true;
                 return false;
             }
+            if (!string.IsNullOrEmpty(settingsFingerprint) &&
+                !string.Equals(entry.SettingsFingerprint, settingsFingerprint, StringComparison.Ordinal))
+            {
+                return false;
+            }
             result = entry.ToAudioFileInfo();
             return true;
         }
 
         public static void Set(AudioFileInfo info)
         {
+            Set(info, settingsFingerprint: null);
+        }
+
+        public static void Set(AudioFileInfo info, IAnalysisSettings settings)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+            var settingsFingerprint = AnalysisSettingsSnapshot.From(settings).CacheFingerprint;
+            Set(info, settingsFingerprint);
+        }
+
+        private static void Set(AudioFileInfo info, string? settingsFingerprint)
+        {
             if (string.IsNullOrEmpty(info.FilePath)) return;
             try
             {
                 var fi = new FileInfo(info.FilePath);
                 if (!fi.Exists) return;
-                _cache[info.FilePath] = CacheEntry.FromAudioFileInfo(info, fi.Length, fi.LastWriteTimeUtc);
+                _cache[info.FilePath] = CacheEntry.FromAudioFileInfo(info, fi.Length, fi.LastWriteTimeUtc, settingsFingerprint);
                 _dirty = true;
             }
             catch { }
@@ -113,6 +142,7 @@ namespace AudioQualityChecker.Services
             public string FilePath { get; set; } = "";
             public long FileSizeBytes { get; set; }
             public DateTime LastWriteUtc { get; set; }
+            public string? SettingsFingerprint { get; set; }
 
             // Core analysis results
             public int Status { get; set; }
@@ -271,13 +301,14 @@ namespace AudioQualityChecker.Services
                 };
             }
 
-            public static CacheEntry FromAudioFileInfo(AudioFileInfo info, long sizeBytes, DateTime lastWriteUtc)
+            public static CacheEntry FromAudioFileInfo(AudioFileInfo info, long sizeBytes, DateTime lastWriteUtc, string? settingsFingerprint = null)
             {
                 return new CacheEntry
                 {
                     FilePath = info.FilePath,
                     FileSizeBytes = sizeBytes,
                     LastWriteUtc = lastWriteUtc,
+                    SettingsFingerprint = settingsFingerprint,
                     Status = (int)info.Status,
                     Artist = info.Artist,
                     Title = info.Title,

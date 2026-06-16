@@ -5,7 +5,7 @@
         ResizeMode="NoResize"
         Height="740" Width="540"
         WindowStartupLocation="CenterOwner"
-        Background="{DynamicResource WindowBg}"
+        Background="Transparent"
         Foreground="{DynamicResource TextPrimary}"
         AllowsTransparency="True">
 
@@ -53,8 +53,8 @@
                             <Popup IsOpen="{TemplateBinding IsDropDownOpen}"
                                    Placement="Bottom" AllowsTransparency="True"
                                    Focusable="False" PopupAnimation="Slide">
-                                <Border Background="{DynamicResource PanelBg}"
-                                        BorderBrush="{DynamicResource BorderColor}"
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
                                         BorderThickness="1" CornerRadius="3"
                                         MinWidth="{TemplateBinding ActualWidth}"
                                         MaxHeight="300" Margin="0,2,0,0">
@@ -399,8 +399,10 @@
         </Style>
     </Window.Resources>
 
-    <Border Background="{DynamicResource PanelBg}"
-            BorderBrush="{DynamicResource BorderColor}" BorderThickness="1" CornerRadius="6">
+    <Border Background="{DynamicResource GlassFloatingBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1" CornerRadius="8"
+            SnapsToDevicePixels="True"
+            MouseLeftButtonDown="Window_MouseDown">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -408,8 +410,8 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <!-- Header (drag area + close button) -->
-            <Grid Grid.Row="0" Margin="20,12,20,4" MouseLeftButtonDown="Header_MouseDown">
+            <!-- Header (drag handled window-wide via Window_MouseDown) + close button -->
+            <Grid Grid.Row="0" Margin="20,12,20,4">
                 <TextBlock Text="Settings"
                            FontSize="18" FontWeight="Bold" FontFamily="Segoe UI"
                            Foreground="{DynamicResource TextPrimary}"
@@ -458,6 +460,10 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="8"/>
                                     <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="8"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="8"/>
+                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Grid.Row="0" Grid.Column="0" Text="Color Theme:"
@@ -472,12 +478,448 @@
                                 <ComboBox Grid.Row="2" Grid.Column="1" x:Name="PlaybarCombo" FontSize="13"
                                           SelectionChanged="PlaybarCombo_SelectionChanged"/>
 
-                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Visualizer Style:"
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Main Bar Animation:"
                                            FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextSecondary}"/>
-                                <ComboBox Grid.Row="4" Grid.Column="1" x:Name="VisualizerThemeCombo" FontSize="13"
+                                <ComboBox Grid.Row="4" Grid.Column="1" x:Name="MainPlaybarAnimationCombo" FontSize="13"
+                                          SelectionChanged="MainPlaybarAnimationCombo_SelectionChanged"/>
+
+                                <TextBlock Grid.Row="6" Grid.Column="0" Text="NP Bar Animation:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Row="6" Grid.Column="1" x:Name="NpPlaybarAnimationCombo" FontSize="13"
+                                          SelectionChanged="NpPlaybarAnimationCombo_SelectionChanged"/>
+
+                                <TextBlock Grid.Row="8" Grid.Column="0" Text="Visualizer Style:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Row="8" Grid.Column="1" x:Name="VisualizerThemeCombo" FontSize="13"
                                           SelectionChanged="VisualizerThemeCombo_SelectionChanged"/>
                             </Grid>
+
+                            <CheckBox x:Name="ChkReduceMotion"
+                                      Content="Reduce motion" FontSize="13"
+                                      Margin="0,14,0,0"
+                                      Checked="ReduceMotion_Changed"
+                                      Unchecked="ReduceMotion_Changed"/>
+                            <TextBlock Text="Stops decorative animations across the app — Now Playing backgrounds, cover glow, lyric transitions, playbar effects, and the audio visualizer. Lowers GPU/CPU load on lower-end hardware."
+                                       FontSize="11" Foreground="{DynamicResource TextDim}"
+                                       FontFamily="Segoe UI" Margin="22,4,0,0" TextWrapping="Wrap"/>
+
+                            <TextBlock Text="Now Playing Visuals" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,8"/>
+                            <CheckBox x:Name="ChkNpRememberManualColors" Content="Remember manual ColorMatch picks"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,4"
+                                      Checked="NpRememberManualColors_Changed" Unchecked="NpRememberManualColors_Changed"/>
+                            <TextBlock Text="Manual color picker choices are saved with hashed track keys and restored next time, even when the automatic color cache is not persisted."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,6" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="ChkNpColorCache" Content="Cache album art colors"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,4,0,4"
+                                      Checked="NpColorCache_Changed" Unchecked="NpColorCache_Changed"/>
+                            <TextBlock Text="Stores extracted album art colors so track switching is instant. In-memory only unless persist is enabled below."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,4" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="ChkNpColorCachePersist" Content="Persist color cache to disk"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="22,4,0,4"
+                                      Checked="NpColorCachePersist_Changed" Unchecked="NpColorCachePersist_Changed"/>
+                            <TextBlock Text="Saves the color cache to %APPDATA%\AudioAuditor\ so it survives app restarts. Keys are hashed — no file paths are stored."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="44,2,0,4" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Margin="22,2,0,6">
+                                <TextBlock x:Name="NpColorCacheStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <CheckBox x:Name="ChkNpAlbumBackdrop" Content="Use album art as blurred Now Playing backdrop"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,4,0,4"
+                                      Checked="NpAlbumBackdrop_Changed" Unchecked="NpAlbumBackdrop_Changed"/>
+                            <StackPanel Orientation="Horizontal" Margin="22,6,0,4">
+                                <TextBlock Text="Background animation:" FontSize="12"
+                                           Foreground="{DynamicResource TextSecondary}" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="NpBackgroundAnimationCombo" Width="130" FontSize="12"
+                                          SelectionChanged="NpBackgroundAnimationCombo_SelectionChanged"/>
+                            </StackPanel>
+                            <CheckBox x:Name="ChkNpColorDriftGlow" Content="Color Drift glow (under effect)"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="22,4,0,8"
+                                      ToolTip="Run the Color Drift gradient glow as a background under the selected effect"
+                                      Checked="NpColorDriftGlow_Changed" Unchecked="NpColorDriftGlow_Changed"/>
+                            <CheckBox x:Name="ChkNpBackgroundUseAlbumColors" Content="Use album colors for Stars, Rain, Snow, and Underwater"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="22,4,0,8"
+                                      Checked="NpBackgroundUseAlbumColors_Changed" Unchecked="NpBackgroundUseAlbumColors_Changed"/>
+                            <CheckBox x:Name="ChkNpBackgroundCycle" Content="Cycle background animations"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="22,0,0,4"
+                                      Checked="NpBackgroundCycle_Changed" Unchecked="NpBackgroundCycle_Changed"/>
+                            <Grid Margin="22,4,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="48"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Cycle speed" FontSize="12"
+                                           Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                <Slider Grid.Column="1" x:Name="NpBackgroundCycleSpeedSlider" Minimum="0.25" Maximum="3" Value="1"
+                                        SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                        Style="{StaticResource CrossfadeSlider}"
+                                        ValueChanged="NpBackgroundCycleSpeedSlider_Changed"/>
+                                <TextBlock Grid.Column="2" x:Name="NpBackgroundCycleSpeedLabel" Text="1.0x"
+                                           Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                            <CheckBox x:Name="ChkNpBackgroundCycleOnSongChange" Content="Advance background on song change"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="22,0,0,8"
+                                      Checked="NpBackgroundCycleOnSongChange_Changed" Unchecked="NpBackgroundCycleOnSongChange_Changed"/>
+                            <StackPanel x:Name="NpStarsControls">
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Star density" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpStarDensitySlider" Minimum="0.25" Maximum="2.5" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpStarDensitySlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpStarDensityLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                                <CheckBox x:Name="ChkNpShootingStars" Content="Shooting stars"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI" Margin="22,2,0,4"
+                                          Checked="NpShootingStars_Changed" Unchecked="NpShootingStars_Changed"/>
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Shooting density" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpShootingStarDensitySlider" Minimum="0.25" Maximum="4.0" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpShootingStarDensitySlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpShootingStarDensityLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel x:Name="NpRainControls">
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Rain intensity" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpRainIntensitySlider" Minimum="0.25" Maximum="2.5" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpRainIntensitySlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpRainIntensityLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                                <CheckBox x:Name="ChkNpRainLightning" Content="Lightning strikes"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI" Margin="22,2,0,4"
+                                          Checked="NpRainLightning_Changed" Unchecked="NpRainLightning_Changed"/>
+                                <Border x:Name="NpRainLightningPrompt" Visibility="Collapsed" Margin="22,4,0,8" Padding="10"
+                                        Background="{DynamicResource GlassFloatingBg}" BorderBrush="{DynamicResource GlassBorderBrush}"
+                                        BorderThickness="1" CornerRadius="10">
+                                    <StackPanel>
+                                        <TextBlock Text="Lightning can include bright flashes. Enable it for Rain?"
+                                                   Foreground="{DynamicResource TextPrimary}" FontSize="12" TextWrapping="Wrap"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                            <Button Content="Keep off" Style="{StaticResource SmallButton}" Padding="10,4" Margin="0,0,8,0"
+                                                    Click="NpRainLightningPromptNo_Click"/>
+                                            <Button Content="Enable lightning" Style="{StaticResource SmallButton}" Padding="10,4"
+                                                    Click="NpRainLightningPromptYes_Click"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Lightning amount" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpRainLightningSlider" Minimum="0" Maximum="3.0" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpRainLightningSlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpRainLightningLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel x:Name="NpSnowControls">
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Snow density" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpSnowDensitySlider" Minimum="0.25" Maximum="2.5" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpSnowDensitySlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpSnowDensityLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Snowflake amount" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpSnowflakeSlider" Minimum="0.25" Maximum="2.5" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpSnowflakeSlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpSnowflakeLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel x:Name="NpUnderwaterControls">
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Bubble density" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpUnderwaterBubbleSlider" Minimum="0.25" Maximum="2.5" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpUnderwaterBubbleSlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpUnderwaterBubbleLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                                <Grid Margin="22,4,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Caustic light" FontSize="12"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                    <Slider Grid.Column="1" x:Name="NpUnderwaterCausticSlider" Minimum="0" Maximum="2.0" Value="1"
+                                            SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                            Style="{StaticResource CrossfadeSlider}"
+                                            ValueChanged="NpUnderwaterCausticSlider_Changed"/>
+                                    <TextBlock Grid.Column="2" x:Name="NpUnderwaterCausticLabel" Text="1.0x"
+                                               Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                                <CheckBox x:Name="ChkNpUnderwaterFish" Content="Fish silhouettes"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI" Margin="22,2,0,4"
+                                          Checked="NpUnderwaterFish_Changed" Unchecked="NpUnderwaterFish_Changed"/>
+                                <CheckBox x:Name="ChkNpUnderwaterSeaweed" Content="Seaweed"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                          FontFamily="Segoe UI" Margin="22,0,0,8"
+                                          Checked="NpUnderwaterSeaweed_Changed" Unchecked="NpUnderwaterSeaweed_Changed"/>
+                            </StackPanel>
+                            <Grid Margin="22,4,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="48"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Animation speed" FontSize="12"
+                                           Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                <Slider Grid.Column="1" x:Name="NpAnimationSpeedSlider" Minimum="0.4" Maximum="2.5" Value="1"
+                                        SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                        Style="{StaticResource CrossfadeSlider}"
+                                        ValueChanged="NpAnimationSpeedSlider_Changed"/>
+                                <TextBlock Grid.Column="2" x:Name="NpAnimationSpeedLabel" Text="1.0x"
+                                           Foreground="{DynamicResource TextMuted}" Margin="8,0,0,0"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,4">
+                                <Button Content="Set NP Image..." Style="{StaticResource SmallButton}"
+                                        Click="SelectNpBackground_Click" Margin="0,0,8,0"/>
+                                <Button Content="Reset NP Image" Style="{StaticResource SmallButton}"
+                                        Click="ResetNpBackground_Click"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,4">
+                                <Button Content="Set Main Image..." Style="{StaticResource SmallButton}"
+                                        Click="SelectMainBackground_Click" Margin="0,0,8,0"/>
+                                <Button Content="Reset Main Image" Style="{StaticResource SmallButton}"
+                                        Click="ResetMainBackground_Click"/>
+                            </StackPanel>
+
+                            <!-- Custom Theme Builder -->
+                            <Expander IsExpanded="False" Margin="0,18,0,6"
+                                      Foreground="{DynamicResource TextPrimary}">
+                                <Expander.Header>
+                                    <StackPanel>
+                                        <TextBlock Text="Custom Theme Builder" FontSize="13" FontWeight="SemiBold"
+                                                   FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                        <TextBlock Text="Create named themes with portable JSON import/export."
+                                                   Foreground="{DynamicResource TextDim}" FontSize="11"
+                                                   FontFamily="Segoe UI" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Expander.Header>
+                                <Border CornerRadius="6" Padding="10" Margin="0,8,0,0"
+                                        Background="{DynamicResource PanelBg}"
+                                        BorderBrush="{DynamicResource BorderColor}" BorderThickness="1">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="6"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Theme Name:"
+                                                       Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                                            <TextBox Grid.Row="0" Grid.Column="1" x:Name="CustomThemeNameBox"
+                                                     Height="24" Text="My Custom Theme"/>
+                                            <Button Grid.Row="0" Grid.Column="2" x:Name="BtnCustomThemeDuplicate"
+                                                    Content="Duplicate" Width="82" Margin="8,0,0,0"
+                                                    Style="{StaticResource SmallButton}"
+                                                    Click="CustomThemeDuplicate_Click"/>
+                                            <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Orientation="Horizontal">
+                                                <Button x:Name="BtnCustomThemeSave" Content="Save Theme" Width="88" Margin="0,0,6,0"
+                                                        Style="{StaticResource SmallButton}"
+                                                        Click="CustomThemeSave_Click"/>
+                                                <Button x:Name="BtnCustomThemeDelete" Content="Delete" Width="64" Margin="0,0,6,0"
+                                                        Style="{StaticResource SmallButton}"
+                                                        Click="CustomThemeDelete_Click"/>
+                                                <Button x:Name="BtnCustomThemeReset" Content="Reset" Width="64" Margin="0,0,6,0"
+                                                        Style="{StaticResource SmallButton}"
+                                                        Click="CustomThemeReset_Click"/>
+                                                <Button x:Name="BtnCustomThemeImport" Content="Import JSON" Width="90" Margin="0,0,6,0"
+                                                        Style="{StaticResource SmallButton}"
+                                                        Click="CustomThemeImport_Click"/>
+                                                <Button x:Name="BtnCustomThemeExport" Content="Export JSON" Width="90"
+                                                        Style="{StaticResource SmallButton}"
+                                                        Click="CustomThemeExport_Click"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <UniformGrid Columns="2" Margin="0,0,0,8">
+                                            <StackPanel Margin="0,0,6,6">
+                                                <TextBlock Text="Accent" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                                <DockPanel>
+                                                    <Button Content="Pick" DockPanel.Dock="Right" Width="46" Margin="4,0,0,0"
+                                                            Style="{StaticResource SmallButton}"
+                                                            Tag="{Binding ElementName=CustomAccentBox}" Click="PickCustomThemeColor_Click"/>
+                                                    <TextBox x:Name="CustomAccentBox" Text="#5865F2" Height="24"/>
+                                                </DockPanel>
+                                            </StackPanel>
+                                            <StackPanel Margin="6,0,0,6">
+                                                <TextBlock Text="Window" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                                <DockPanel>
+                                                    <Button Content="Pick" DockPanel.Dock="Right" Width="46" Margin="4,0,0,0"
+                                                            Style="{StaticResource SmallButton}"
+                                                            Tag="{Binding ElementName=CustomWindowBox}" Click="PickCustomThemeColor_Click"/>
+                                                    <TextBox x:Name="CustomWindowBox" Text="#101326" Height="24"/>
+                                                </DockPanel>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,0,6,6">
+                                                <TextBlock Text="Panel" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                                <DockPanel>
+                                                    <Button Content="Pick" DockPanel.Dock="Right" Width="46" Margin="4,0,0,0"
+                                                            Style="{StaticResource SmallButton}"
+                                                            Tag="{Binding ElementName=CustomPanelBox}" Click="PickCustomThemeColor_Click"/>
+                                                    <TextBox x:Name="CustomPanelBox" Text="#141832" Height="24"/>
+                                                </DockPanel>
+                                            </StackPanel>
+                                            <StackPanel Margin="6,0,0,6">
+                                                <TextBlock Text="Text" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                                <DockPanel>
+                                                    <Button Content="Pick" DockPanel.Dock="Right" Width="46" Margin="4,0,0,0"
+                                                            Style="{StaticResource SmallButton}"
+                                                            Tag="{Binding ElementName=CustomTextBox}" Click="PickCustomThemeColor_Click"/>
+                                                    <TextBox x:Name="CustomTextBox" Text="#F4F6FF" Height="24"/>
+                                                </DockPanel>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,0,6,6">
+                                                <TextBlock Text="Border" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                                <DockPanel>
+                                                    <Button Content="Pick" DockPanel.Dock="Right" Width="46" Margin="4,0,0,0"
+                                                            Style="{StaticResource SmallButton}"
+                                                            Tag="{Binding ElementName=CustomBorderBox}" Click="PickCustomThemeColor_Click"/>
+                                                    <TextBox x:Name="CustomBorderBox" Text="#7F8CFF" Height="24"/>
+                                                </DockPanel>
+                                            </StackPanel>
+                                            <StackPanel Margin="6,0,0,6">
+                                                <TextBlock Text="Playbar Colors" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBox x:Name="CustomPlaybar1Box" Text="#3C46B6" Width="70" Height="24" Margin="0,0,4,0"/>
+                                                    <TextBox x:Name="CustomPlaybar2Box" Text="#5865F2" Width="70" Height="24" Margin="0,0,4,0"/>
+                                                    <TextBox x:Name="CustomPlaybar3Box" Text="#8C96FF" Width="70" Height="24"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                            <StackPanel Margin="0,0,6,6">
+                                                <TextBlock Text="Visualizer Colors" Foreground="{DynamicResource TextMuted}" FontSize="11"/>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBox x:Name="CustomViz1Box" Text="#3C46B6" Width="70" Height="24" Margin="0,0,4,0"/>
+                                                    <TextBox x:Name="CustomViz2Box" Text="#5865F2" Width="70" Height="24" Margin="0,0,4,0"/>
+                                                    <TextBox x:Name="CustomViz3Box" Text="#8C96FF" Width="70" Height="24"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </UniformGrid>
+
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="44"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="Corners" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                            <Slider Grid.Column="1" x:Name="CustomCornerSlider" Minimum="2" Maximum="16" Value="8"
+                                                    TickFrequency="1" Style="{StaticResource CrossfadeSlider}"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding ElementName=CustomCornerSlider, Path=Value, StringFormat=F0}"
+                                                       Foreground="{DynamicResource TextSecondary}" Margin="8,0,0,0"/>
+                                        </Grid>
+
+                                        <Border x:Name="CustomThemePreview" CornerRadius="8" Padding="12" Margin="0,0,0,2"
+                                                Background="{DynamicResource PanelBg}"
+                                                BorderBrush="{DynamicResource BorderColor}" BorderThickness="1">
+                                            <StackPanel>
+                                                <TextBlock Text="Custom Theme Preview" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}" FontSize="13"/>
+                                                <TextBlock Text="Saved custom themes appear in the Color Theme and Visualizer Theme lists."
+                                                           Foreground="{DynamicResource TextMuted}" FontSize="11" TextWrapping="Wrap"/>
+                                                <Border Height="8" Margin="0,8,0,0" CornerRadius="4"
+                                                        Background="{DynamicResource PlaybarAccentColor}"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                            </Expander>
 
                             <!-- Visualizer Cycle Settings -->
                             <TextBlock Text="Visualizer Cycle" FontSize="13" FontWeight="SemiBold"
@@ -531,6 +973,9 @@
 
                             <!-- Main window color-match removed from Settings UI — Now Playing panel color-match remains available via the NP panel button -->
 
+                            <!-- The "Now Playing — Look Up This Song" services were moved to the
+                                 Integrations tab, grouped with the Music Service Buttons. -->
+
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -565,12 +1010,17 @@
                                     <TextBlock Text="Duration:" FontSize="12" FontFamily="Segoe UI"
                                                Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"
                                                Margin="0,0,8,0"/>
-                                    <Slider x:Name="CrossfadeSlider" Minimum="1" Maximum="15" Value="5"
+                                    <Slider x:Name="CrossfadeSlider" Minimum="1" Maximum="30" Value="5"
                                             Width="130" IsSnapToTickEnabled="True" TickFrequency="1"
                                             ValueChanged="CrossfadeSlider_Changed"
                                             VerticalAlignment="Center"
                                             Style="{StaticResource CrossfadeSlider}"/>
-                                    <TextBlock x:Name="CrossfadeDurationLabel" Text="3s" FontSize="12"
+                                    <TextBox x:Name="CrossfadeDurationBox" Width="42" Height="24"
+                                             Margin="8,0,0,0" VerticalContentAlignment="Center"
+                                             TextAlignment="Center" FontSize="12" FontFamily="Segoe UI"
+                                             Text="5" LostFocus="CrossfadeDurationBox_LostFocus"
+                                             KeyDown="CrossfadeDurationBox_KeyDown"/>
+                                    <TextBlock x:Name="CrossfadeDurationLabel" Text="5s" FontSize="12"
                                                FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
                                                VerticalAlignment="Center" Margin="8,0,0,0" Width="24"/>
                                 </StackPanel>
@@ -587,8 +1037,35 @@
                                         <ComboBoxItem Tag="EqualPower" Content="Equal Power"/>
                                         <ComboBoxItem Tag="Linear" Content="Linear"/>
                                         <ComboBoxItem Tag="Natural" Content="Natural"/>
+                                        <ComboBoxItem Tag="SmoothStep" Content="Smooth Step"/>
+                                        <ComboBoxItem Tag="FastFade" Content="Fast Fade"/>
+                                        <ComboBoxItem Tag="SlowBlend" Content="Slow Blend"/>
                                         <ComboBoxItem Tag="Sequential" Content="Sequential (no overlap)"/>
                                     </ComboBox>
+                                </StackPanel>
+
+                                <!-- Crossfade Curve Preview -->
+                                <TextBlock Text="Curve Preview" FontSize="12" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                           Margin="0,14,0,6"/>
+                                <Border Background="{DynamicResource InputBg}" CornerRadius="6"
+                                        BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1"
+                                        Width="260" Height="140" HorizontalAlignment="Left" Margin="0,0,0,6">
+                                    <Canvas x:Name="CrossfadeCurveCanvas" ClipToBounds="True"
+                                            Background="Transparent" Margin="8"
+                                            Loaded="CrossfadeCurveCanvas_Loaded">
+                                        <Polyline x:Name="CrossfadeFadeOutLine" Stroke="{DynamicResource AccentColor}"
+                                                  StrokeThickness="2" Opacity="0.85"/>
+                                        <Polyline x:Name="CrossfadeFadeInLine" Stroke="{DynamicResource TextSecondary}"
+                                                  StrokeThickness="2" Opacity="0.85"/>
+                                        <Ellipse x:Name="CrossfadePlayhead" Width="8" Height="8"
+                                                 Fill="White" Visibility="Collapsed"/>
+                                    </Canvas>
+                                </Border>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                    <Button x:Name="BtnAnimateCrossfade" Content="Animate Preview" FontSize="11"
+                                            FontFamily="Segoe UI" Click="AnimateCrossfade_Click"
+                                            Style="{StaticResource SmallButton}" Padding="8,4"/>
                                 </StackPanel>
                             </StackPanel>
 
@@ -613,6 +1090,14 @@
                                       FontFamily="Segoe UI" Margin="0,10,0,0"
                                       Checked="VisualizerFullVolume_Changed" Unchecked="VisualizerFullVolume_Changed"/>
                             <TextBlock Text="Makes the visualizer always respond as if the volume is at 100%, even when you lower it. Keeps the visual effects lively at any volume level."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
+                            <CheckBox x:Name="ChkPreloadNextTrack" Content="Preload next track data"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,14,0,0"
+                                      Checked="PreloadNextTrack_Changed" Unchecked="PreloadNextTrack_Changed"/>
+                            <TextBlock Text="Decodes the next track's album art, colors, and metadata in the background before you skip to it. Reduces transition lag."
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
                                        FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
 
@@ -852,29 +1337,44 @@
                                            FontFamily="Segoe UI" VerticalAlignment="Center"/>
                             </StackPanel>
 
-                            <!-- NP Color Cache -->
-                            <TextBlock Text="Now Playing Colors" FontSize="14" FontWeight="SemiBold"
-                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                                       Margin="0,18,0,8"/>
-                            <CheckBox x:Name="ChkNpColorCache" Content="Cache album art colors"
+                            <CheckBox x:Name="ChkFocusNewFiles" Content="Focus newly added songs"
                                       Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                                      FontFamily="Segoe UI" Margin="0,0,0,4"
-                                      Checked="NpColorCache_Changed" Unchecked="NpColorCache_Changed"/>
-                            <TextBlock Text="Stores extracted album art colors so track switching is instant. In-memory only unless persist is enabled below."
+                                      FontFamily="Segoe UI" Margin="0,14,0,4"
+                                      Checked="FocusNewFiles_Changed" Unchecked="FocusNewFiles_Changed"/>
+                            <TextBlock Text="After an import finishes, selects and scrolls to the first added song without changing the current search or filter."
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
-                                       FontFamily="Segoe UI" Margin="22,2,0,4" TextWrapping="Wrap"/>
-                            <CheckBox x:Name="ChkNpColorCachePersist" Content="Persist color cache to disk"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
+                            <!-- Restore last session -->
+                            <CheckBox x:Name="ChkRestoreLastSession" Content="Restore last session on startup"
                                       Foreground="{DynamicResource TextSecondary}" FontSize="13"
-                                      FontFamily="Segoe UI" Margin="22,4,0,4"
-                                      Checked="NpColorCachePersist_Changed" Unchecked="NpColorCachePersist_Changed"/>
-                            <TextBlock Text="Saves the color cache to %APPDATA%\AudioAuditor\ so it survives app restarts. Keys are hashed — no file paths are stored."
+                                      FontFamily="Segoe UI" Margin="0,18,0,4"
+                                      Checked="RestoreLastSession_Changed" Unchecked="RestoreLastSession_Changed"/>
+                            <TextBlock Text="Remembers the files and folders you had loaded and offers to restore them next time you open AudioAuditor. Pairs with scan cache so the restored list loads instantly."
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
-                                       FontFamily="Segoe UI" Margin="44,2,0,4" TextWrapping="Wrap"/>
-                            <StackPanel Orientation="Horizontal" Margin="22,2,0,0">
-                                <TextBlock x:Name="NpColorCacheStatusText" Text=""
-                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
-                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
-                            </StackPanel>
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
+                            <!-- Local Stats Collection -->
+                            <CheckBox x:Name="ChkStatsCollection" Content="Enable local listening &amp; analysis stats"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,18,0,4"
+                                      Checked="StatsCollection_Changed" Unchecked="StatsCollection_Changed"/>
+                            <TextBlock Text="Collects scanned files, listening time, top tracks/artists, and audio quality metrics locally. 100% offline — nothing is ever uploaded. Default: OFF."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+                            <Button Content="View Your Wrapped" Style="{StaticResource SmallButton}"
+                                    Click="ViewWrapped_Click" Padding="10,4" Margin="22,8,0,0"
+                                    HorizontalAlignment="Left"
+                                    ToolTip="See your AudioAuditor Wrapped — your local listening &amp; library stats"/>
+
+                            <!-- Crash Logging -->
+                            <CheckBox x:Name="ChkCrashLogging" Content="Enable local crash logging"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,18,0,4"
+                                      Checked="CrashLogging_Changed" Unchecked="CrashLogging_Changed"/>
+                            <TextBlock Text="When enabled, unhandled errors are saved to a local file on your PC. These logs never leave your machine and are only used to help diagnose issues."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
 
                             <!-- Close to Tray -->
                             <CheckBox x:Name="ChkCloseToTray" Content="Minimize to system tray on close"
@@ -908,7 +1408,69 @@
                             <TextBlock Text="Performance" FontSize="14" FontWeight="SemiBold"
                                        FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
                                        Margin="0,18,0,8"/>
-                            <Grid>
+
+                            <!-- Battery Saver -->
+                            <CheckBox x:Name="ChkBatterySaver"
+                                      Content="Battery Saver" FontSize="13"
+                                      Checked="BatterySaver_Changed" Unchecked="BatterySaver_Changed"/>
+                            <TextBlock Text="Reduces power use by disabling or throttling animations. Choose what it affects below."
+                                       FontSize="11" Foreground="{DynamicResource TextDim}"
+                                       FontFamily="Segoe UI" Margin="22,4,0,8" TextWrapping="Wrap"/>
+                            <StackPanel x:Name="BatterySaverAreasPanel" Margin="22,0,0,0">
+                                <CheckBox x:Name="ChkBatteryEntireProgram"
+                                          Content="Entire program (all areas)" FontSize="13" Margin="0,0,0,6"
+                                          Checked="BatterySaverArea_Changed" Unchecked="BatterySaverArea_Changed"/>
+                                <CheckBox x:Name="ChkBatteryNpBackground"
+                                          Content="Now Playing backgrounds" FontSize="12" Margin="16,0,0,4"
+                                          Foreground="{DynamicResource TextSecondary}"
+                                          Checked="BatterySaverArea_Changed" Unchecked="BatterySaverArea_Changed"/>
+                                <CheckBox x:Name="ChkBatteryVisualizer"
+                                          Content="Audio visualizer" FontSize="12" Margin="16,0,0,4"
+                                          Foreground="{DynamicResource TextSecondary}"
+                                          Checked="BatterySaverArea_Changed" Unchecked="BatterySaverArea_Changed"/>
+                                <CheckBox x:Name="ChkBatteryCoverGlow"
+                                          Content="Cover glow" FontSize="12" Margin="16,0,0,4"
+                                          Foreground="{DynamicResource TextSecondary}"
+                                          Checked="BatterySaverArea_Changed" Unchecked="BatterySaverArea_Changed"/>
+                                <CheckBox x:Name="ChkBatteryLyrics"
+                                          Content="Lyric transitions" FontSize="12" Margin="16,0,0,4"
+                                          Foreground="{DynamicResource TextSecondary}"
+                                          Checked="BatterySaverArea_Changed" Unchecked="BatterySaverArea_Changed"/>
+                                <CheckBox x:Name="ChkBatteryPlaybar"
+                                          Content="Waveform &amp; playbar effects" FontSize="12" Margin="16,0,0,4"
+                                          Foreground="{DynamicResource TextSecondary}"
+                                          Checked="BatterySaverArea_Changed" Unchecked="BatterySaverArea_Changed"/>
+                            </StackPanel>
+
+                            <!-- Visualizer override: stays available even in "Entire program" mode -->
+                            <CheckBox x:Name="ChkBatteryKeepVisualizer"
+                                      Content="Keep the audio visualizer running"
+                                      FontSize="13" Margin="22,8,0,0"
+                                      Checked="BatterySaverKeepVisualizer_Changed" Unchecked="BatterySaverKeepVisualizer_Changed"/>
+                            <TextBlock Text="Overrides Battery Saver for the visualizer only — it keeps animating even when the rest of the program is paused."
+                                       FontSize="11" Foreground="{DynamicResource TextDim}"
+                                       FontFamily="Segoe UI" Margin="44,2,0,0" TextWrapping="Wrap"/>
+
+                            <!-- GPU acceleration -->
+                            <Grid Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Hardware acceleration:"
+                                           FontSize="13" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <ComboBox Grid.Column="1" x:Name="GpuRenderModeCombo" FontSize="13"
+                                          SelectionChanged="GpuRenderMode_Changed"/>
+                            </Grid>
+                            <TextBlock x:Name="GpuRenderTierText" Text=""
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="130,4,0,0" TextWrapping="Wrap"/>
+                            <TextBlock Text="Auto lets Windows decide. Force software (CPU only) helps if your GPU driver causes glitches or crashes. Changes apply after restart."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="130,2,0,0" TextWrapping="Wrap"/>
+
+                            <Grid Margin="0,14,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="130"/>
                                     <ColumnDefinition Width="*"/>
@@ -952,7 +1514,6 @@
                             <TextBlock x:Name="MemoryInfoText" Text=""
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
                                        FontFamily="Segoe UI" Margin="0,4,0,0" TextWrapping="Wrap"/>
-
                             <!-- Rename Pattern -->
                             <TextBlock Text="Quick Rename Pattern" FontSize="14" FontWeight="SemiBold"
                                        FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
@@ -1102,10 +1663,14 @@
 
                             <Separator Background="{DynamicResource BorderColor}" Margin="0,0,0,14"/>
 
-                            <!-- Music Service Buttons -->
-                            <TextBlock Text="Music Service Buttons" FontSize="14" FontWeight="SemiBold"
-                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                                       Margin="0,0,0,8"/>
+                            <!-- ═══ Music service buttons — collapsible (Main Window vs Now Playing) ═══ -->
+                            <Expander IsExpanded="False" Margin="0,0,0,10"
+                                      Foreground="{DynamicResource TextPrimary}">
+                                <Expander.Header>
+                                    <TextBlock Text="Main Window — Search Buttons" FontSize="14" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                </Expander.Header>
+                                <StackPanel Margin="0,8,0,0">
                             <TextBlock Text="Configure each of the 6 toolbar search buttons. Select 'Custom...' for any slot to set your own URL and icon."
                                        Foreground="{DynamicResource TextMuted}" FontSize="11"
                                        FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
@@ -1141,11 +1706,15 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="70"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Slot 1:" FontSize="12" FontFamily="Segoe UI"
                                            VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
                                 <ComboBox Grid.Column="1" x:Name="ServiceCombo0" Tag="0" FontSize="12"
                                           SelectionChanged="ServiceCombo_Changed"/>
+                                <CheckBox Grid.Column="2" x:Name="ChkServiceVisible0" Content="Show" Margin="8,0,0,0"
+                                          VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" Checked="ServiceVisible_Changed" Unchecked="ServiceVisible_Changed"/>
                             </Grid>
                             <StackPanel x:Name="CustomPanel0" Visibility="Collapsed" Margin="20,0,0,8">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
@@ -1175,11 +1744,15 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="70"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Slot 2:" FontSize="12" FontFamily="Segoe UI"
                                            VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
                                 <ComboBox Grid.Column="1" x:Name="ServiceCombo1" Tag="1" FontSize="12"
                                           SelectionChanged="ServiceCombo_Changed"/>
+                                <CheckBox Grid.Column="2" x:Name="ChkServiceVisible1" Content="Show" Margin="8,0,0,0"
+                                          VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" Checked="ServiceVisible_Changed" Unchecked="ServiceVisible_Changed"/>
                             </Grid>
                             <StackPanel x:Name="CustomPanel1" Visibility="Collapsed" Margin="20,0,0,8">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
@@ -1209,11 +1782,15 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="70"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Slot 3:" FontSize="12" FontFamily="Segoe UI"
                                            VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
                                 <ComboBox Grid.Column="1" x:Name="ServiceCombo2" Tag="2" FontSize="12"
                                           SelectionChanged="ServiceCombo_Changed"/>
+                                <CheckBox Grid.Column="2" x:Name="ChkServiceVisible2" Content="Show" Margin="8,0,0,0"
+                                          VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" Checked="ServiceVisible_Changed" Unchecked="ServiceVisible_Changed"/>
                             </Grid>
                             <StackPanel x:Name="CustomPanel2" Visibility="Collapsed" Margin="20,0,0,8">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
@@ -1243,11 +1820,15 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="70"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Slot 4:" FontSize="12" FontFamily="Segoe UI"
                                            VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
                                 <ComboBox Grid.Column="1" x:Name="ServiceCombo3" Tag="3" FontSize="12"
                                           SelectionChanged="ServiceCombo_Changed"/>
+                                <CheckBox Grid.Column="2" x:Name="ChkServiceVisible3" Content="Show" Margin="8,0,0,0"
+                                          VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" Checked="ServiceVisible_Changed" Unchecked="ServiceVisible_Changed"/>
                             </Grid>
                             <StackPanel x:Name="CustomPanel3" Visibility="Collapsed" Margin="20,0,0,8">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
@@ -1277,11 +1858,15 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="70"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Slot 5:" FontSize="12" FontFamily="Segoe UI"
                                            VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
                                 <ComboBox Grid.Column="1" x:Name="ServiceCombo4" Tag="4" FontSize="12"
                                           SelectionChanged="ServiceCombo_Changed"/>
+                                <CheckBox Grid.Column="2" x:Name="ChkServiceVisible4" Content="Show" Margin="8,0,0,0"
+                                          VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" Checked="ServiceVisible_Changed" Unchecked="ServiceVisible_Changed"/>
                             </Grid>
                             <StackPanel x:Name="CustomPanel4" Visibility="Collapsed" Margin="20,0,0,8">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
@@ -1311,11 +1896,15 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="70"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="Slot 6:" FontSize="12" FontFamily="Segoe UI"
                                            VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}"/>
                                 <ComboBox Grid.Column="1" x:Name="ServiceCombo5" Tag="5" FontSize="12"
                                           SelectionChanged="ServiceCombo_Changed"/>
+                                <CheckBox Grid.Column="2" x:Name="ChkServiceVisible5" Content="Show" Margin="8,0,0,0"
+                                          VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" Checked="ServiceVisible_Changed" Unchecked="ServiceVisible_Changed"/>
                             </Grid>
                             <StackPanel x:Name="CustomPanel5" Visibility="Collapsed" Margin="20,0,0,8">
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
@@ -1339,11 +1928,50 @@
                                             Tag="5" Click="BrowseIcon_Click"/>
                                 </StackPanel>
                             </StackPanel>
+                                </StackPanel>
+                            </Expander>
+
+                            <!-- ═══ Now Playing "Look Up This Song" services — collapsible ═══ -->
+                            <Expander IsExpanded="False" Margin="0,0,0,14"
+                                      Foreground="{DynamicResource TextPrimary}">
+                                <Expander.Header>
+                                    <TextBlock Text="Now Playing — Look Up This Song" FontSize="14" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"/>
+                                </Expander.Header>
+                                <StackPanel Margin="0,8,0,0">
+                                    <TextBlock Text="The services shown by the magnifier button on the Now Playing bar. These are separate from the main window's search buttons — set up to 6, and uncheck &quot;Show&quot; to display fewer."
+                                               Foreground="{DynamicResource TextDim}" FontSize="11"
+                                               FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                                    <Button x:Name="NpSearchCopyFromMainBtn" Content="Copy from main window services"
+                                            Style="{StaticResource SmallButton}" HorizontalAlignment="Left"
+                                            Margin="0,0,0,8" Click="NpSearchCopyFromMain_Click"
+                                            ToolTip="Replace the Now Playing services with a copy of the main window's services"/>
+                                    <!-- Slot rows are built in code (SettingsWindow.NpServices.cs) -->
+                                    <StackPanel x:Name="NpSearchServicesContainer"/>
+                                </StackPanel>
+                            </Expander>
+
+                            <!-- Main Toolbar Visibility -->
+                            <TextBlock Text="Main Toolbar" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,18,0,6"/>
+                            <CheckBox x:Name="ChkShowWrappedButton" Content="Show Your Wrapped button"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,4"
+                                      Checked="ShowWrappedButton_Changed" Unchecked="ShowWrappedButton_Changed"/>
+                            <CheckBox x:Name="ChkShowMiniPlayerButton" Content="Show Mini Player button"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,4"
+                                      Checked="ShowMiniPlayerButton_Changed" Unchecked="ShowMiniPlayerButton_Changed"/>
+                            <CheckBox x:Name="ChkShowMusicServiceButtons" Content="Show music service buttons"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="13"
+                                      FontFamily="Segoe UI" Margin="0,0,0,14"
+                                      Checked="ShowMusicServiceButtons_Changed" Unchecked="ShowMusicServiceButtons_Changed"/>
 
                             <!-- Discord Rich Presence -->
                             <TextBlock Text="Discord Rich Presence" FontSize="14" FontWeight="SemiBold"
                                        FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
-                                       Margin="0,18,0,4"/>
+                                       Margin="0,0,0,4"/>
                             <TextBlock Text="Shows your currently playing track in your Discord status."
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
                                        FontFamily="Segoe UI" Margin="0,0,0,6" TextWrapping="Wrap"/>
@@ -1551,6 +2179,337 @@
                                            FontFamily="Segoe UI" VerticalAlignment="Center"/>
                             </StackPanel>
 
+                            <!-- Libre.fm Scrobbling -->
+                            <TextBlock Text="Libre.fm Scrobbling" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,8"/>
+                            <TextBlock Text="Open-source Last.fm-compatible scrobbling. Uses the same API protocol on libre.fm."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="280"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="6"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="API Key:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" x:Name="LibreFmApiKeyBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="LibreFmKey_Changed"/>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="API Secret:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="LibreFmApiSecretBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="LibreFmKey_Changed"/>
+
+                                <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="3"
+                                        x:Name="BtnToggleLibreFmVisibility"
+                                        Click="ToggleLibreFmVisibility_Click"
+                                        VerticalAlignment="Center" Margin="6,0,0,0"
+                                        Cursor="Hand" ToolTip="Show/Hide Libre.fm keys"
+                                        Background="Transparent" BorderBrush="Transparent"
+                                        Padding="4,2">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="bd" Property="Background"
+                                                            Value="{DynamicResource ButtonHover}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Canvas Width="20" Height="16">
+                                        <Path Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                                        <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                                 Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                                        <Line x:Name="LibreFmEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                                    </Canvas>
+                                </Button>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button x:Name="BtnLibreFmAuth" Content="Authenticate"
+                                        Style="{StaticResource SmallButton}" Click="LibreFmAuth_Click"
+                                        Margin="0,0,10,0"/>
+                                <Button x:Name="BtnLibreFmConfirm" Content="Confirm Auth"
+                                        Style="{StaticResource SmallButton}" Click="LibreFmConfirm_Click"
+                                        Visibility="Collapsed" Margin="0,0,10,0"/>
+                                <CheckBox x:Name="ChkLibreFmEnabled" Content="Enabled"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" VerticalAlignment="Center"
+                                          Margin="0,0,10,0"
+                                          Checked="LibreFmEnabled_Changed" Unchecked="LibreFmEnabled_Changed"/>
+                                <TextBlock x:Name="LibreFmStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- ListenBrainz Scrobbling -->
+                            <TextBlock Text="ListenBrainz Scrobbling" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,8"/>
+                            <TextBlock Text="Submit listens to your ListenBrainz account. Get your User Token from listenbrainz.org/profile."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="280"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="6"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Username:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" x:Name="ListenBrainzUsernameBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="ListenBrainzField_Changed"/>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="User Token:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="ListenBrainzTokenBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="ListenBrainzField_Changed"/>
+
+                                <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="3"
+                                        x:Name="BtnToggleListenBrainzVisibility"
+                                        Click="ToggleListenBrainzVisibility_Click"
+                                        VerticalAlignment="Center" Margin="6,0,0,0"
+                                        Cursor="Hand" ToolTip="Show/Hide ListenBrainz token"
+                                        Background="Transparent" BorderBrush="Transparent"
+                                        Padding="4,2">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="bd" Property="Background"
+                                                            Value="{DynamicResource ButtonHover}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Canvas Width="20" Height="16">
+                                        <Path Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                                        <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                                 Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                                        <Line x:Name="ListenBrainzEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                                    </Canvas>
+                                </Button>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <CheckBox x:Name="ChkListenBrainzEnabled" Content="Enabled"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" VerticalAlignment="Center"
+                                          Margin="0,0,10,0"
+                                          Checked="ListenBrainzEnabled_Changed" Unchecked="ListenBrainzEnabled_Changed"/>
+                                <TextBlock x:Name="ListenBrainzStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Maloja Scrobbling -->
+                            <TextBlock Text="Maloja Scrobbling" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,8"/>
+                            <TextBlock Text="Submit listens to your self-hosted Maloja server via its ListenBrainz-compatible endpoint. Enter your server URL (e.g. https://maloja.example.com) and API key."
+                                       Foreground="{DynamicResource TextDim}" FontSize="11"
+                                       FontFamily="Segoe UI" Margin="0,0,0,8" TextWrapping="Wrap"/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="280"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="6"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="6"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Server URL:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" x:Name="MalojaServerBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="MalojaField_Changed"/>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Username:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="MalojaUsernameBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="MalojaField_Changed"/>
+
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="API Key:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="4" Grid.Column="1" x:Name="MalojaKeyBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="MalojaField_Changed"/>
+
+                                <Button Grid.Row="0" Grid.Column="2" Grid.RowSpan="5"
+                                        x:Name="BtnToggleMalojaVisibility"
+                                        Click="ToggleMalojaVisibility_Click"
+                                        VerticalAlignment="Center" Margin="6,0,0,0"
+                                        Cursor="Hand" ToolTip="Show/Hide Maloja API key"
+                                        Background="Transparent" BorderBrush="Transparent"
+                                        Padding="4,2">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="4,2">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="bd" Property="Background"
+                                                            Value="{DynamicResource ButtonHover}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <Canvas Width="20" Height="16">
+                                        <Path Data="M10,4 C5,4 1.5,8 1.5,8 C1.5,8 5,12 10,12 C15,12 18.5,8 18.5,8 C18.5,8 15,4 10,4 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3" Fill="Transparent"/>
+                                        <Ellipse Canvas.Left="7.5" Canvas.Top="5.5" Width="5" Height="5"
+                                                 Stroke="{DynamicResource TextMuted}" StrokeThickness="1.2" Fill="Transparent"/>
+                                        <Line x:Name="MalojaEyeSlash" X1="3" Y1="14" X2="17" Y2="2"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"/>
+                                    </Canvas>
+                                </Button>
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <CheckBox x:Name="ChkMalojaEnabled" Content="Enabled"
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                          FontFamily="Segoe UI" VerticalAlignment="Center"
+                                          Margin="0,0,10,0"
+                                          Checked="MalojaEnabled_Changed" Unchecked="MalojaEnabled_Changed"/>
+                                <TextBlock x:Name="MalojaStatusText" Text=""
+                                           Foreground="{DynamicResource TextMuted}" FontSize="11"
+                                           FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Scrobble Thresholds -->
+                            <TextBlock Text="Scrobble Thresholds" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,8"/>
+                            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextDim}"
+                                       FontSize="11" FontFamily="Segoe UI" Margin="0,0,0,8"
+                                       Text="Whichever rule is met first triggers a scrobble. Set a value to 0 to disable that rule. Last.fm spec defaults: 50% OR 240s, minimum track length 30s."/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="200"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="4"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="4"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Scrobble at percent played:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" x:Name="ScrobbleAtPercentBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="ScrobbleThreshold_Changed"/>
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="% (0 disables)"
+                                           FontSize="11" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextDim}" Margin="6,0,0,0"/>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Scrobble at seconds played:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="ScrobbleAtSecondsBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="ScrobbleThreshold_Changed"/>
+                                <TextBlock Grid.Row="2" Grid.Column="2" Text="seconds (0 disables)"
+                                           FontSize="11" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextDim}" Margin="6,0,0,0"/>
+
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Minimum track length:"
+                                           FontSize="12" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondary}"/>
+                                <TextBox Grid.Row="4" Grid.Column="1" x:Name="MinScrobbleTrackSecondsBox"
+                                         FontSize="12" FontFamily="Segoe UI" Padding="4,3"
+                                         Background="{DynamicResource InputBg}"
+                                         Foreground="{DynamicResource TextPrimary}"
+                                         BorderBrush="{DynamicResource ButtonBorder}"
+                                         TextChanged="ScrobbleThreshold_Changed"/>
+                                <TextBlock Grid.Row="4" Grid.Column="2" Text="seconds (tracks shorter than this are never scrobbled)"
+                                           FontSize="11" FontFamily="Segoe UI" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextDim}" Margin="6,0,0,0"/>
+                            </Grid>
+
+                            <CheckBox x:Name="ChkPauseScrobbling" Content="Pause all scrobbling"
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                      FontFamily="Segoe UI" Margin="0,8,0,0"
+                                      Checked="PauseScrobbling_Changed" Unchecked="PauseScrobbling_Changed"/>
+
                             <!-- AcoustID Fingerprinting -->
                             <TextBlock Text="AcoustID Fingerprinting" FontSize="14" FontWeight="SemiBold"
                                        FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
@@ -1665,6 +2624,61 @@
                             <TextBlock Text="Silently checks GitHub for a new version each time AudioAuditor starts."
                                        Foreground="{DynamicResource TextDim}" FontSize="11"
                                        FontFamily="Segoe UI" Margin="22,2,0,0" TextWrapping="Wrap"/>
+
+                            <!-- Supporters -->
+                            <TextBlock Text="Supporters" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,8"/>
+                            <TextBlock Text="A huge thank you to everyone who keeps AudioAuditor alive!"
+                                       Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                       FontFamily="Segoe UI" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                            <StackPanel Margin="0,0,0,10">
+                                <TextBlock Text="No supporters yet — be the first!"
+                                           FontSize="12" FontFamily="Segoe UI"
+                                           Foreground="{DynamicResource TextMuted}"
+                                           FontStyle="Italic"/>
+                            </StackPanel>
+                            <TextBlock TextWrapping="Wrap" FontSize="11" FontFamily="Segoe UI"
+                                       Foreground="{DynamicResource TextDim}" Margin="0,0,0,10">
+                                <Run>Want to see your name here? </Run>
+                                <Hyperlink NavigateUri="https://ko-fi.com/angelsoftware" RequestNavigate="Hyperlink_RequestNavigate" Foreground="{DynamicResource AccentColor}" TextDecorations="None">Donate on Ko-fi</Hyperlink>
+                                <Run> and send a message with your preferred username (keep it reasonable). I'll add you to the list!</Run>
+                            </TextBlock>
+
+                            <!-- Open Source -->
+                            <TextBlock Text="Open Source" FontSize="14" FontWeight="SemiBold"
+                                       FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                       Margin="0,20,0,8"/>
+                            <TextBlock Text="AudioAuditor is built on great open-source libraries. View the full list with their authors and licenses."
+                                       Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                       FontFamily="Segoe UI" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                            <Button x:Name="CreditsButton" Click="OpenCredits_Click" Cursor="Hand"
+                                    HorizontalAlignment="Left">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="creditsBd" Background="{DynamicResource ButtonBg}"
+                                                BorderBrush="{DynamicResource ButtonBorder}"
+                                                BorderThickness="1" CornerRadius="6" Padding="14,8">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="&#xE8D6;" FontFamily="Segoe MDL2 Assets"
+                                                           FontSize="14" Foreground="{DynamicResource AccentColor}"
+                                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                <TextBlock Text="Open-Source Credits &amp; Licenses" FontSize="13"
+                                                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="creditsBd" Property="Background"
+                                                        Value="{DynamicResource ButtonHover}"/>
+                                                <Setter TargetName="creditsBd" Property="BorderBrush"
+                                                        Value="{DynamicResource AccentColor}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
 
                         </StackPanel>
                     </ScrollViewer>

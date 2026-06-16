@@ -221,6 +221,37 @@ namespace AudioQualityChecker.Services
             return val;
         }
 
+        /// <summary>
+        /// Escapes a string for use inside a PDF literal string (between parentheses).
+        /// Handles backslash, parens, and all control characters that would break the stream.
+        /// </summary>
+        private static string EscapePdfString(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return input;
+            var sb = new StringBuilder(input.Length + 8);
+            foreach (char c in input)
+            {
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '(':  sb.Append("\\(");  break;
+                    case ')':  sb.Append("\\)");  break;
+                    case '\n': sb.Append("\\n");  break;
+                    case '\r': sb.Append("\\r");  break;
+                    case '\t': sb.Append("\\t");  break;
+                    case '\b': sb.Append("\\b");  break;
+                    case '\f': sb.Append("\\f");  break;
+                    default:
+                        // Strip null bytes and other non-printable control characters
+                        if (c == '\0' || (c < 0x20 && c != '\t'))
+                            break;
+                        sb.Append(c);
+                        break;
+                }
+            }
+            return sb.ToString();
+        }
+
         private static void ExportText(IEnumerable<AudioFileInfo> files, string filePath, List<ExportColumnInfo>? columns)
         {
             var sb = new StringBuilder();
@@ -493,7 +524,7 @@ namespace AudioQualityChecker.Services
 
                 for (int l = startLine; l < endLine; l++)
                 {
-                    string line = allLines[l].TrimEnd().Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
+                    string line = EscapePdfString(allLines[l].TrimEnd());
                     // Wrap long lines instead of truncating
                     const int maxLineLen = 105;
                     while (line.Length > maxLineLen)

@@ -1,4 +1,154 @@
-## v1.7.0 (latest)
+## v1.8.0 (latest)
+
+### New Features
+
+#### Scrobbling — Multi-Service Support
+- **Libre.fm support** — scrobble to Libre.fm, the free and open-source Last.fm alternative. Authenticate with your Libre.fm credentials in Settings → Integrations.
+- **ListenBrainz support** — scrobble to ListenBrainz, the open-source music listening tracker by MetaBrainz. Enter your user token in Settings → Integrations.
+- **Maloja support (self-hosted)** — scrobble to your own [Maloja](https://github.com/krateng/maloja) server via its ListenBrainz-compatible submit endpoint. Enter your server URL and API key in Settings → Integrations; the API key is stored encrypted (DPAPI) like the other credentials, and your Maloja profile shows up in the ♫ widget's Profiles menu alongside the others.
+- **All four services run together** — Last.fm, Libre.fm, ListenBrainz, and Maloja all scrobble simultaneously. Each can be enabled/authenticated independently in Settings → Integrations, and a single playthrough fans out to every active service.
+- **Configurable scrobble thresholds** — replaces the previous hardcoded "50% OR 240s" rule. Set `Scrobble at percent`, `Scrobble at seconds`, and `Minimum track length` in Settings → Integrations; the first rule met fires the scrobble. Set a value to `0` to disable that rule.
+- **Anti-duplicate by max position reached** — seeking past the threshold and back never re-triggers a scrobble within the same play; the manager tracks the furthest position the song has reached, not the current position.
+- **Pause All Scrobbling toggle** — global on/off from Settings → Integrations or the new corner widget popup. While paused, no service receives now-playing or scrobble events.
+- **Per-song blacklist** — "Never Scrobble This Song" from the corner widget adds the current artist + title to a blacklist (persisted in `options.txt`). Matching is **cross-library by Artist|Title**, so duplicate copies of the same song in different folders all stay un-scrobbled.
+- **Don't Scrobble Current Song** — one-time skip for the current play without blacklisting; useful for previewing a track you don't want to count.
+- **Scrobble Now** — manually push the current track's scrobble immediately, regardless of threshold.
+- **Corner status widget** — new bottom-right ♫ icon in the main window status bar (replacing the old "Last.fm: Not Connected" text indicator), with a label to its left showing "Scrobbling" / "Paused" / "Offline" / "Not connected". Click to open the scrobble menu: dynamic per-service profile links, one-click Scrobble Now / Don't Scrobble / Never Scrobble This Song, and the global pause toggle. The widget uses rounded, subtle accent hover states and muted opacity when paused or offline.
+
+#### Now Playing — Background Animations
+- **Stars** — independent per-star twinkle phase, gentle parallax drift, a wider size/brightness spread, and rare soft-bloom bright stars.
+- **Shooting Stars** — sporadic streak scheduler: occasional meteors with a tapered glowing tail, a bright bloom head, randomized entry edge/angle, and a clean fade-out.
+- **Color Drift** — a slow, smooth ambient color gradient that shifts with the album palette.
+- **Rain** — angled wind-blown streaks with varied length/opacity/speed and an optional **lightning** flash (tasteful double-flicker, off-able, frequency configurable).
+- **Snow** — soft drifting flakes with per-flake sinusoidal sway and a configurable size/large-flake mix.
+- **Leaves** — autumn leaves tumbling and swaying on the wind (shares the Snow density control).
+- **Underwater** — a calm deep-sea scene: slowly rising bubbles, drifting blue/teal light shafts, swaying seaweed, and the occasional fish silhouette.
+- **Configurable, theme-matched controls** — Settings → Appearance → Now Playing Visuals exposes a mode picker (Off / Color Drift / Stars / Shooting Stars / Rain / Snow / Leaves / Underwater), two sliders per effect plus the lightning toggle, and a global animation-speed slider. All sliders tint to the active theme and live-apply.
+- **Auto-cycling** — optionally cycle through background modes automatically, including switching on each song change, at a configurable speed.
+
+#### Mini Player
+- **Floating mini player** — a compact, draggable, always-on-top window (toolbar **Mini Player** button) with cover art, title/artist, transport, seek, volume/mute, and shuffle. It has its own optional inline visualizer that runs independently of the main window, and the window grows/shrinks as you toggle it. Always-on-top preference is remembered.
+
+#### Now Playing — ColorMatch Eyedropper
+- New **eyedropper icon** in the Now Playing player bar (inside the **Color options** flyout, next to the ColorMatch toggle). Click to enter picker mode, then click anywhere on the album cover to sample that pixel's color. Choose how many colors to pick — **3 to 6** per track (default 3) — with the picker-count stepper in the Color options flyout.
+- **Picked colors override the auto-extracted album palette** — the background gradient, bottom bar tint, title highlight, buttons, icons, seek bar, volume bar, labels, active toggles, and visualizer colors all immediately switch to the picks. The first three picks drive the palette (icons, glow, visualizer); any extra picks enrich the background gradient as additional stops.
+- **Clean picker flow** — the picker stays active until you've made the chosen number of picks, then closes and clears the cover cursor/hover state. Click the eyedropper again to start a fresh session.
+- **Right-click the eyedropper to reset** and revert to auto-extracted colors.
+- **Per-track state** — overrides stay session-only unless the disk color cache option is enabled, in which case picked colors are saved using hashed cache keys. The chosen pick count persists in `options.txt`. Visualizer colors are clamped to a minimum luminance so dark picks still glow.
+
+#### Equalizer — Profiles
+- **Built-in EQ presets**: Flat, Bass Boost, Vocal, Rock, Pop, Jazz, Classical, Electronic — pick from a new dropdown in the EQ panel and the bands jump to the preset shape with the new gains applied to the current track immediately.
+- **Save current as a custom profile** — "Save..." button next to the dropdown prompts for a name, snapshots the current 10-band gains, and persists them to `%APPDATA%/AudioAuditor/eq-profiles.json`. Custom profiles appear at the bottom of the dropdown after a separator.
+- **Delete a custom profile** — when a custom profile is selected, a Delete button appears alongside Save. Built-in profiles cannot be deleted or overwritten.
+- **Auto-detect current shape** — opening the EQ panel auto-selects the matching profile if the saved gains exactly match a built-in or custom one, otherwise leaves the dropdown on Flat.
+
+#### Batch Metadata Editor
+- **Multi-file tag enrichment (GUI)** — select files in the grid and open **Batch Metadata** to fetch missing tags from online providers (MusicBrainz and others). Choose which fields (title, artist, album, album-artist, year, track/disc, genre, composer, lyrics, cover art…) and providers to use, **preview every proposed change** in a grid, then apply. "Missing-only" by default so existing tags aren't clobbered.
+
+#### Custom Themes
+- **Build your own theme** — a theme editor in Settings → Appearance: name it, set the palette, and watch a live preview update as you drag the controls. Saved custom themes persist and appear alongside the built-ins in the theme picker, and can be re-edited or deleted (built-ins can't).
+
+#### Your Wrapped
+- **AudioAuditor Wrapped** — a big, single stats dashboard of your local listening and library stats (files scanned, hours listened, top artists/albums/tracks, favorite formats, library quality, and more). Stats are gathered 100% locally from your plays/scans/analyses, and can be reset anytime.
+
+#### Session Restore & Crash Recovery
+- **Reload your last session** — AudioAuditor remembers which files/folders you had loaded and offers to restore them on the next launch.
+- **Crash recovery** — if the app exits abnormally it leaves a recovery marker and offers to bring back your previous session (plus a crash snapshot) the next time you open it.
+
+#### Visual Customization
+- **Main-window background image** — set a custom image behind the main window, with adjustable blur and opacity.
+- **Now Playing backdrop** — use the album art, a custom image, or custom colors as the Now Playing background, with blur, brightness, zoom, and position controls.
+- **Cover shape** — choose the album-cover shape in Now Playing and the Mini Player.
+- **Playbar styles** — pick a playbar animation style, applied across the main window, Now Playing, and the Mini Player.
+
+#### Now Playing — Layout Profiles
+- **Single-row player bar** — the bottom player bar keeps transport controls, auto-play, secondary tools, volume, and Back in one row, with long song/artist text trimmed before controls can overlap.
+- **Visualizer-aware layout profiles** — Now Playing saves separate layout profiles for windowed/fullscreen with the visualizer on or off, including user-adjusted sizes, offsets, visualizer height, and visualizer placement in the user settings file.
+- **Standalone bottom-bar alignment** — artist text in the standalone Now Playing bottom bar sits slightly lower so it lines up more naturally with the song title.
+
+#### Now Playing — Customize Layout
+- **Compact, collapsible menu** — the Customize Layout popup was far too long. It's now organized into collapsible sections (Layout Profiles, Bottom Bar Buttons, Glow Options, Backdrop, Sizes, Position Offsets), collapsed by default so you expand only what you need. Reset to Default stays pinned at the bottom.
+- **No more runaway width** — expanding the "Bottom Bar Buttons" section used to stretch the popup absurdly wide (a big gap between each button label and its move arrows) because the panel had no width bound. It's now a fixed, compact width that wraps text and keeps the rows tight; height still scrolls within the popup.
+- **Album Cover Glow slider** — new size slider in the Customize Layout popup. `0` removes the glow around the album cover entirely, `1` is the default soft halo, and values up to `2.0` make the glow noticeably larger. Setting persists to user settings (`NpCoverGlowSize`) so it survives restarts. The breathing-pulse animation respects the new scale.
+
+#### Now Playing — Look Up This Song
+- **Independent search services** — the Now Playing "look up this song" magnifier now has its **own** configurable service list, separate from the main window's search buttons. Set up to 6 services, pick which appear (uncheck "Show" to display fewer), and configure custom search URLs/icons — all in Settings → Appearance → "Now Playing — Look Up This Song".
+- **Copy from main window** — one button seeds the Now Playing services from your existing main-window setup as a starting point. (New installs and existing configs are seeded automatically on first run, so nothing looks empty.)
+
+#### Performance & Accessibility (Desktop)
+- **Reduce motion** — the Settings → Appearance "Enable UI animations" toggle is now **"Reduce motion"**, and it's comprehensive: it stops Now Playing backgrounds, cover glow, lyric transitions, and playbar effects **and** the audio visualizer (both the main and mini-player visualizers, which previously kept animating). One switch to calm the whole app on lower-end hardware.
+- **Battery Saver** — new Settings → Cache & Files → Performance mode that disables animations to save power. A master toggle plus per-area checkboxes (Now Playing backgrounds, audio visualizer, cover glow, lyric transitions, waveform & playbar effects) and an **"Entire program (all areas)"** option. Applies live, no restart; manual on/off.
+- **Hardware acceleration control** — new render-mode selector (Auto / **Force software (CPU only)**) for machines with flaky GPU drivers, plus a read-out of the detected render tier. Applies on restart.
+- **Lighter blurred backdrops** — the main-window and Now Playing album backdrops are now GPU-cached (BitmapCache), so their heavy blur isn't recomputed every animation frame while particles/gradients move over them.
+- **Lighter oscilloscope visualizer** — the Scope visualizer style no longer allocates a fresh point buffer (~one per horizontal pixel) every frame; it reuses a single buffer and only rebuilds it when the window is resized, cutting steady 60fps GC churn on the Now Playing screen.
+
+#### Main Window — Toolbar
+- **Optional toolbar buttons** — new Settings → Appearance toggles let you hide the **Your Wrapped** button, the **Mini Player** button, and the **music-service** buttons from the main toolbar if you don't use them. All three are shown by default.
+
+---
+
+### Coming Soon
+- A browser version of AudioAuditor is in development and should be available in the next few months.
+- A **macOS CLI** is also coming soon.
+
+---
+
+### Improvements & Fixes
+
+#### Now Playing — Color Options
+- **"Color match" button is now "Color options"** — the Now Playing toolbar color button (and its flyout) is renamed to Color options, and the flyout now hosts a themed picker-count stepper alongside the existing Color Match toggle and eyedropper.
+
+#### Playback — Loading & Gapless
+- **No more "is it frozen?" on heavy files** — track loading (decoder open + duration scan) used to run on the UI thread, so a large FLAC, a VBR MP3 that needs a full duration scan, or a slow-to-parse container could freeze the window for a few seconds and look like a crash. Loading now happens on a background thread (serialized so rapid skips don't overlap), keeping the UI responsive while a track loads.
+- **Earlier gapless pre-buffer** — the next track is now prepared a little earlier (when ~5s remain instead of 3s) so it's ready in time for a seamless switch even on slower files.
+
+#### Settings — Window
+- **Drag from anywhere** — the Settings window can now be moved by click-dragging any empty area of it, not just the title strip. Clicks on buttons, tabs, sliders, combo boxes, list items, and text fields still work normally, and the close button no longer starts a drag.
+
+#### Settings — Credits & Licenses
+- **New credits window** — credits all the open-source projects this app uses, with a **View license** button for each that opens its full license/notice text, shipped with the app in a `Third.Party.Notices` folder.
+
+#### GUI — Lyrics
+- **Lyric line-change animation no longer interrupts itself** — the catch-up retry was setting `_npCurrentLyricIndex = -1` and re-calling the highlighter on every tick, even when the first call already advanced the line successfully. That double-call cancelled the in-flight `DoubleAnimation`/`ColorAnimation` mid-transition. The retry now only re-runs when the first call hasn't advanced, so the smooth easing curve is preserved for line changes.
+- **Blur-mode lyric blur returns after minimize/restore** — fixed: minimize → restore used to leave the Lyrics mode showing enabled but inactive lines visually un-blurred. `ResumeAnimations` and `UpdateLyricsWorkState` now explicitly re-apply blur effects on restore.
+- **Provider fallback behavior** — Auto lyrics now keeps trying local, LRCLIB, and Netease before showing "none found," prefers timed lyrics over plain text when available, and applies the conservative censored-lyrics fallback only when the option is enabled.
+- **Translated synced lyrics** — translation rebuilds preserve synced lyric timing and immediately re-run highlight/scroll against the current playback position.
+- **Standalone Now Playing lyric sync** — the separate Now Playing window uses the same delayed catch-up behavior as the main Now Playing surface so synced lyrics start highlighting and scrolling after load.
+
+#### GUI — Lyrics (Timing)
+- **Tighter synced-lyric tracking** — the active lyric line was advanced only by the 50 ms Now Playing update timer, a `DispatcherTimer` that runs below rendering priority and could be delayed by heavy background animations — so the highlight sometimes lagged or desynced under load and was fine when idle. While timed lyrics play, the highlight is now also driven from the per-frame render loop at the live playback position (it early-returns when the line hasn't changed, so it stays cheap), and the decorative Color Drift gradient timer is throttled (imperceptibly) while lyrics track, freeing UI-thread time. Some lag inherent to the audio buffer remains (covered by the existing 200 ms look-ahead), but tracking is noticeably steadier.
+
+#### Playback — Persistence
+- **Volume actually remembers** — fixed: the bottom-right Now Playing volume slider had a hardcoded XAML default of `Value="80"` that overwrote the loaded value when the NP panel hadn't been shown yet. Removed; the slider now picks up the saved value cleanly on launch.
+
+#### Playback — Up Next
+- **Shuffle-aware Up Next** — fixed: when shuffle was on, the "Up Next" preview showed the current shuffled track, not the next one. It now reads `_shuffleDeckIndex + 1` and wraps to `_shuffleDeck[0]` when looping all.
+
+#### Stability — Crash Logging
+- **Full-coverage crash logging** — crash logging now captures WPF UI-thread exceptions (`DispatcherUnhandledException`) and unobserved background-task exceptions (`TaskScheduler.UnobservedTaskException`) in addition to `AppDomain.UnhandledException`. Previously a crash on the UI thread (e.g. opening certain files) left no log at all, making reports undiagnosable.
+- **On by default, with an opt-out** — local crash logging is now enabled by default (it was opt-in). The first-run/upgrade Welcome dialog explains it and lets you turn it off, and the Settings toggle still works. Logs stay 100% local and have file paths redacted.
+
+#### Stability — Multichannel / Dolby Atmos Playback
+- **Verified multichannel-safe** — the playback DSP chain (Equalizer → Spatial Audio) and the file analyzer were confirmed against 5.1 / 7.1 / 7.1.4 audio (AAC, E-AC-3, ALAC): unsupported or undecodable tracks now fail gracefully (auto-skip with a status message, or a single error dialog) instead of taking the app down. Added an automated multichannel regression test so this can't quietly break again.
+
+#### Settings — Persistence Reliability
+- **Column layout saves on change, not just on exit** — column order and widths are now persisted (debounced) whenever you reorder or resize a column, instead of only when the app closes cleanly. A crash no longer wipes your grid layout.
+- **Settings-save failures are no longer silent** — the options-file save/load and column-layout save paths previously swallowed every exception, so a failed write silently lost your settings with no trace. These now write a local crash log so the cause is visible.
+
+#### Audio Analysis — ALAC
+- **ALAC bit depth & bitrate now reported** — Apple Lossless files in `.m4a`/`.mp4` containers previously showed blank bit depth and bitrate because TagLib reports `0` for ALAC. AudioAuditor now parses the ALAC magic-cookie atom (`ALACSpecificConfig`) to read the real bit depth, sample rate, channel count, and average bitrate.
+
+#### Audio Analysis — MQA
+- **Fixed MQA false positives** — the embedded-MQA scanner flagged a file the moment it saw the 36-bit sync word **once**. Across 8 bit positions and ~132k samples that's a real (~1 in 65,000) chance of a random match in ordinary lossless files, so large libraries collected phantom "MQA" tags. Detection now requires the sync word to **recur at least 3 times** at the same bit position — which genuine MQA always does (the sync repeats every frame), while a chance collision does not. Backed by unit tests covering single/double/triple sync occurrences and random-noise input.
+
+#### Packaging — Setup Installer
+- **New Windows installer** — alongside the existing portable `.exe`, there's now a proper Inno Setup installer (`AudioAuditor-Setup-<version>.exe`) with Start Menu/desktop shortcuts, an uninstaller, optional file associations, and a choice of per-user or all-users install. Build both with `scripts\Build-Installer.ps1`; the winget package now uses the installer.
+
+#### Under the Hood
+- **Codebase split for maintainability** — many large source files were broken into focused partials (Now Playing, ThemeManager, Settings, MainWindow, the analyzer) with no behavior change, making the app easier to evolve safely.
+- **Automated test suites** — new Core and Windows test projects now guard the analyzer settings, color pipeline, lyric matching/timing, shuffle, smart-rename, theme persistence, multichannel DSP, and MQA detection against regressions.
+
+## v1.7.0
 
 ### This is gonna be a long one lol
 ### New Features

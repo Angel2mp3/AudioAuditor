@@ -287,8 +287,15 @@ namespace AudioQualityChecker.Services
 
                 return (pixels, columns, rows);
             }
-            catch
+            catch (OperationCanceledException)
             {
+                throw; // let callers treat cancellation distinctly from a real failure
+            }
+            catch (Exception ex)
+            {
+                // Don't swallow silently — surface the reason so a genuine decode/render
+                // failure is diagnosable instead of looking like "nothing happened".
+                System.Diagnostics.Debug.WriteLine($"[SpectrogramGenerator] generation failed for '{filePath}': {ex}");
                 return null;
             }
         }

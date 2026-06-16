@@ -1,0 +1,73 @@
+# Normalize all text files to LF in the repo (overrides core.autocrlf)
+* text=auto eol=lf
+
+# C# / .NET source
+*.cs        text eol=lf
+*.csx       text eol=lf
+*.csproj    text eol=lf
+*.sln       text eol=lf
+*.props     text eol=lf
+*.targets   text eol=lf
+*.nuspec    text eol=lf
+*.config    text eol=lf
+*.ruleset   text eol=lf
+*.editorconfig text eol=lf
+
+# XAML / WPF
+*.xaml      text eol=lf
+*.xamlx     text eol=lf
+
+# Web / data
+*.json      text eol=lf
+*.xml       text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.html      text eol=lf
+*.css       text eol=lf
+*.js        text eol=lf
+*.ts        text eol=lf
+
+# Docs / text
+*.md        text eol=lf
+*.txt       text eol=lf
+*.gitignore text eol=lf
+*.gitattributes text eol=lf
+
+# Scripts — Windows batch stays CRLF, everything else LF
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.ps1       text eol=lf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Installer / packaging
+*.iss       text eol=lf
+
+# Binary — never diff or convert
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.bmp       binary
+*.webp      binary
+*.svg       binary
+*.ico       binary
+*.exe       binary
+*.dll       binary
+*.pdb       binary
+*.nupkg     binary
+*.snupkg    binary
+*.zip       binary
+*.7z        binary
+*.msi       binary
+*.cab       binary
+*.dmp       binary
+*.wav       binary
+*.mp3       binary
+*.flac      binary
+*.ogg       binary
+*.m4a       binary
+*.aac       binary
+*.wma       binary
+*.aiff      binary
+*.opus      binary

@@ -3,13 +3,19 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:converters="clr-namespace:AudioQualityChecker.Converters"
         Title="AudioAuditor"
-        Height="700" Width="1250"
-        MinHeight="550" MinWidth="1000"
+        Height="700" Width="1360"
+        MinHeight="550" MinWidth="1190"
         Background="{DynamicResource WindowBg}"
         Foreground="{DynamicResource TextPrimary}"
         WindowStartupLocation="CenterScreen"
         Icon="/Resources/icon.png"
         AllowDrop="True" Drop="Window_Drop" DragOver="Window_DragOver">
+
+    <Window.TaskbarItemInfo>
+        <TaskbarItemInfo x:Name="TaskbarInfo"
+                         Description="AudioAuditor"
+                         ThumbnailClipMargin="20,20,20,20"/>
+    </Window.TaskbarItemInfo>
 
     <Window.Resources>
         <converters:StatusToColorConverter x:Key="StatusToColor"/>
@@ -152,9 +158,9 @@
 
         <!-- Themed ToolTip style -->
         <Style TargetType="ToolTip">
-            <Setter Property="Background" Value="{DynamicResource PanelBg}"/>
+            <Setter Property="Background" Value="{DynamicResource GlassFloatingBg}"/>
             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource GlassBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="8,4"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
@@ -178,7 +184,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
-                        <Grid>
+                        <Grid Background="Transparent">
                             <Border Height="3" VerticalAlignment="Center"
                                     Background="{DynamicResource ScrollBg}" CornerRadius="1.5"/>
                             <Track x:Name="PART_Track">
@@ -234,15 +240,15 @@
             </Setter>
         </Style>
 
-        <!-- Seek slider with circle thumb and click-to-position -->
-        <Style x:Key="SeekSlider" TargetType="Slider">
-            <Setter Property="Foreground" Value="{DynamicResource PlaybarAccentColor}"/>
+        <!-- Compact themed slider for popup controls (crossfade, etc.) -->
+        <Style x:Key="CrossfadeSlider" TargetType="Slider">
+            <Setter Property="Foreground" Value="{DynamicResource AccentColor}"/>
             <Setter Property="Background" Value="{DynamicResource ScrollBg}"/>
             <Setter Property="IsMoveToPointEnabled" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
-                        <Grid>
+                        <Grid Background="Transparent">
                             <Border Height="4" VerticalAlignment="Center"
                                     Background="{DynamicResource ScrollBg}" CornerRadius="2"/>
                             <Track x:Name="PART_Track">
@@ -251,6 +257,77 @@
                                                   Focusable="False" OverridesDefaultStyle="True">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="4" VerticalAlignment="Center"
+                                                        Background="{DynamicResource AccentColor}"
+                                                        CornerRadius="2"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" IsTabStop="False"
+                                                  Focusable="False" OverridesDefaultStyle="True">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Background="Transparent"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb OverridesDefaultStyle="True" Cursor="Hand">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse x:Name="cfThumb" Width="12" Height="12"
+                                                         Fill="{DynamicResource AccentColor}"
+                                                         Stroke="{DynamicResource ButtonBorder}"
+                                                         StrokeThickness="1">
+                                                    <Ellipse.Effect>
+                                                        <DropShadowEffect ShadowDepth="0" BlurRadius="3"
+                                                                          Opacity="0.25" Color="Black"/>
+                                                    </Ellipse.Effect>
+                                                </Ellipse>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="cfThumb" Property="Width" Value="14"/>
+                                                        <Setter TargetName="cfThumb" Property="Height" Value="14"/>
+                                                        <Setter TargetName="cfThumb" Property="Stroke"
+                                                                Value="{DynamicResource AccentColor}"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Seek slider with circle thumb and click-to-position -->
+        <Style x:Key="SeekSlider" TargetType="Slider">
+            <Setter Property="Foreground" Value="{DynamicResource PlaybarAccentColor}"/>
+            <Setter Property="Background" Value="{DynamicResource ScrollBg}"/>
+            <Setter Property="IsMoveToPointEnabled" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Background="Transparent">
+                            <Border Height="4" VerticalAlignment="Center"
+                                    Background="{DynamicResource ScrollBg}" CornerRadius="2"/>
+                            <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge" IsTabStop="False"
+                                                  Focusable="False" OverridesDefaultStyle="True">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <!-- Played portion: paint the accent here (like the mini player) so the
+                                                     bar is ALWAYS the themed/colormatch accent and never falls back to the
+                                                     dark ScrollBg track (the "black playbar on Ocean" bug) when the
+                                                     PlaybarAnimCanvas overlay hasn't painted yet. Animated styles draw on
+                                                     top of this on the overlay canvas. -->
                                                 <Border Height="4" VerticalAlignment="Center"
                                                         Background="{DynamicResource PlaybarAccentColor}"
                                                         CornerRadius="2"/>
@@ -363,8 +440,8 @@
                                       MinWidth="{TemplateBinding ActualWidth}"
                                       MaxHeight="300">
                                     <Border x:Name="DropDownBorder"
-                                            Background="{DynamicResource PanelBg}"
-                                            BorderBrush="{DynamicResource ButtonBorder}"
+                                            Background="{DynamicResource GlassFloatingBg}"
+                                            BorderBrush="{DynamicResource GlassBorderBrush}"
                                             BorderThickness="1" CornerRadius="3"
                                             Margin="0,1,0,0" Padding="2">
                                         <ScrollViewer SnapsToDevicePixels="True">
@@ -408,6 +485,40 @@
             </Setter>
         </Style>
 
+        <Style x:Key="ThemedCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal">
+                            <Border x:Name="box" Width="14" Height="14" CornerRadius="3"
+                                    Background="{DynamicResource InputBg}"
+                                    BorderBrush="{DynamicResource ButtonBorder}"
+                                    BorderThickness="1" VerticalAlignment="Center">
+                                <Path x:Name="check" Data="M 3,7 L 6,10 L 11,4"
+                                      Stroke="{DynamicResource TextPrimary}" StrokeThickness="2"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter Margin="6,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="box" Property="Background" Value="{DynamicResource PlaybarAccentColor}"/>
+                                <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource PlaybarAccentColor}"/>
+                                <Setter TargetName="check" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Search box style -->
         <Style x:Key="SearchBox" TargetType="TextBox">
             <Setter Property="Background" Value="{DynamicResource InputBg}"/>
@@ -419,6 +530,34 @@
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <!-- Rounded border template so the search box matches the other inputs/buttons on this
+                 screen (CornerRadius 3, same tokens). A raw TextBox has square corners + no radius. -->
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3"
+                                SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush"
+                                        Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush"
+                                        Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- ═══ Themed Context Menu ═══ -->
@@ -487,7 +626,7 @@
                             <Popup x:Name="PART_Popup"
                                    IsOpen="{TemplateBinding IsSubmenuOpen}"
                                    AllowsTransparency="True" Focusable="False"
-                                   Placement="Right" HorizontalOffset="-4" VerticalOffset="-6">
+                                   Placement="Right" HorizontalOffset="0" VerticalOffset="-2">
                                 <Border Background="{DynamicResource InputBg}"
                                         BorderBrush="{DynamicResource ButtonBorder}"
                                         BorderThickness="1" CornerRadius="6" Padding="4">
@@ -539,10 +678,23 @@
     </Window.Resources>
 
     <Grid>
+    <Image x:Name="MainBackgroundImage"
+           Stretch="UniformToFill"
+           Opacity="0"
+           IsHitTestVisible="False"
+           RenderOptions.BitmapScalingMode="LowQuality"
+           CacheMode="BitmapCache">
+        <!-- Static, heavily-blurred backdrop behind animated content: cache the blurred
+             result as a GPU texture so per-frame compositing of overlaid animations
+             doesn't re-run the BlurEffect. Invalidated only on track change. -->
+        <Image.Effect>
+            <BlurEffect x:Name="MainBackgroundBlurEffect" Radius="16" RenderingBias="Performance"/>
+        </Image.Effect>
+    </Image>
     <DockPanel x:Name="MainContent">
         <!-- ═══ Toolbar ═══ -->
-        <Border DockPanel.Dock="Top" Background="{DynamicResource ToolbarBg}" Padding="8,6"
-                BorderBrush="{DynamicResource BorderColor}" BorderThickness="0,0,0,1">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource GlassToolbarBg}" Padding="8,6"
+                BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="0,0,0,1">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -573,9 +725,15 @@
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                        VerticalAlignment="Center" Margin="0,0,5,0"/>
-                            <TextBlock Text="Clear All" FontFamily="Segoe UI" FontSize="12"
+                            <TextBlock Text="Clear" FontFamily="Segoe UI" FontSize="12"
                                        VerticalAlignment="Center"/>
                         </StackPanel>
+                    </Button>
+                    <Button x:Name="RefreshBtn" Click="Refresh_Click" FontSize="12"
+                            Style="{StaticResource DarkButton}" Margin="0,0,4,0"
+                            ToolTip="Re-analyze loaded files (or just the selected ones). Use after adding columns or if something didn't read.">
+                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                   VerticalAlignment="Center"/>
                     </Button>
                     <Rectangle Width="1" Fill="{DynamicResource ButtonBorder}" Margin="2,2"/>
                     <Button x:Name="ExportDropdownBtn" Click="ExportDropdown_Click"
@@ -615,10 +773,19 @@
                                        VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+                    <Rectangle Width="1" Fill="{DynamicResource ButtonBorder}" Margin="4,2"/>
+                    <Button x:Name="MiniPlayerButton" Click="MiniPlayer_Click" Style="{StaticResource DarkButton}" Margin="4,0,0,0"
+                            ToolTip="Mini Player" Padding="6,3">
+                        <TextBlock Text="&#xE73F;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                   VerticalAlignment="Center"/>
+                    </Button>
+                    <Button x:Name="WrappedButton" Click="Wrapped_Click" Style="{StaticResource DarkButton}" Margin="4,0,0,0" ToolTip="Your Wrapped" Padding="6,3">
+                        <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center"/>
+                    </Button>
                 </StackPanel>
 
                 <!-- Music Service Search Buttons -->
-                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center"
+                <StackPanel x:Name="MusicServicesPanel" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center"
                             Margin="12,0">
                     <Button x:Name="ServiceBtn1" Click="ServiceSearch_Click" Tag="0"
                             Style="{StaticResource DarkButton}" Margin="3,0,3,0" Padding="3"
@@ -711,8 +878,8 @@
         </Border>
 
         <!-- ═══ Status Bar ═══ -->
-        <Border DockPanel.Dock="Bottom" Background="{DynamicResource ToolbarBg}" Padding="10,5"
-                BorderBrush="{DynamicResource BorderColor}" BorderThickness="0,1,0,0">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource GlassToolbarBg}" Padding="10,5"
+                BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="0,1,0,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -767,16 +934,63 @@
                         </TextBlock>
                     </Grid>
                 </StackPanel>
-                <TextBlock Grid.Column="3" x:Name="LastFmStatusIndicator"
-                           Text="Last.fm: Not Connected"
-                           Foreground="{DynamicResource TextMuted}" FontSize="11"
-                           FontFamily="Segoe UI" VerticalAlignment="Center"
-                           Margin="10,0,0,0"
-                           Cursor="Hand" MouseLeftButtonDown="LastFmStatus_Click">
-                    <TextBlock.ToolTip>
-                        <ToolTip Content="Click to open your Last.fm profile"/>
-                    </TextBlock.ToolTip>
-                </TextBlock>
+                <StackPanel Grid.Column="3" Orientation="Horizontal"
+                            VerticalAlignment="Center" Margin="10,0,0,0">
+                    <TextBlock x:Name="ScrobbleStatusText"
+                               Text=""
+                               FontSize="11" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextMuted}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,6,0"/>
+                <Button x:Name="ScrobbleWidgetButton"
+                        Click="ScrobbleWidgetButton_Click"
+                        Background="Transparent" BorderThickness="0"
+                        Padding="6,2" Margin="0" Cursor="Hand"
+                        Foreground="{DynamicResource AccentColor}"
+                        VerticalAlignment="Center"
+                        ToolTip="Scrobbling — Click to manage">
+                    <Button.Template>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Grid Background="Transparent">
+                                <Border x:Name="ScrobbleAccentOverlay"
+                                        Background="{DynamicResource AccentColor}"
+                                        CornerRadius="5"
+                                        Opacity="0"/>
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="ScrobbleAccentOverlay" Property="Opacity" Value="0.16"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="ScrobbleAccentOverlay" Property="Opacity" Value="0.24"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <TextBlock Text="♫" FontSize="16" FontWeight="SemiBold"
+                               VerticalAlignment="Center"/>
+                    <Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem x:Name="MnuScrobbleProfiles" Header="Profiles" StaysOpenOnClick="True"/>
+                            <Separator/>
+                            <MenuItem x:Name="MnuScrobbleNow" Header="Scrobble Current Song Now"
+                                      Click="MnuScrobbleNow_Click"/>
+                            <MenuItem x:Name="MnuDontScrobble" Header="Don't Scrobble Current Song"
+                                      Click="MnuDontScrobble_Click"/>
+                            <MenuItem x:Name="MnuBlacklist" Header="Never Scrobble This Song"
+                                      Click="MnuBlacklist_Click"/>
+                            <MenuItem x:Name="MnuUnblacklist" Header="Remove from Blacklist"
+                                      Click="MnuUnblacklist_Click" Visibility="Collapsed"/>
+                            <Separator/>
+                            <MenuItem x:Name="MnuPauseAll" Header="Pause All Scrobbling"
+                                      IsCheckable="True" Click="MnuPauseAll_Click"/>
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
+                </StackPanel>
                 <!-- Offline mode badge — shown only when offline mode is active -->
                 <TextBlock Grid.Column="4" x:Name="TxtOfflineBadge"
                            Text="● OFFLINE"
@@ -823,7 +1037,7 @@
                       SelectionUnit="FullRow"
                       VirtualizingPanel.IsVirtualizing="True"
                       VirtualizingPanel.VirtualizationMode="Recycling"
-                      VirtualizingPanel.ScrollUnit="Item"
+                      VirtualizingPanel.ScrollUnit="Pixel"
                       VirtualizingPanel.CacheLength="2,2"
                       VirtualizingPanel.CacheLengthUnit="Page"
                       EnableRowVirtualization="True"
@@ -939,10 +1153,17 @@
                         <!-- Metadata submenu -->
                         <MenuItem Header="Metadata">
                             <MenuItem Header="Edit Metadata..." Click="EditMetadata_Click"/>
+                            <MenuItem Header="Batch Metadata Enrichment..." Click="BatchMetadata_Click"/>
                             <MenuItem Header="Strip Metadata..." Click="StripMetadata_Click"/>
                             <Separator/>
                             <MenuItem Header="Batch Rename..." Click="BatchRename_Click"/>
                             <MenuItem Header="Quick Rename (Selected Pattern)" Click="QuickRename_Click"/>
+                            <MenuItem Header="Auto Rename">
+                                <MenuItem Header="To &quot;Artist - Title&quot;" Click="AutoRenameArtistTitle_Click"
+                                          ToolTip="Rename selected files to 'Artist - Title.ext'. Files already in this format are skipped untouched."/>
+                                <MenuItem Header="To &quot;Title - Artist&quot;" Click="AutoRenameTitleArtist_Click"
+                                          ToolTip="Rename selected files to 'Title - Artist.ext'. Files already in this format are skipped untouched."/>
+                            </MenuItem>
                             <Separator/>
                             <MenuItem Header="Write Replay Gain" Click="WriteReplayGain_Click"/>
                         </MenuItem>
@@ -1008,11 +1229,11 @@
                     <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="140"/>
                     <DataGridTextColumn Header="Filename" Binding="{Binding FileName}" Width="180"/>
                     <DataGridTextColumn Header="Path" Binding="{Binding FilePath}" Width="140"/>
-                    <DataGridTextColumn Header="Sample Rate" Binding="{Binding SampleRateDisplay}" Width="105"/>
-                    <DataGridTextColumn Header="Bits" Binding="{Binding BitsPerSampleDisplay}" Width="65"/>
-                    <DataGridTextColumn Header="Ch" Binding="{Binding ChannelsDisplay}" Width="60"/>
-                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="75"/>
-                    <DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="80"/>
+                    <DataGridTextColumn Header="Sample Rate" Binding="{Binding SampleRateDisplay}" Width="105" SortMemberPath="SampleRate"/>
+                    <DataGridTextColumn Header="Bits" Binding="{Binding BitsPerSampleDisplay}" Width="65" SortMemberPath="BitsPerSample"/>
+                    <DataGridTextColumn Header="Ch" Binding="{Binding ChannelsDisplay}" Width="60" SortMemberPath="Channels"/>
+                    <DataGridTextColumn Header="Duration" Binding="{Binding Duration}" Width="75" SortMemberPath="DurationSeconds"/>
+                    <DataGridTextColumn Header="Size" Binding="{Binding FileSize}" Width="80" SortMemberPath="FileSizeBytes"/>
 
                     <!-- Bitrate (color-coded) -->
                     <DataGridTemplateColumn Header="Bitrate" Width="95" SortMemberPath="ReportedBitrate">
@@ -1050,8 +1271,8 @@
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
 
-                    <DataGridTextColumn Header="Format" Binding="{Binding FormatDisplay}" Width="90"/>
-                    <DataGridTextColumn Header="Max Freq" Binding="{Binding EffectiveFrequencyDisplay}" Width="100"/>
+                    <DataGridTextColumn Header="Format" Binding="{Binding FormatDisplay}" Width="90" SortMemberPath="Extension"/>
+                    <DataGridTextColumn Header="Max Freq" Binding="{Binding EffectiveFrequencyDisplay}" Width="100" SortMemberPath="EffectiveFrequency"/>
 
                     <DataGridTemplateColumn Header="Clipping" Width="120" SortMemberPath="HasClipping">
                         <DataGridTemplateColumn.CellTemplate>
@@ -1071,8 +1292,8 @@
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
 
-                    <DataGridTextColumn Header="BPM" Binding="{Binding BpmDisplay}" Width="65"/>
-                    <DataGridTextColumn Header="Replay Gain" Binding="{Binding ReplayGainDisplay}" Width="105"/>
+                    <DataGridTextColumn Header="BPM" Binding="{Binding BpmDisplay}" Width="65" SortMemberPath="Bpm"/>
+                    <DataGridTextColumn Header="Replay Gain" Binding="{Binding ReplayGainDisplay}" Width="105" SortMemberPath="ReplayGain"/>
                     <DataGridTextColumn Header="DR" Binding="{Binding DynamicRangeDisplay}" Width="65" SortMemberPath="DynamicRange">
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock">
@@ -1195,12 +1416,12 @@
                           ShowsPreview="True"/>
 
             <!-- ═══ Bottom Panel (Spectrogram + Player) ═══ -->
-            <Border Grid.Row="2" Background="{DynamicResource PanelBg}"
-                    BorderBrush="{DynamicResource BorderColor}" BorderThickness="0,1,0,0">
+            <Border Grid.Row="2" Background="{DynamicResource GlassPanelBg}"
+                    BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="0,1,0,0">
                 <DockPanel>
                     <!-- ═══ Player Bar ═══ -->
-                    <Border DockPanel.Dock="Bottom" Background="{DynamicResource GridAltRowBg}"
-                            Padding="10,6" BorderBrush="{DynamicResource BorderColor}"
+                    <Border DockPanel.Dock="Bottom" Background="{DynamicResource GlassToolbarBg}"
+                            Padding="10,6" BorderBrush="{DynamicResource GlassBorderBrush}"
                             BorderThickness="0,1,0,0">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -1234,13 +1455,14 @@
                                     ToolTip="Loop: Off" Margin="2,0,0,0">
                                 <Viewbox Width="14" Height="14" Margin="-1">
                                     <Canvas Width="16" Height="16">
+                                        <!-- Modern repeat icon: rounded rectangular loop with chevron arrowheads -->
                                         <Path x:Name="LoopIcon"
-                                              Data="M 1,11 L 1,5 L 14,5 M 14,5 L 11,2 M 14,5 L 11,8 M 14,5 L 14,11 L 1,11 M 1,11 L 4,14 M 1,11 L 4,8"
-                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
+                                              Data="M 4,5 L 12,5 M 10,3 L 12,5 L 10,7 M 12,5 Q 14,5 14,8 Q 14,11 11,11 L 4,11 M 6,9 L 4,11 L 6,13 M 4,11 Q 2,11 2,8 Q 2,5 5,5"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.6"
                                               Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
                                         <TextBlock x:Name="LoopOneIndicator" Text="1" FontSize="6" FontWeight="Bold"
                                                    Foreground="{DynamicResource TextMuted}" Visibility="Collapsed"
-                                                   Canvas.Left="5.5" Canvas.Top="3"/>
+                                                   Canvas.Left="6.5" Canvas.Top="5"/>
                                     </Canvas>
                                 </Viewbox>
                             </Button>
@@ -1313,8 +1535,8 @@
                                             Style="{StaticResource SeekSlider}"
                                             VerticalAlignment="Center"/>
                                     <Canvas x:Name="PlaybarAnimCanvas" IsHitTestVisible="False"
-                                            Height="8" VerticalAlignment="Center" HorizontalAlignment="Stretch"
-                                            ClipToBounds="True" Margin="0"/>
+                                            Height="26" VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                                            ClipToBounds="False" Margin="0"/>
                                 </Grid>
                                 <Grid Grid.Row="1">
                                     <TextBlock x:Name="PlayerTimeText" Text="0:00 / 0:00"
@@ -1352,52 +1574,58 @@
                             <Button Grid.Column="11" x:Name="BtnEqToggle" Click="EqToggle_Click"
                                     Style="{StaticResource PlayerButton}" Margin="8,0,0,0"
                                     ToolTip="Equalizer" Padding="6,4">
-                                <TextBlock Text="EQ" FontFamily="Segoe UI" FontSize="11"
-                                           FontWeight="Bold"/>
+                                <Viewbox Width="14" Height="14">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="EqIcon"
+                                              Data="M 3,2 L 3,14 M 8,2 L 8,14 M 13,2 L 13,14"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="2"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                        <Ellipse x:Name="NpEqKnob1" Width="4" Height="4" Canvas.Left="1" Canvas.Top="8"
+                                                 Fill="{DynamicResource TextMuted}"/>
+                                        <Ellipse x:Name="NpEqKnob2" Width="4" Height="4" Canvas.Left="6" Canvas.Top="3"
+                                                 Fill="{DynamicResource TextMuted}"/>
+                                        <Ellipse x:Name="NpEqKnob3" Width="4" Height="4" Canvas.Left="11" Canvas.Top="10"
+                                                 Fill="{DynamicResource TextMuted}"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
 
                             <!-- Now Playing -->
                             <Button Grid.Column="12" Click="NowPlaying_Click"
                                     Style="{StaticResource PlayerButton}" Margin="4,0,0,0"
                                     ToolTip="Now Playing / Lyrics View" Padding="6,4">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="♫" FontFamily="Segoe UI" FontSize="11"
-                                               FontWeight="Bold" VerticalAlignment="Center"
-                                               Margin="0,0,3,0"/>
-                                    <TextBlock Text="NP" FontFamily="Segoe UI" FontSize="11"
-                                               FontWeight="Bold" VerticalAlignment="Center"/>
-                                </StackPanel>
+                                <Path Width="13" Height="13"
+                                      Stretch="Uniform"
+                                      Data="M 3,1 L 3,15 L 15,8 Z"
+                                      Fill="{DynamicResource PlaybarAccentColor}"/>
                             </Button>
                         </Grid>
                     </Border>
 
                     <!-- ═══ Equalizer Panel ═══ -->
                     <Border x:Name="EqPanel" DockPanel.Dock="Bottom" Visibility="Collapsed"
-                            Background="{DynamicResource GridAltRowBg}"
-                            BorderBrush="{DynamicResource BorderColor}"
-                            BorderThickness="0,1,0,0" Padding="12,8">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
-                                <CheckBox x:Name="ChkEqEnabled" Content="Enable"
+                            Background="{DynamicResource GlassFloatingBg}"
+                            BorderBrush="{DynamicResource GlassBorderBrush}"
+                            BorderThickness="1" CornerRadius="10"
+                            Padding="10,7" Margin="0,0,0,4">
+                        <StackPanel Orientation="Vertical">
+                            <!-- Top row: enable + reset moved to the LEFT of the preset selector,
+                                 freeing the full width below for the band sliders. -->
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,5">
+                                <CheckBox x:Name="ChkEqEnabled" Content="EQ" VerticalAlignment="Center"
                                           Foreground="{DynamicResource TextSecondary}" FontSize="11"
-                                          FontFamily="Segoe UI"
+                                          FontFamily="Segoe UI" Margin="0,0,8,0"
                                           Checked="EqEnabled_Changed" Unchecked="EqEnabled_Changed">
                                     <CheckBox.Template>
                                         <ControlTemplate TargetType="CheckBox">
                                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                <Border x:Name="checkBorder" Width="16" Height="16"
+                                                <Border x:Name="checkBorder" Width="15" Height="15"
                                                         Background="{DynamicResource InputBg}"
                                                         BorderBrush="{DynamicResource ButtonBorder}"
                                                         BorderThickness="1" CornerRadius="3"
-                                                        VerticalAlignment="Center" Margin="0,0,6,0">
+                                                        VerticalAlignment="Center" Margin="0,0,5,0">
                                                     <TextBlock x:Name="checkMark" Text="&#xE73E;"
-                                                               FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                               FontFamily="Segoe MDL2 Assets" FontSize="11"
                                                                Foreground="{DynamicResource AccentColor}"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                                Visibility="Collapsed"/>
@@ -1419,7 +1647,8 @@
                                     </CheckBox.Template>
                                 </CheckBox>
                                 <Button Content="Reset" FontSize="10" FontFamily="Segoe UI"
-                                        Padding="8,3" Margin="0,6,0,0" Cursor="Hand"
+                                        Padding="6,2" Margin="0,0,10,0" Cursor="Hand"
+                                        VerticalAlignment="Center"
                                         Click="EqReset_Click"
                                         Background="{DynamicResource ButtonBg}"
                                         Foreground="{DynamicResource TextMuted}"
@@ -1441,17 +1670,39 @@
                                         </ControlTemplate>
                                     </Button.Template>
                                 </Button>
+                                <ComboBox x:Name="EqProfileCombo" Width="120" FontSize="11"
+                                          VerticalAlignment="Center"
+                                          Style="{StaticResource ThemedComboBox}"
+                                          ItemContainerStyle="{StaticResource ThemedComboBoxItem}"
+                                          Background="{DynamicResource InputBg}"
+                                          Foreground="{DynamicResource TextPrimary}"
+                                          BorderBrush="{DynamicResource ButtonBorder}"
+                                          SelectionChanged="EqProfile_Changed"/>
+                                <Button x:Name="BtnEqSaveProfile" Content="Save" FontSize="10"
+                                        Padding="6,2" Margin="4,0,0,0" Cursor="Hand"
+                                        VerticalAlignment="Center"
+                                        Click="EqSaveProfile_Click"
+                                        Style="{StaticResource DarkButton}"
+                                        Background="{DynamicResource ButtonBg}"
+                                        Foreground="{DynamicResource TextPrimary}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        ToolTip="Save current EQ as a custom profile"/>
+                                <Button x:Name="BtnEqDeleteProfile" Content="Del" FontSize="10"
+                                        Padding="6,2" Margin="3,0,0,0" Cursor="Hand"
+                                        VerticalAlignment="Center"
+                                        Click="EqDeleteProfile_Click"
+                                        Visibility="Collapsed"
+                                        Style="{StaticResource DarkButton}"
+                                        Background="{DynamicResource ButtonBg}"
+                                        Foreground="{DynamicResource TextPrimary}"
+                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                        ToolTip="Delete this custom profile"/>
                             </StackPanel>
-
-                            <StackPanel Grid.Column="1" x:Name="EqSlidersPanel"
+                            <StackPanel x:Name="EqSlidersPanel"
                                         Orientation="Horizontal" HorizontalAlignment="Center">
                                 <!-- 10 EQ band sliders generated in code-behind -->
                             </StackPanel>
-
-                            <TextBlock Grid.Column="2" Text="dB" FontSize="10" FontFamily="Segoe UI"
-                                       Foreground="{DynamicResource TextDim}" VerticalAlignment="Center"
-                                       Margin="8,0,0,0"/>
-                        </Grid>
+                        </StackPanel>
                     </Border>
 
                     <!-- ═══ Spectrogram Area ═══ -->
@@ -1525,8 +1776,8 @@
                                     <Popup x:Name="VisualizerStylePopup" StaysOpen="False"
                                            Placement="Bottom" PlacementTarget="{Binding ElementName=BtnVisualizerStyle}"
                                            AllowsTransparency="True" PopupAnimation="Fade">
-                                        <Border Background="{DynamicResource PanelBg}"
-                                                BorderBrush="{DynamicResource ButtonBorder}"
+                                        <Border Background="{DynamicResource GlassFloatingBg}"
+                                                BorderBrush="{DynamicResource GlassBorderBrush}"
                                                 BorderThickness="1" CornerRadius="3"
                                                 Padding="2" Margin="0,1,0,0">
                                             <StackPanel x:Name="VisualizerStyleMenu" MinWidth="90"/>
@@ -1614,16 +1865,34 @@
 
     <!-- ═══ Now Playing Panel (takes over entire window) ═══ -->
     <Grid x:Name="NowPlayingPanel" Visibility="Collapsed" Background="{DynamicResource WindowBg}">
+        <Image x:Name="NpAlbumBackdropImage"
+               Stretch="UniformToFill"
+               Opacity="0"
+               IsHitTestVisible="False"
+               RenderOptions.BitmapScalingMode="LowQuality"
+               CacheMode="BitmapCache">
+            <!-- Static, heavily-blurred album backdrop sitting behind the animated
+                 particle/gradient layers: cache the blurred bitmap on the GPU so the
+                 BlurEffect isn't recomputed every animation frame. -->
+            <Image.Effect>
+                <BlurEffect x:Name="NpAlbumBackdropBlur" Radius="24" RenderingBias="Performance"/>
+            </Image.Effect>
+        </Image>
+        <Border x:Name="NpAlbumBackdropBrightnessOverlay"
+                IsHitTestVisible="False"
+                Opacity="0"/>
         <!-- Dynamic background gradient from album art -->
         <Border x:Name="NpBgGradient" Opacity="0.6"/>
+        <Canvas x:Name="NpStarsCanvas" Opacity="0" IsHitTestVisible="False" ClipToBounds="True"
+                SizeChanged="NpStarsCanvas_SizeChanged"/>
         <!-- Dark overlay that adapts to color-match mode -->
         <Border x:Name="NpDarkOverlay" Background="#66000000"/>
 
         <DockPanel>
             <!-- ═══ Bottom: Controls Bar (docked first = very bottom) ═══ -->
             <Border x:Name="NpBottomBar" DockPanel.Dock="Bottom" Padding="12,6,12,8"
-                    Background="{DynamicResource ToolbarBg}"
-                    BorderBrush="{DynamicResource BorderColor}" BorderThickness="0,1,0,0">
+                    Background="{DynamicResource GlassToolbarBg}"
+                    BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="0,1,0,0">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -1641,44 +1910,69 @@
                                    Foreground="{DynamicResource TextMuted}" FontSize="10"
                                    VerticalAlignment="Center" Margin="0,0,8,0"
                                    FontFamily="Segoe UI"/>
-                        <Slider x:Name="NpSeekSlider" Grid.Column="1"
-                                Minimum="0" Maximum="100"
-                                Style="{StaticResource SeekSlider}"
-                                ValueChanged="NpSeekSlider_ValueChanged"
-                                PreviewMouseLeftButtonDown="NpSeekSlider_PreviewMouseDown"
-                                PreviewMouseLeftButtonUp="NpSeekSlider_MouseUp"
-                                MouseMove="NpSeekSlider_MouseMove"
-                                Thumb.DragCompleted="NpSeekSlider_DragCompleted"/>
+                        <Grid x:Name="NpPlaybarHost" Grid.Column="1">
+                            <Canvas x:Name="NpWaveformCanvas" Height="26"
+                                    IsHitTestVisible="False"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Stretch"
+                                    ClipToBounds="True"/>
+                            <!-- Animated bar canvas sits BELOW the slider so the slider's thumb (the
+                                 playhead dot) always renders on top of the bar (the dot must be above
+                                 the playbar, esp. under ColorMatch where the bar is a contrasting color). -->
+                            <Canvas x:Name="NpPlaybarAnimCanvas" Height="8"
+                                    IsHitTestVisible="False"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Stretch"
+                                    ClipToBounds="True"/>
+                            <Slider x:Name="NpSeekSlider"
+                                    Minimum="0" Maximum="100"
+                                    Style="{StaticResource SeekSlider}"
+                                    ValueChanged="NpSeekSlider_ValueChanged"
+                                    PreviewMouseLeftButtonDown="NpSeekSlider_PreviewMouseDown"
+                                    PreviewMouseLeftButtonUp="NpSeekSlider_MouseUp"
+                                    MouseMove="NpSeekSlider_MouseMove"
+                                    Thumb.DragCompleted="NpSeekSlider_DragCompleted"/>
+                        </Grid>
                         <TextBlock x:Name="NpTimeTotal" Grid.Column="2" Text="0:00"
                                    Foreground="{DynamicResource TextMuted}" FontSize="10"
                                    VerticalAlignment="Center" Margin="8,0,0,0"
                                    FontFamily="Segoe UI"/>
                     </Grid>
 
-                    <!-- Row 1: ALL controls on one single row -->
+                    <!-- Row 1: track info left, transport center, options right -->
                     <Grid Grid.Row="1" Margin="0,2,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*" MinWidth="0"/>
                             <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
                         <!-- Left: Track info + specs + tags -->
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,1">
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0"
+                                    MinWidth="0">
+                            <Grid Margin="0,0,0,1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" MaxWidth="260"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*" MinWidth="0"/>
+                                </Grid.ColumnDefinitions>
                                 <TextBlock x:Name="NpSongTitle" Text="No track playing"
+                                           Grid.Column="0"
                                            Foreground="{DynamicResource TextPrimary}" FontSize="14"
                                            FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                            VerticalAlignment="Center"
                                            FontFamily="Segoe UI"/>
                                 <TextBlock Text=" — "
+                                           Grid.Column="1"
                                            Foreground="{DynamicResource TextSecondary}" FontSize="11"
                                            VerticalAlignment="Center" Margin="4,0,4,0"
                                            FontFamily="Segoe UI"/>
                                 <TextBlock x:Name="NpSongArtist" Text=""
+                                           Grid.Column="2"
                                            Foreground="{DynamicResource TextSecondary}" FontSize="11"
-                                           TextTrimming="CharacterEllipsis" FontFamily="Segoe UI"/>
-                            </StackPanel>
+                                           TextTrimming="CharacterEllipsis" FontFamily="Segoe UI"
+                                           VerticalAlignment="Center" Margin="0,2,0,0"/>
+                            </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
                                 <TextBlock x:Name="NpSongSpecs" Text=""
                                            Foreground="{DynamicResource TextSecondary}" FontSize="10"
@@ -1691,7 +1985,7 @@
                         </StackPanel>
 
                         <!-- Center: Playback controls -->
-                        <StackPanel Grid.Column="1" Orientation="Horizontal"
+                        <StackPanel x:Name="NpTransportBar" Grid.Column="1" Orientation="Horizontal"
                                     HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Button x:Name="NpShuffleBtn" Click="NpShuffle_Click" ToolTip="Shuffle"
                                     Style="{StaticResource PlayerButton}" MinWidth="28" Padding="4,4">
@@ -1709,16 +2003,16 @@
                                 <Viewbox Width="14" Height="14">
                                     <Canvas Width="16" Height="16">
                                         <Path x:Name="NpLoopIcon"
-                                              Data="M 1,11 L 1,5 L 14,5 M 14,5 L 11,2 M 14,5 L 11,8 M 14,5 L 14,11 L 1,11 M 1,11 L 4,14 M 1,11 L 4,8"
+                                              Data="M 4,5 L 12,5 M 10,3 L 12,5 L 10,7 M 12,5 Q 14,5 14,8 Q 14,11 11,11 L 4,11 M 6,9 L 4,11 L 6,13 M 4,11 Q 2,11 2,8 Q 2,5 5,5"
                                               Stroke="{DynamicResource TextMuted}" StrokeThickness="1.7"
                                               Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
                                         <TextBlock x:Name="NpLoopOneIndicator" Text="1" FontSize="6" FontWeight="Bold"
                                                    Foreground="{DynamicResource TextMuted}" Visibility="Collapsed"
-                                                   Canvas.Left="5.5" Canvas.Top="3"/>
+                                                   Canvas.Left="6.5" Canvas.Top="5"/>
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Click="NpPrev_Click" ToolTip="Previous Track"
+                            <Button x:Name="NpPrevBtn" Click="NpPrev_Click" ToolTip="Previous Track"
                                     Style="{StaticResource PlayerButton}" Margin="2,0,0,0"
                                     MinWidth="28" Padding="4,4">
                                 <Viewbox Width="13" Height="13">
@@ -1728,7 +2022,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Click="NpPlayPause_Click" ToolTip="Play/Pause"
+                            <Button x:Name="NpPlayPauseBtn" Click="NpPlayPause_Click" ToolTip="Play/Pause"
                                     Style="{StaticResource PlayerButton}" Margin="2,0,0,0"
                                     MinWidth="36" Padding="6,4">
                                 <Viewbox Width="16" Height="16">
@@ -1741,7 +2035,7 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
-                            <Button Click="NpNext_Click" ToolTip="Next Track"
+                            <Button x:Name="NpNextBtn" Click="NpNext_Click" ToolTip="Next Track"
                                     Style="{StaticResource PlayerButton}" Margin="2,0,0,0"
                                     MinWidth="28" Padding="4,4">
                                 <Viewbox Width="13" Height="13">
@@ -1753,13 +2047,12 @@
                             </Button>
                         </StackPanel>
 
-                        <!-- Right: ALL option buttons + Volume + Back, all on one level -->
-                        <StackPanel Grid.Column="2" Orientation="Horizontal"
+                        <!-- Right: option buttons + volume + back -->
+                        <StackPanel x:Name="NpOptionsBar" Grid.Column="2" Orientation="Horizontal"
                                     HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <!-- Auto-play toggle -->
                             <Button x:Name="NpAutoPlayBtn" Click="NpAutoPlay_Click"
                                     ToolTip="Auto-play next" Style="{StaticResource PlayerButton}"
-                                    MinWidth="26" Padding="4,4">
+                                    Margin="8,0,4,0" MinWidth="28" Padding="4,4">
                                 <Viewbox Width="12" Height="12">
                                     <Canvas Width="16" Height="16">
                                         <Path x:Name="NpAutoPlayIcon"
@@ -1770,6 +2063,74 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
+                            <!-- Crossfade -->
+                            <Button x:Name="NpCrossfadeBtn" Click="NpCrossfade_Click"
+                                    ToolTip="Crossfade settings" Style="{StaticResource PlayerButton}"
+                                    MinWidth="28" Padding="4,4" Margin="2,0,0,0">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpCrossfadeIcon"
+                                              Data="M 1,4 L 6,8 L 1,12 M 15,4 L 10,8 L 15,12"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.8"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpCrossfadePopup" StaysOpen="False"
+                                   Placement="Top" PlacementTarget="{Binding ElementName=NpCrossfadeBtn}"
+                                   AllowsTransparency="True" PopupAnimation="Fade"
+                                   VerticalOffset="-4">
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
+                                        BorderThickness="1" CornerRadius="8"
+                                        Padding="12,10" MinWidth="220">
+                                    <Border.Effect>
+                                        <DropShadowEffect ShadowDepth="0" BlurRadius="12"
+                                                          Opacity="0.35" Color="Black"/>
+                                    </Border.Effect>
+                                    <StackPanel Orientation="Vertical">
+                                        <Button x:Name="NpCrossfadeToggleBtn" Click="NpCrossfadeToggle_Click"
+                                                Style="{StaticResource DarkButton}" Padding="8,5"
+                                                HorizontalContentAlignment="Left" Margin="0,0,0,8">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock x:Name="NpCrossfadeToggleText" Text="Crossfade: OFF"
+                                                           Foreground="{DynamicResource TextPrimary}"
+                                                           FontFamily="Segoe UI" FontSize="12"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBlock Text="Duration (seconds)"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontSize="11" Margin="0,0,0,3"/>
+                                        <Slider x:Name="NpCrossfadeDurationSlider"
+                                                Minimum="1" Maximum="30" SmallChange="1"
+                                                ValueChanged="NpCrossfadeDuration_ValueChanged"
+                                                Style="{StaticResource CrossfadeSlider}"
+                                                Margin="0,0,0,4"/>
+                                        <TextBlock x:Name="NpCrossfadeDurationLabel"
+                                                   Text="5s" Foreground="{DynamicResource TextMuted}"
+                                                   FontSize="10" HorizontalAlignment="Center"
+                                                   Margin="0,0,0,10"/>
+                                        <TextBlock Text="Curve"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontSize="11" Margin="0,0,0,3"/>
+                                        <ComboBox x:Name="NpCrossfadeCurveCombo"
+                                                  SelectionChanged="NpCrossfadeCurve_Changed"
+                                                  Style="{StaticResource ThemedComboBox}"
+                                                  Margin="0,0,0,10"/>
+                                        <Button x:Name="NpCrossfadeSkipBtn" Click="NpCrossfadeSkipToggle_Click"
+                                                Style="{StaticResource DarkButton}" Padding="8,5"
+                                                HorizontalContentAlignment="Left">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock x:Name="NpCrossfadeSkipText"
+                                                           Text="Crossfade on manual skip: OFF"
+                                                           Foreground="{DynamicResource TextPrimary}"
+                                                           FontFamily="Segoe UI" FontSize="11"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
                             <!-- Visualizer toggle -->
                             <Button x:Name="NpVisualizerBtn" Click="NpVisualizerToggle_Click"
                                     ToolTip="Visualizer" Style="{StaticResource PlayerButton}"
@@ -1799,8 +2160,8 @@
                             <Popup x:Name="NpVizStylePopup" StaysOpen="False"
                                    Placement="Top" PlacementTarget="{Binding ElementName=NpVizStyleBtn}"
                                    AllowsTransparency="True" PopupAnimation="Fade">
-                                <Border Background="{DynamicResource PanelBg}"
-                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
                                         BorderThickness="1" CornerRadius="3"
                                         Padding="2" Margin="0,0,0,2">
                                     <StackPanel x:Name="NpVizStyleMenu" MinWidth="90"/>
@@ -1820,13 +2181,118 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
+                            <!-- Background animation menu -->
+                            <Button x:Name="NpBgFxBtn" Click="NpBgFx_Click"
+                                    ToolTip="Background animations" Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4" Margin="2,0,0,0">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpBgFxIcon"
+                                              Data="M 2,11 C 4,6 7,14 9,8 S 13,5 14,10 M 3,4 A 1.5,1.5 0 1,1 3,7 A 1.5,1.5 0 1,1 3,4 Z M 11,2 L 12,4 L 14,5 L 12,6 L 11,8 L 10,6 L 8,5 L 10,4 Z"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.4"
+                                              Fill="Transparent" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpBgFxPopup" PlacementTarget="{Binding ElementName=NpBgFxBtn}"
+                                   Placement="Top" VerticalOffset="-4" StaysOpen="False" AllowsTransparency="True">
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                        CornerRadius="6" Padding="10" MinWidth="260">
+                                    <StackPanel>
+                                        <TextBlock Text="Background animation" Foreground="{DynamicResource TextPrimary}"
+                                                   FontFamily="Segoe UI" FontSize="12" FontWeight="SemiBold"
+                                                   Margin="0,0,0,8"/>
+                                        <ComboBox x:Name="NpBgFxModeCombo" Style="{StaticResource ThemedComboBox}"
+                                                  SelectionChanged="NpBgFxModeCombo_SelectionChanged" Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="NpBgFxColorDriftCheck" Content="Color Drift glow (under effect)"
+                                                  Style="{StaticResource ThemedCheckBox}"
+                                                  Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                                  Checked="NpBgFxColorDrift_Changed" Unchecked="NpBgFxColorDrift_Changed"
+                                                  ToolTip="Run the Color Drift gradient glow as a background under the selected effect"
+                                                  Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="NpBgFxAlbumColorsCheck" Content="Use album colors"
+                                                  Style="{StaticResource ThemedCheckBox}"
+                                                  Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                                  Checked="NpBgFxAlbumColors_Changed" Unchecked="NpBgFxAlbumColors_Changed"
+                                                  Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="NpBgFxCycleCheck" Content="Cycle animations"
+                                                  Style="{StaticResource ThemedCheckBox}"
+                                                  Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                                  Checked="NpBgFxCycle_Changed" Unchecked="NpBgFxCycle_Changed"
+                                                  Margin="0,0,0,8"/>
+                                        <TextBlock Text="Cycle speed" Foreground="{DynamicResource TextSecondary}" FontSize="11"/>
+                                        <Slider x:Name="NpBgFxCycleSpeedSlider" Minimum="0.25" Maximum="3" Value="1"
+                                                Style="{StaticResource CrossfadeSlider}" ValueChanged="NpBgFxCycleSpeed_Changed"
+                                                Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="NpBgFxCycleSongCheck" Content="Advance on song change"
+                                                  Style="{StaticResource ThemedCheckBox}"
+                                                  Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                                  Checked="NpBgFxCycleSong_Changed" Unchecked="NpBgFxCycleSong_Changed"
+                                                  Margin="0,0,0,8"/>
+                                        <TextBlock Text="Density / intensity" Foreground="{DynamicResource TextSecondary}" FontSize="11"/>
+                                        <Slider x:Name="NpBgFxDensitySlider" Minimum="0.25" Maximum="2.5" Value="1"
+                                                Style="{StaticResource CrossfadeSlider}" ValueChanged="NpBgFxDensity_Changed"
+                                                Margin="0,0,0,8"/>
+                                        <CheckBox x:Name="NpBgFxLightningCheck" Content="Rain lightning"
+                                                  Style="{StaticResource ThemedCheckBox}"
+                                                  Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                                  Checked="NpBgFxLightning_Changed" Unchecked="NpBgFxLightning_Changed"
+                                                  Margin="0,0,0,8"/>
+                                        <Border x:Name="NpBgFxLightningPrompt" Visibility="Collapsed"
+                                                Background="{DynamicResource GlassFloatingBg}"
+                                                BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                                CornerRadius="6" Padding="8" Margin="0,0,0,8">
+                                            <StackPanel>
+                                                <TextBlock Text="Enable lightning flashes for Rain?" TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,0,0,6"/>
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                    <Button Content="No" Style="{StaticResource PlayerButton}" Padding="10,3" Margin="0,0,6,0"
+                                                            Click="NpBgFxLightningPromptNo_Click"/>
+                                                    <Button Content="Yes" Style="{StaticResource PlayerButton}" Padding="10,3"
+                                                            Click="NpBgFxLightningPromptYes_Click"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <TextBlock Text="Snowflake amount" Foreground="{DynamicResource TextSecondary}" FontSize="11"/>
+                                        <Slider x:Name="NpBgFxSnowflakeSlider" Minimum="0.25" Maximum="2.5" Value="1"
+                                                Style="{StaticResource CrossfadeSlider}" ValueChanged="NpBgFxSnowflake_Changed"/>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
+                            <!-- Equalizer -->
+                            <Button x:Name="NpEqBtn" Click="NpEq_Click"
+                                    ToolTip="Equalizer" Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4" Margin="2,0,0,0">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <Path x:Name="NpEqIcon"
+                                              Data="M 3,2 L 3,14 M 8,2 L 8,14 M 13,2 L 13,14"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="2"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                        <Ellipse Width="4" Height="4" Canvas.Left="1" Canvas.Top="8"
+                                                 Fill="{DynamicResource TextMuted}"/>
+                                        <Ellipse Width="4" Height="4" Canvas.Left="6" Canvas.Top="3"
+                                                 Fill="{DynamicResource TextMuted}"/>
+                                        <Ellipse Width="4" Height="4" Canvas.Left="11" Canvas.Top="10"
+                                                 Fill="{DynamicResource TextMuted}"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpEqPopup"
+                                   PlacementTarget="{Binding ElementName=NpEqBtn}"
+                                   Placement="Custom" VerticalOffset="-4"
+                                   StaysOpen="False" AllowsTransparency="True"
+                                   PopupAnimation="Fade"
+                                   Closed="NpEqPopup_Closed"/>
                             <!-- Separator -->
-                            <Border Width="1" Height="18" Margin="4,0"
+                            <Border Width="1" Height="18" Margin="4,0" Tag="sep"
                                     Background="{DynamicResource BorderColor}" Opacity="0.4"
                                     VerticalAlignment="Center"/>
-                            <!-- Color-match -->
-                            <Button x:Name="NpColorMatchBtn" Click="NpColorMatch_Click"
-                                    ToolTip="Color match" Style="{StaticResource PlayerButton}"
+                            <!-- Color options: opens a flyout above with the toggle, color picker, and pick-count -->
+                            <Button x:Name="NpColorMatchBtn" Click="NpColorMatchMenu_Click"
+                                    ToolTip="Color options" Style="{StaticResource PlayerButton}"
                                     MinWidth="26" Padding="4,4">
                                 <Viewbox Width="12" Height="12">
                                     <Canvas Width="16" Height="16">
@@ -1839,6 +2305,73 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
+                            <Popup x:Name="NpColorMatchPopup" PlacementTarget="{Binding ElementName=NpColorMatchBtn}"
+                                   Placement="Top" VerticalOffset="-4" StaysOpen="False" AllowsTransparency="True">
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                        CornerRadius="6" Padding="6">
+                                    <StackPanel Orientation="Vertical">
+                                        <Button x:Name="NpColorMatchToggleBtn" Click="NpColorMatch_Click"
+                                                Style="{StaticResource PlayerButton}" Padding="8,6"
+                                                HorizontalContentAlignment="Left" Margin="0,0,0,2"
+                                                ToolTip="Toggle Color Match">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Viewbox Width="14" Height="14" Margin="0,0,8,0">
+                                                    <Canvas Width="16" Height="16">
+                                                        <Path Data="M 8,1 A 7,7 0 1,1 8,15 A 7,7 0 1,1 8,1 Z"
+                                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.5"
+                                                              Fill="Transparent"/>
+                                                        <Path Data="M 8,4 A 4,4 0 1,1 8,12"
+                                                              Fill="{DynamicResource TextMuted}"/>
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Text="Color Match" Foreground="{DynamicResource TextPrimary}"
+                                                           FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <Button x:Name="NpColorPickerBtn" Click="NpColorPicker_Click"
+                                                MouseRightButtonUp="NpColorPicker_RightClick"
+                                                Style="{StaticResource PlayerButton}" Padding="8,6"
+                                                HorizontalContentAlignment="Left" Margin="0,0,0,2"
+                                                ToolTip="Pick colors from album cover. Right-click to reset.">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Viewbox Width="14" Height="14" Margin="0,0,8,0">
+                                                    <Canvas Width="16" Height="16">
+                                                        <Path x:Name="NpColorPickerIcon"
+                                                              Data="M 11,2 L 14,5 L 11.5,7.5 L 9,5 Z M 9.5,5.5 L 3.5,11.5 L 3,14 L 5.5,13.5 L 11.5,7.5"
+                                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.4"
+                                                              StrokeLineJoin="Round" Fill="Transparent"/>
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Text="Color Picker" Foreground="{DynamicResource TextPrimary}"
+                                                           FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <!-- How many colors the eyedropper picks (3–6). First three drive the
+                                             palette; extras enrich the background gradient. -->
+                                        <Border BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="0,1,0,0"
+                                                Padding="8,5,8,2" Margin="0,2,0,0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="Picker colors" Foreground="{DynamicResource TextPrimary}"
+                                                           FontFamily="Segoe UI" FontSize="12" VerticalAlignment="Center"/>
+                                                <Button x:Name="NpColorCountMinusBtn" Click="NpColorCountMinus_Click"
+                                                        Style="{StaticResource PlayerButton}" Content="−" Padding="0"
+                                                        MinWidth="22" Width="22" Height="22" Margin="10,0,0,0"
+                                                        ToolTip="Fewer colors"/>
+                                                <TextBlock x:Name="NpColorCountLabel" Text="3"
+                                                           Foreground="{DynamicResource TextPrimary}"
+                                                           FontFamily="Segoe UI" FontSize="12" FontWeight="SemiBold"
+                                                           VerticalAlignment="Center" TextAlignment="Center"
+                                                           MinWidth="20" Margin="2,0"/>
+                                                <Button x:Name="NpColorCountPlusBtn" Click="NpColorCountPlus_Click"
+                                                        Style="{StaticResource PlayerButton}" Content="+" Padding="0"
+                                                        MinWidth="22" Width="22" Height="22"
+                                                        ToolTip="More colors"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
                             <!-- Lyrics-off (pure viz+art) toggle -->
                             <Button x:Name="NpLyricsOffBtn" Click="NpLyricsOff_Click"
                                     ToolTip="Hide lyrics (art mode)"
@@ -1854,7 +2387,7 @@
                                 </Viewbox>
                             </Button>
                             <!-- Separator -->
-                            <Border Width="1" Height="18" Margin="4,0"
+                            <Border Width="1" Height="18" Margin="4,0" Tag="sep"
                                     Background="{DynamicResource BorderColor}" Opacity="0.4"
                                     VerticalAlignment="Center"/>
                             <!-- Translate lyrics toggle -->
@@ -1889,8 +2422,8 @@
                             <Popup x:Name="NpTranslatePopup" StaysOpen="False"
                                    Placement="Top" PlacementTarget="{Binding ElementName=NpTranslateSettingsBtn}"
                                    AllowsTransparency="True" PopupAnimation="Fade">
-                                <Border Background="{DynamicResource PanelBg}"
-                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
                                         BorderThickness="1" CornerRadius="5"
                                         Padding="8,6" Margin="0,0,0,2"
                                         MaxHeight="350">
@@ -1914,6 +2447,23 @@
                                     </StackPanel>
                                 </Border>
                             </Popup>
+                            <!-- Focused lyrics toggle -->
+                            <Button x:Name="NpFocusedLyricsBtn" Click="NpFocusedLyrics_Click"
+                                    ToolTip="Lyrics mode"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <Canvas Width="16" Height="16">
+                                        <!-- Music note: stem + flag, with an open note-head ring (stroked
+                                             so the active-state recolor via .Stroke keeps working). -->
+                                        <Path x:Name="NpFocusedLyricsIcon"
+                                              Data="M 6.5,12 L 6.5,3 C 8.7,2.7 10.8,3.8 11.3,5.8 M 4.3,12 A 2.2,1.8 0 1,0 8.7,12 A 2.2,1.8 0 1,0 4.3,12"
+                                              Stroke="{DynamicResource TextMuted}" StrokeThickness="1.3"
+                                              Fill="Transparent" StrokeStartLineCap="Round"
+                                              StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    </Canvas>
+                                </Viewbox>
+                            </Button>
                             <!-- Karaoke mode toggle -->
                             <Button x:Name="NpKaraokeBtn" Click="NpKaraoke_Click"
                                     ToolTip="Karaoke word-by-word"
@@ -1930,7 +2480,7 @@
                                 </Viewbox>
                             </Button>
                             <!-- Separator -->
-                            <Border Width="1" Height="18" Margin="4,0"
+                            <Border Width="1" Height="18" Margin="4,0" Tag="sep"
                                     Background="{DynamicResource BorderColor}" Opacity="0.4"
                                     VerticalAlignment="Center"/>
                             <!-- Lyrics provider cycle -->
@@ -1953,22 +2503,24 @@
                                     Style="{StaticResource PlayerButton}"
                                     MinWidth="26" Padding="4,4">
                                 <Button.ContextMenu>
-                                    <ContextMenu x:Name="NpSaveLyricsMenu" Opened="NpSaveLyricsMenu_Opened"
-                                                 Background="{DynamicResource PanelBg}"
-                                                 Foreground="{DynamicResource TextPrimary}"
-                                                 BorderBrush="{DynamicResource ButtonBorder}">
+                                    <ContextMenu x:Name="NpSaveLyricsMenu" Opened="NpSaveLyricsMenu_Opened">
                                         <MenuItem x:Name="NpSaveLyricsNowItem" Header="Save lyrics as .lrc"
-                                                  Foreground="{DynamicResource TextPrimary}"
                                                   Click="NpSaveLyricsNow_Click"/>
                                         <MenuItem x:Name="NpAutoSaveLyricsToggleItem" Header="Auto-save each song"
-                                                  Foreground="{DynamicResource TextPrimary}"
+                                                  IsCheckable="True"
                                                   Click="NpAutoSaveLyricsToggle_Click"/>
                                         <MenuItem x:Name="NpSaveAllLyricsItem" Header="Save all lyrics in folder"
-                                                  Foreground="{DynamicResource TextPrimary}"
                                                   Click="NpSaveAllLyricsNow_Click"/>
-                                        <Separator Background="{DynamicResource ButtonBorder}" Height="1" Margin="4,3"/>
+                                        <Separator/>
+                                        <MenuItem x:Name="NpAvoidCensoredLyricsItem"
+                                                  IsCheckable="True"
+                                                  Header="Avoid censored lyrics (auto-fallback)"
+                                                  ToolTip="When the chosen provider returns censored lyrics (***** or ######), try the next provider instead. Off by default."
+                                                  Click="NpAvoidCensoredLyricsToggle_Click"/>
+                                        <MenuItem Header="Find alternate lyrics..."
+                                                  Click="NpFindAlternateLyrics_Click"/>
+                                        <Separator/>
                                         <MenuItem Header="Load .lrc file..."
-                                                  Foreground="{DynamicResource TextPrimary}"
                                                   Click="NpLoadLrcFile_Click"/>
                                     </ContextMenu>
                                 </Button.ContextMenu>
@@ -1982,6 +2534,30 @@
                                     </Canvas>
                                 </Viewbox>
                             </Button>
+                            <!-- Look up current song on a music service -->
+                            <Button x:Name="NpSearchBtn" Click="NpSearch_Click" ToolTip="Look up this song"
+                                    Style="{StaticResource PlayerButton}"
+                                    MinWidth="26" Padding="4,4">
+                                <Viewbox Width="12" Height="12">
+                                    <TextBlock x:Name="NpSearchIcon"
+                                               Text="&#xE721;" FontFamily="Segoe MDL2 Assets"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               FontSize="14" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </Viewbox>
+                            </Button>
+                            <Popup x:Name="NpSearchPopup" PlacementTarget="{Binding ElementName=NpSearchBtn}"
+                                   Placement="Top" VerticalOffset="-4" StaysOpen="False" AllowsTransparency="True">
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                        CornerRadius="6" Padding="6">
+                                    <StackPanel Orientation="Vertical">
+                                        <TextBlock Text="Look up this song on" Foreground="{DynamicResource TextSecondary}"
+                                                   FontFamily="Segoe UI" FontSize="11" Margin="6,2,6,6"/>
+                                        <!-- Service buttons are added here at runtime from the user's configured slots -->
+                                        <StackPanel x:Name="NpSearchServicesList" Orientation="Vertical"/>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
                             <!-- Queue -->
                             <Button x:Name="NpQueueBtn" Click="NpQueue_Click" ToolTip="Queue"
                                     Style="{StaticResource PlayerButton}"
@@ -1996,8 +2572,8 @@
                             <Popup x:Name="NpQueuePopup" StaysOpen="False"
                                    Placement="Top" PlacementTarget="{Binding ElementName=NpQueueBtn}"
                                    AllowsTransparency="True" PopupAnimation="Fade">
-                                <Border Background="{DynamicResource PanelBg}"
-                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
                                         BorderThickness="1" CornerRadius="6"
                                         Padding="14,10" Margin="0,0,0,4"
                                         MinWidth="220" MaxWidth="320">
@@ -2013,7 +2589,7 @@
                                 </Border>
                             </Popup>
                             <!-- Settings -->
-                            <Button Click="NpSettings_Click" ToolTip="Settings"
+                            <Button x:Name="NpSettingsBtn" Click="NpSettings_Click" ToolTip="Settings"
                                     Style="{StaticResource PlayerButton}"
                                     MinWidth="26" Padding="4,3">
                                 <Viewbox Width="12" Height="12">
@@ -2044,84 +2620,346 @@
                             <Popup x:Name="NpLayoutPopup" StaysOpen="False"
                                    Placement="Top" PlacementTarget="{Binding ElementName=NpLayoutBtn}"
                                    AllowsTransparency="True" PopupAnimation="Fade">
-                                <Border Background="{DynamicResource PanelBg}"
-                                        BorderBrush="{DynamicResource ButtonBorder}"
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
                                         BorderThickness="1" CornerRadius="6"
-                                        Padding="14,10" Margin="0,0,0,4">
-                                    <ScrollViewer MaxHeight="460" VerticalScrollBarVisibility="Auto">
-                                    <StackPanel MinWidth="220">
+                                        Padding="10,8" Margin="0,0,0,4">
+                                    <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                                    <!-- Fixed width keeps the popup compact: wrapping text and the
+                                         star-sized button-name column can no longer balloon it wide. -->
+                                    <StackPanel Width="250">
                                         <TextBlock Text="Customize Layout" FontSize="13" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
-                                        <!-- ── Sizes ── -->
-                                        <TextBlock Text="Sizes" FontSize="10" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,4" FontWeight="Medium"/>
+                                                   Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2"/>
+                                        <TextBlock Text="Tap a section to expand it."
+                                                   FontSize="10" Foreground="{DynamicResource TextDim}" Margin="0,0,0,6"/>
+
+                                        <!-- ═══ Saved Layout Profiles ═══ -->
+                                        <Expander IsExpanded="False" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2">
+                                            <Expander.Header>
+                                                <TextBlock Text="Layout Profiles" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                            </Expander.Header>
+                                            <StackPanel Margin="0,6,0,4">
+                                        <ItemsControl x:Name="NpLayoutProfilesList" Margin="0,0,0,4">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{DynamicResource ButtonBg}"
+                                                            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                                            CornerRadius="5" Padding="2" Margin="0,0,0,3">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <!-- Apply this profile -->
+                                                            <Button Grid.Column="0" Content="{Binding Name}"
+                                                                    Tag="{Binding Name}" Click="NpLayoutProfileApply_Click"
+                                                                    Style="{StaticResource PlayerButton}" Padding="8,4"
+                                                                    HorizontalContentAlignment="Left" FontSize="12"
+                                                                    ToolTip="Apply this layout"/>
+                                                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                                <Button Content="&#x2191;" Tag="{Binding Name}" Click="NpLayoutProfileMoveUp_Click"
+                                                                        Style="{StaticResource PlayerButton}" Padding="6,4" FontSize="11" ToolTip="Move up"/>
+                                                                <Button Content="&#x2193;" Tag="{Binding Name}" Click="NpLayoutProfileMoveDown_Click"
+                                                                        Style="{StaticResource PlayerButton}" Padding="6,4" FontSize="11" ToolTip="Move down"/>
+                                                                <Button Content="&#xE74D;" FontFamily="Segoe MDL2 Assets"
+                                                                        Tag="{Binding Name}" Click="NpLayoutProfileDelete_Click"
+                                                                        Style="{StaticResource PlayerButton}" Padding="6,4" FontSize="11" ToolTip="Delete"/>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock x:Name="NpLayoutProfilesEmpty" Text="No saved profiles yet."
+                                                   FontSize="11" FontStyle="Italic" Foreground="{DynamicResource TextMuted}"
+                                                   Margin="2,0,0,6" Visibility="Collapsed"/>
+                                        <Button Content="Save current layout as…" FontSize="11" HorizontalAlignment="Left"
+                                                Click="NpLayoutProfileSave_Click"
+                                                Style="{StaticResource PlayerButton}" Padding="8,4" Margin="0,0,0,4"/>
+                                            </StackPanel>
+                                        </Expander>
+
+                                        <!-- ═══ Bottom-bar buttons: show/hide + reorder ═══ -->
+                                        <Expander IsExpanded="False" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2">
+                                            <Expander.Header>
+                                                <TextBlock Text="Bottom Bar Buttons" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                            </Expander.Header>
+                                            <StackPanel Margin="0,6,0,4">
+                                        <TextBlock Text="Reorder any button with ← →. Transport buttons (shuffle, loop, prev, play, next) can be reordered but not hidden; the rest can also be shown or hidden."
+                                                   FontSize="10" Foreground="{DynamicResource TextDim}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                        <ItemsControl x:Name="NpButtonCustomizeList" Margin="0,0,0,4">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{DynamicResource ButtonBg}"
+                                                            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                                            CornerRadius="5" Padding="2" Margin="0,0,0,3">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <CheckBox Grid.Column="0" IsChecked="{Binding Visible, Mode=OneWay}"
+                                                                      Style="{StaticResource ThemedCheckBox}"
+                                                                      Tag="{Binding Id}" Click="NpButtonVisible_Click"
+                                                                      Visibility="{Binding CheckBoxVisibility}"
+                                                                      VerticalAlignment="Center" Margin="6,0,8,0"
+                                                                      ToolTip="Show this button"/>
+                                                            <TextBlock Grid.Column="1" Text="{Binding DisplayName}"
+                                                                       Foreground="{DynamicResource TextPrimary}" FontFamily="Segoe UI"
+                                                                       FontSize="12" VerticalAlignment="Center"/>
+                                                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                                                <Button Content="&#x2190;" Tag="{Binding Id}" Click="NpButtonMoveLeft_Click"
+                                                                        Style="{StaticResource PlayerButton}" Padding="6,3" FontSize="11" ToolTip="Move left"/>
+                                                                <Button Content="&#x2192;" Tag="{Binding Id}" Click="NpButtonMoveRight_Click"
+                                                                        Style="{StaticResource PlayerButton}" Padding="6,3" FontSize="11" ToolTip="Move right"/>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <Button Content="Reset buttons" FontSize="11" HorizontalAlignment="Left"
+                                                Click="NpButtonReset_Click"
+                                                Style="{StaticResource PlayerButton}" Padding="8,3" Margin="0,0,0,4"/>
+                                            </StackPanel>
+                                        </Expander>
+
+                                        <!-- ═══ Glow Options ═══ -->
+                                        <Expander IsExpanded="False" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2">
+                                            <Expander.Header>
+                                                <TextBlock Text="Glow Options" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                            </Expander.Header>
+                                            <StackPanel Margin="0,6,0,4">
+                                        <CheckBox x:Name="NpGlowMotionCheck"
+                                                  Content="Glow motion"
+                                                  FontSize="11"
+                                                  Style="{StaticResource ThemedCheckBox}"
+                                                  Tag="GlowMotion"
+                                                  MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                  Margin="0,0,0,4"
+                                                  Checked="NpGlowMotion_Changed"
+                                                  Unchecked="NpGlowMotion_Changed"
+                                                  ToolTip="Move album glow colors while Now Playing is visible"/>
+                                        <TextBlock Text="Motion Mode" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <ComboBox x:Name="NpGlowMotionModeCombo"
+                                                  Style="{StaticResource ThemedComboBox}"
+                                                  ItemContainerStyle="{StaticResource ThemedComboBoxItem}"
+                                                  Tag="MotionMode"
+                                                  MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                  SelectionChanged="NpGlowMotionModeCombo_Changed"
+                                                  Margin="0,0,0,4">
+                                            <ComboBoxItem Content="Swirl"/>
+                                            <ComboBoxItem Content="Linear (Left to Right)"/>
+                                            <ComboBoxItem Content="Linear (Right to Left)"/>
+                                            <ComboBoxItem Content="Random"/>
+                                            <ComboBoxItem Content="Diagonal Sweep"/>
+                                            <ComboBoxItem Content="Orbit"/>
+                                            <ComboBoxItem Content="Color Drift"/>
+                                        </ComboBox>
+                                        <TextBlock Text="Album Cover Glow" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpLayoutCoverGlowSlider" Minimum="0" Maximum="2.0" Value="1.0"
+                                                SmallChange="0.1" LargeChange="0.25"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="CoverGlow"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                ValueChanged="NpLayoutSlider_Changed"
+                                                ToolTip="0 = no glow, 1 = default, &gt;1 = larger glow"/>
+                                        <TextBlock Text="Focused Lyrics Blur" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpFocusedLyricsBlurSlider" Minimum="0" Maximum="16" Value="6.5"
+                                                SmallChange="0.5" LargeChange="2" TickFrequency="0.5"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="FocusedBlur"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                ValueChanged="NpLayoutSlider_Changed"
+                                                ToolTip="Blur intensity for inactive focused lyrics"/>
+                                            </StackPanel>
+                                        </Expander>
+
+                                        <!-- ═══ Backdrop ═══ -->
+                                        <Expander IsExpanded="False" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2">
+                                            <Expander.Header>
+                                                <TextBlock Text="Backdrop" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                            </Expander.Header>
+                                            <StackPanel Margin="0,6,0,4">
+                                        <TextBlock Text="Horizontal Position" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpBackdropFocusXSlider" Minimum="0" Maximum="1" Value="0.5"
+                                                SmallChange="0.05" LargeChange="0.1" TickFrequency="0.05"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="BackdropHorizontal"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Vertical Position" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <ComboBox x:Name="NpBackdropVerticalPresetCombo"
+                                                  Style="{StaticResource ThemedComboBox}"
+                                                  ItemContainerStyle="{StaticResource ThemedComboBoxItem}"
+                                                  Tag="BackdropVerticalPreset"
+                                                  MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                  SelectionChanged="NpBackdropVerticalPresetCombo_Changed"
+                                                  Margin="0,0,0,4">
+                                            <ComboBoxItem Content="Top"/>
+                                            <ComboBoxItem Content="Center"/>
+                                            <ComboBoxItem Content="Bottom"/>
+                                        </ComboBox>
+                                        <Slider x:Name="NpBackdropFocusYSlider" Minimum="0" Maximum="1" Value="0.5"
+                                                SmallChange="0.05" LargeChange="0.1" TickFrequency="0.05"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="BackdropVertical"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Zoom" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpBackdropZoomSlider" Minimum="1" Maximum="2.5" Value="1"
+                                                SmallChange="0.05" LargeChange="0.25" TickFrequency="0.05"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="BackdropZoom"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Blur" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpBackdropBlurSlider" Minimum="0" Maximum="48" Value="24"
+                                                SmallChange="1" LargeChange="4" TickFrequency="1"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="BackdropBlur"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Brightness" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <Slider x:Name="NpBackdropBrightnessSlider" Minimum="0.35" Maximum="1.6" Value="1"
+                                                SmallChange="0.05" LargeChange="0.1" TickFrequency="0.05"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="BackdropBrightness"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                ValueChanged="NpLayoutSlider_Changed"/>
+                                        <TextBlock Text="Cover Shape" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
+                                        <ComboBox x:Name="NpCoverShapeCombo"
+                                                  Style="{StaticResource ThemedComboBox}"
+                                                  ItemContainerStyle="{StaticResource ThemedComboBoxItem}"
+                                                  Tag="CoverShape"
+                                                  MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
+                                                  SelectionChanged="NpCoverShapeCombo_Changed"
+                                                  Margin="0,0,0,4">
+                                            <ComboBoxItem Content="Default"/>
+                                            <ComboBoxItem Content="Rounded"/>
+                                            <ComboBoxItem Content="Circle"/>
+                                        </ComboBox>
+                                            </StackPanel>
+                                        </Expander>
+
+                                        <!-- ═══ Sizes ═══ -->
+                                        <Expander IsExpanded="False" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2">
+                                            <Expander.Header>
+                                                <TextBlock Text="Sizes" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                            </Expander.Header>
+                                            <StackPanel Margin="0,6,0,4">
                                         <!-- Album Cover Size -->
                                         <TextBlock Text="Album Cover" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutCoverSlider" Minimum="200" Maximum="800" Value="400"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="CoverSize"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Title Size -->
                                         <TextBlock Text="Song Title" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutTitleSlider" Minimum="16" Maximum="56" Value="28"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="TitleSize"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Artist / Queue Size -->
                                         <TextBlock Text="Artist / Queue" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutSubSlider" Minimum="9" Maximum="24" Value="11"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="SubTextSize"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Lyrics Size -->
                                         <TextBlock Text="Lyrics" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutLyricsSlider" Minimum="12" Maximum="60" Value="18"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="LyricsSize"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Lyrics Position -->
                                         <TextBlock Text="Lyrics Position" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutLyricsPosSlider" Minimum="0" Maximum="300" Value="0"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="LyricsOffsetX"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Visualizer Size -->
                                         <TextBlock Text="Visualizer" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutVizSlider" Minimum="40" Maximum="300" Value="100"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,8"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="VizSize"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
-                                        <!-- ── Position Offsets ── -->
-                                        <Border Height="1" Background="{DynamicResource BorderColor}" Opacity="0.3" Margin="0,2,0,6"/>
-                                        <TextBlock Text="Position Offsets" FontSize="10" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,4" FontWeight="Medium"/>
+                                            </StackPanel>
+                                        </Expander>
+
+                                        <!-- ═══ Position Offsets ═══ -->
+                                        <Expander IsExpanded="False" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2">
+                                            <Expander.Header>
+                                                <TextBlock Text="Position Offsets" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimary}"/>
+                                            </Expander.Header>
+                                            <StackPanel Margin="0,6,0,4">
                                         <!-- Cover Position -->
                                         <TextBlock Text="Cover ↔" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutCoverXSlider" Minimum="-200" Maximum="200" Value="0"
                                                 Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="CoverOffsetX"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <TextBlock Text="Cover ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutCoverYSlider" Minimum="-200" Maximum="200" Value="0"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="CoverOffsetY"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Title Position -->
                                         <TextBlock Text="Title ↔" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutTitleXSlider" Minimum="-200" Maximum="200" Value="0"
                                                 Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="TitleOffsetX"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <TextBlock Text="Title ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutTitleYSlider" Minimum="-200" Maximum="200" Value="0"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="TitleOffsetY"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Artist Position -->
                                         <TextBlock Text="Artist ↔" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutArtistXSlider" Minimum="-200" Maximum="200" Value="0"
                                                 Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="ArtistOffsetX"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <TextBlock Text="Artist ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutArtistYSlider" Minimum="-200" Maximum="200" Value="0"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,6"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="ArtistOffsetY"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
                                         <!-- Visualizer Position -->
                                         <TextBlock Text="Visualizer ↕" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,2"/>
                                         <Slider x:Name="NpLayoutVizYSlider" Minimum="-200" Maximum="200" Value="0"
-                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,8"
+                                                Style="{StaticResource VolumeSlider}" Margin="0,0,0,4"
+                                                Tag="VizOffsetY"
+                                                MouseRightButtonUp="NpLayoutControlReset_MouseRightButtonUp"
                                                 ValueChanged="NpLayoutSlider_Changed"/>
-                                        <!-- Reset -->
+                                            </StackPanel>
+                                        </Expander>
+
+                                        <Border Height="1" Background="{DynamicResource BorderColor}" Opacity="0.35" Margin="0,6,0,6"/>
+                                        <!-- Reset (asks for confirmation) -->
                                         <Button Content="Reset to Default" FontSize="11" HorizontalAlignment="Right"
-                                                Click="NpLayoutReset_Click"
+                                                Click="NpLayoutResetConfirm_Click"
                                                 Style="{StaticResource PlayerButton}" Padding="8,3"/>
                                     </StackPanel>
                                     </ScrollViewer>
@@ -2141,7 +2979,7 @@
                                 </Canvas>
                             </Viewbox>
                             <Slider x:Name="NpVolumeSlider" Width="80"
-                                    Minimum="0" Maximum="100" Value="80"
+                                    Minimum="0" Maximum="100"
                                     VerticalAlignment="Center" Margin="4,0,6,0"
                                     Style="{StaticResource VolumeSlider}"
                                     ValueChanged="NpVolumeSlider_ValueChanged"/>
@@ -2237,7 +3075,8 @@
                         <Border.Clip>
                             <RectangleGeometry x:Name="NpCoverClip" RadiusX="8" RadiusY="8"/>
                         </Border.Clip>
-                        <Image x:Name="NpCoverImage" Stretch="Uniform"/>
+                        <Image x:Name="NpCoverImage" Stretch="Uniform"
+                               MouseLeftButtonDown="NpCoverImage_MouseLeftButtonDown"/>
                     </Border>
                     </Grid>
 
@@ -2277,7 +3116,9 @@
                     <!-- Lyrics area -->
                     <ScrollViewer x:Name="NpLyricsScroller"
                                   VerticalScrollBarVisibility="Hidden"
-                                  HorizontalScrollBarVisibility="Disabled">
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  PreviewMouseWheel="NpLyricsScroller_PreviewMouseWheel"
+                                  ScrollChanged="NpLyricsScroller_ScrollChanged">
                         <StackPanel x:Name="NpLyricsPanel" Margin="0,4,8,80">
                             <TextBlock x:Name="NpNoLyrics"
                                        Text="No lyrics loaded&#x0a;Play a track to search for lyrics"
@@ -2320,8 +3161,8 @@
 
         <!-- Popup card -->
         <Border HorizontalAlignment="Center" VerticalAlignment="Center"
-                Background="{DynamicResource PanelBg}"
-                BorderBrush="{DynamicResource AccentColor}"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
                 BorderThickness="1" CornerRadius="10"
                 Padding="32,28" MaxWidth="440" MinWidth="360">
             <Border.Effect>
@@ -2385,12 +3226,127 @@
         </Border>
     </Grid>
 
+    <!-- ═══ 30-Day Usage Donation Overlay ═══ -->
+    <Grid x:Name="Donation30DayOverlay" Visibility="Collapsed">
+        <Border Background="#88000000" MouseLeftButtonDown="Donation30DayBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="32,28" MaxWidth="460" MinWidth="380">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="24" Opacity="0.4" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="🎉" FontSize="32" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                <TextBlock Text="You've been using AudioAuditor for 30 days!"
+                           FontSize="17" FontWeight="Bold" FontFamily="Segoe UI"
+                           HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+                <TextBlock x:Name="Donation30DayStatsText" Text=""
+                           FontSize="13" FontFamily="Segoe UI"
+                           HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondary}"
+                           Margin="0,0,0,16"/>
+                <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="12.5"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                           LineHeight="20" Margin="0,0,0,20">
+                    Thanks for sticking around! AudioAuditor is built and maintained by one person, with no ads and no tracking. If it's been helpful, a small donation would mean a lot and help fund further development.
+                </TextBlock>
+                <Button Click="Donation30DayDonate_Click" Cursor="Hand" HorizontalAlignment="Center"
+                        Margin="0,0,0,14">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="donateBd" Background="{DynamicResource AccentColor}"
+                                    CornerRadius="6" Padding="24,10">
+                                <TextBlock Text="Support on Ko-fi" FontSize="14" FontWeight="SemiBold"
+                                           FontFamily="Segoe UI" Foreground="White"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="donateBd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+                <Button Click="Donation30DayClose_Click" Cursor="Hand" HorizontalAlignment="Center">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <TextBlock x:Name="dismissText" Text="No thanks"
+                                       FontSize="12.5" FontFamily="Segoe UI"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Opacity="0.75"/>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="dismissText" Property="Opacity" Value="1.0"/>
+                                    <Setter TargetName="dismissText" Property="TextDecorations" Value="Underline"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <!-- ═══ One-Hour Feedback Overlay ═══ -->
+    <Grid x:Name="FeedbackOneHourOverlay" Visibility="Collapsed">
+        <Border Background="#88000000" MouseLeftButtonDown="FeedbackOneHourBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="30,26" MaxWidth="500" MinWidth="390">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="26" Opacity="0.42" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="How is AudioAuditor feeling?"
+                           FontSize="18" FontWeight="Bold" FontFamily="Segoe UI"
+                           HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+                <TextBlock Text="This is a one-time check-in and it will not show again. If you like it, starring the project or donating helps a lot. If something is bothering you, I want to fix it."
+                           TextWrapping="Wrap" TextAlignment="Center" FontSize="12.5"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                           LineHeight="20" Margin="0,0,0,18"/>
+                <WrapPanel HorizontalAlignment="Center" Margin="0,0,0,14">
+                    <Button Content="Star GitHub" Click="FeedbackStar_Click"
+                            Style="{StaticResource PlayerButton}" Margin="4" Padding="12,7"/>
+                    <Button Content="Donate" Click="FeedbackDonate_Click"
+                            Style="{StaticResource PlayerButton}" Margin="4" Padding="12,7"/>
+                    <Button Content="Open Issue" Click="FeedbackIssue_Click"
+                            Style="{StaticResource PlayerButton}" Margin="4" Padding="12,7"/>
+                    <Button Content="Email" Click="FeedbackEmail_Click"
+                            Style="{StaticResource PlayerButton}" Margin="4" Padding="12,7"/>
+                </WrapPanel>
+                <Button Click="FeedbackClose_Click" Cursor="Hand" HorizontalAlignment="Center">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <TextBlock x:Name="dismissText" Text="Close — don't show again"
+                                       FontSize="12.5" FontFamily="Segoe UI"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       Opacity="0.75"/>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="dismissText" Property="Opacity" Value="1.0"/>
+                                    <Setter TargetName="dismissText" Property="TextDecorations" Value="Underline"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+        </Border>
+    </Grid>
+
     <!-- ═══ Feature Configuration Overlay (first-run / version update) ═══ -->
     <Grid x:Name="FeatureConfigOverlay" Visibility="Collapsed">
         <Border Background="#AA000000" MouseLeftButtonDown="FeatureConfigBackdrop_Click"/>
         <Border HorizontalAlignment="Center" VerticalAlignment="Center"
-                Background="{DynamicResource PanelBg}"
-                BorderBrush="{DynamicResource AccentColor}"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
                 BorderThickness="1" CornerRadius="10"
                 Padding="32,28,32,20" MaxWidth="560" MinWidth="420"
                 MaxHeight="700">
@@ -2627,8 +3583,8 @@
     <Grid x:Name="SHLabsPrivacyOverlay" Visibility="Collapsed">
         <Border Background="#AA000000" MouseLeftButtonDown="SHLabsPrivacyBackdrop_Click"/>
         <Border HorizontalAlignment="Center" VerticalAlignment="Center"
-                Background="{DynamicResource PanelBg}"
-                BorderBrush="{DynamicResource AccentColor}"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
                 BorderThickness="1" CornerRadius="10"
                 Padding="32,24" MaxWidth="560" MinWidth="420">
             <Border.Effect>
@@ -2721,8 +3677,8 @@
     <Grid x:Name="SHLabsLimitOverlay" Visibility="Collapsed">
         <Border Background="#AA000000" MouseLeftButtonDown="SHLabsLimitBackdrop_Click"/>
         <Border HorizontalAlignment="Center" VerticalAlignment="Center"
-                Background="{DynamicResource PanelBg}"
-                BorderBrush="{DynamicResource AccentColor}"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
                 BorderThickness="1" CornerRadius="10"
                 Padding="32,24" MaxWidth="480" MinWidth="360">
             <Border.Effect>
@@ -2782,8 +3738,8 @@
     <Grid x:Name="UpdateOverlay" Visibility="Collapsed">
         <Border Background="#AA000000" MouseLeftButtonDown="UpdateBackdrop_Click"/>
         <Border HorizontalAlignment="Center" VerticalAlignment="Center"
-                Background="{DynamicResource PanelBg}"
-                BorderBrush="{DynamicResource AccentColor}"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
                 BorderThickness="1" CornerRadius="10"
                 Padding="32,28" MaxWidth="420" MinWidth="340">
             <Border.Effect>
@@ -2877,6 +3833,797 @@
                 </Button>
             </StackPanel>
         </Border>
+    </Grid>
+
+    <!-- ═══ Restore Last Session prompt ═══ -->
+    <Grid x:Name="RestoreSessionOverlay" Visibility="Collapsed">
+        <Border Background="#88000000" MouseLeftButtonDown="RestoreSessionBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="28,24" MaxWidth="420" MinWidth="340">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="24" Opacity="0.4" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock Text="Restore your last session?" FontSize="16" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,10"/>
+                <TextBlock x:Name="RestoreSessionDetail" TextWrapping="Wrap" TextAlignment="Center"
+                           FontSize="13" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}"
+                           LineHeight="20" Margin="0,0,0,18"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button Click="RestoreSessionRestore_Click" Cursor="Hand" Margin="0,0,8,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="restoreBd" Background="{DynamicResource AccentColor}"
+                                        CornerRadius="6" Padding="22,9">
+                                    <TextBlock Text="Restore" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="White"
+                                               HorizontalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="restoreBd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button Click="RestoreSessionDismiss_Click" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="laterBd" Background="Transparent"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
+                                        BorderThickness="1" CornerRadius="6" Padding="18,9">
+                                    <TextBlock Text="Not now" FontSize="13" FontFamily="Segoe UI"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               HorizontalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="laterBd" Property="Opacity" Value="0.8"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <!-- ═══ Reusable themed dialog (confirm + optional text input) ═══ -->
+    <!-- Driven by ShowThemedDialog(...) in MainWindow.ThemedDialog.cs. Used for the layout-reset
+         confirmation and the "name this profile" prompt; reuses the glass theme tokens so it
+         matches whatever theme/ColorMatch is active. -->
+    <Grid x:Name="ThemedDialogOverlay" Visibility="Collapsed" Panel.ZIndex="50">
+        <Border Background="#88000000" MouseLeftButtonDown="ThemedDialogBackdrop_Click"/>
+        <Border HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="{DynamicResource GlassFloatingBg}"
+                BorderBrush="{DynamicResource GlassBorderBrush}"
+                BorderThickness="1" CornerRadius="10"
+                Padding="26,22" MaxWidth="420" MinWidth="340">
+            <Border.Effect>
+                <DropShadowEffect ShadowDepth="0" BlurRadius="24" Opacity="0.4" Color="Black"/>
+            </Border.Effect>
+            <StackPanel>
+                <TextBlock x:Name="ThemedDialogTitle" Text="" FontSize="16" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+                <TextBlock x:Name="ThemedDialogMessage" Text="" TextWrapping="Wrap"
+                           FontSize="13" FontFamily="Segoe UI" Foreground="{DynamicResource TextSecondary}"
+                           LineHeight="19" Margin="0,0,0,14"/>
+                <TextBox x:Name="ThemedDialogInput" Visibility="Collapsed"
+                         FontSize="13" FontFamily="Segoe UI" Padding="6,5" Margin="0,0,0,14"
+                         Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
+                         BorderBrush="{DynamicResource ButtonBorder}"
+                         KeyDown="ThemedDialogInput_KeyDown"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="ThemedDialogConfirmBtn" Click="ThemedDialogConfirm_Click" Cursor="Hand"
+                            Margin="0,0,8,0" Content="OK">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="okBd" Background="{DynamicResource AccentColor}"
+                                        CornerRadius="6" Padding="20,8">
+                                    <TextBlock Text="{TemplateBinding Content}" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI" Foreground="White" HorizontalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="okBd" Property="Opacity" Value="0.85"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                    <Button x:Name="ThemedDialogCancelBtn" Click="ThemedDialogCancel_Click" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="cancelBd" Background="Transparent"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
+                                        BorderThickness="1" CornerRadius="6" Padding="16,8">
+                                    <TextBlock Text="Cancel" FontSize="13" FontFamily="Segoe UI"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="cancelBd" Property="Opacity" Value="0.8"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Grid>
+
+    <!-- ═══ Subtle themed toast (auto-dismiss) ═══ -->
+    <!-- Used by ShowThemedNotice(): tiny corner notice for things like "scan cache turned on too"
+         or "AudioAuditor recovered from a problem". Not modal, no backdrop, fades on its own. -->
+    <Border x:Name="ThemedNoticeToast" Visibility="Collapsed"
+            HorizontalAlignment="Right" VerticalAlignment="Bottom"
+            Margin="0,0,18,72" MaxWidth="360" Padding="16,12"
+            Background="{DynamicResource GlassFloatingBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}"
+            BorderThickness="1" CornerRadius="8"
+            IsHitTestVisible="True">
+        <Border.Effect>
+            <DropShadowEffect ShadowDepth="0" BlurRadius="18" Opacity="0.35" Color="Black"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                <TextBlock x:Name="ThemedNoticeTitle" FontSize="13" FontWeight="SemiBold"
+                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}"
+                           Margin="0,0,0,4" TextWrapping="Wrap"/>
+                <TextBlock x:Name="ThemedNoticeBody" FontSize="12" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
+            </StackPanel>
+            <!-- Close (X) — Segoe MDL2 'ChromeClose' glyph -->
+            <Button Grid.Column="1" VerticalAlignment="Top" Cursor="Hand"
+                    Click="ThemedNoticeClose_Click" ToolTip="Dismiss"
+                    Background="Transparent" BorderThickness="0" Padding="4">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="closeBd" Background="Transparent" CornerRadius="4" Padding="4">
+                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                       Foreground="{DynamicResource TextSecondary}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="closeBd" Property="Background"
+                                        Value="{DynamicResource GlassBorderBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </Grid>
+    </Border>
+
+    <!-- ═══════════════ Wrapped (in-app stats dashboard overlay) ═══════════════ -->
+    <Grid x:Name="WrappedOverlay" Visibility="Collapsed" Panel.ZIndex="55"
+          Background="{DynamicResource WindowBg}" Focusable="True"
+          KeyDown="WrappedOverlay_KeyDown">
+        <Grid.Resources>
+            <Style x:Key="WrappedSecondaryButton" TargetType="Button">
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="Transparent"
+                                    BorderBrush="{DynamicResource BorderColor}" BorderThickness="1"
+                                    CornerRadius="8" Padding="16,8">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="WrappedPrimaryButton" TargetType="Button">
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="{DynamicResource AccentColor}"
+                                    CornerRadius="8" Padding="22,8">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Opacity" Value="0.85"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="WrappedCard" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource PanelBg}"/>
+                <Setter Property="CornerRadius" Value="12"/>
+                <Setter Property="Padding" Value="18,16"/>
+                <Setter Property="Margin" Value="0,0,0,12"/>
+            </Style>
+            <Style x:Key="WrappedCardTitle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                <Setter Property="Margin" Value="0,0,0,10"/>
+            </Style>
+
+            <!-- Segmented range selector button (Day / Week / Month / Year / All / Custom) -->
+            <Style x:Key="WrappedRangeButton" TargetType="ToggleButton">
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="Padding" Value="14,6"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToggleButton">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="7"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentColor}"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- ═══ Themed Calendar (dark) for the custom date range ═══ -->
+            <Style x:Key="WrappedCalendarDayButton" TargetType="CalendarDayButton">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="MinWidth" Value="30"/>
+                <Setter Property="MinHeight" Value="30"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CalendarDayButton">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="6" Margin="1">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                                </Trigger>
+                                <Trigger Property="IsToday" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                                    <Setter TargetName="bd" Property="BorderThickness" Value="1"/>
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentColor}"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                </Trigger>
+                                <Trigger Property="IsInactive" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.3"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="WrappedCalendarButton" TargetType="CalendarButton">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="MinWidth" Value="42"/>
+                <Setter Property="MinHeight" Value="42"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CalendarButton">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="6" Margin="2">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                                </Trigger>
+                                <Trigger Property="HasSelectedDays" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="{DynamicResource AccentColor}"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                </Trigger>
+                                <Trigger Property="IsInactive" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="WrappedCalendarItem" TargetType="CalendarItem">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="CalendarItem">
+                            <ControlTemplate.Resources>
+                                <Style x:Key="WrappedCalNavButton" TargetType="Button">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                                    <Setter Property="Cursor" Value="Hand"/>
+                                    <Setter Property="FontSize" Value="14"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="nb" Background="Transparent" CornerRadius="5"
+                                                        Width="26" Height="26">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="nb" Property="Background" Value="#22FFFFFF"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                                <Style x:Key="WrappedCalHeaderButton" TargetType="Button">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                                    <Setter Property="Cursor" Value="Hand"/>
+                                    <Setter Property="FontSize" Value="13"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="hb" Background="Transparent" CornerRadius="5"
+                                                        Padding="8,2">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="hb" Property="Background" Value="#22FFFFFF"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ControlTemplate.Resources>
+                            <Border Background="{DynamicResource PanelBg}" CornerRadius="8"
+                                    BorderBrush="{DynamicResource BorderColor}" BorderThickness="1" Padding="6">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid Grid.Row="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button x:Name="PART_PreviousButton" Grid.Column="0"
+                                                Style="{StaticResource WrappedCalNavButton}" Content="‹"/>
+                                        <Button x:Name="PART_HeaderButton" Grid.Column="1"
+                                                Style="{StaticResource WrappedCalHeaderButton}"/>
+                                        <Button x:Name="PART_NextButton" Grid.Column="2"
+                                                Style="{StaticResource WrappedCalNavButton}" Content="›"/>
+                                    </Grid>
+                                    <Grid x:Name="PART_MonthView" Grid.Row="1" Margin="0,6,0,0"
+                                          Visibility="Visible"/>
+                                    <Grid x:Name="PART_YearView" Grid.Row="1" Margin="0,6,0,0"
+                                          Visibility="Hidden"/>
+                                </Grid>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="WrappedCalendar" TargetType="Calendar">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="CalendarDayButtonStyle" Value="{StaticResource WrappedCalendarDayButton}"/>
+                <Setter Property="CalendarButtonStyle" Value="{StaticResource WrappedCalendarButton}"/>
+                <Setter Property="CalendarItemStyle" Value="{StaticResource WrappedCalendarItem}"/>
+            </Style>
+        </Grid.Resources>
+
+        <Grid x:Name="WrappedDashboardHost" Margin="36,12,36,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,0,0,10">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="Your AudioAuditor " FontSize="28" FontWeight="Bold"
+                               Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"/>
+                    <TextBlock Text="Wrapped" FontSize="28" FontWeight="ExtraBold"
+                               Foreground="{DynamicResource AccentColor}" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock x:Name="WrappedSubtitleText" Text=""
+                           FontSize="13" Foreground="{DynamicResource TextMuted}"
+                           HorizontalAlignment="Center" Margin="0,4,0,0"/>
+
+                <!-- Time-range selector -->
+                <Border Background="{DynamicResource PanelBg}" CornerRadius="9" Padding="3"
+                        Margin="0,12,0,0" HorizontalAlignment="Center"
+                        BorderBrush="{DynamicResource BorderColor}" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton x:Name="WrappedRangeDay" Content="Day" Tag="Day"
+                                      Style="{StaticResource WrappedRangeButton}" Click="WrappedRange_Click"/>
+                        <ToggleButton x:Name="WrappedRangeWeek" Content="Week" Tag="Week"
+                                      Style="{StaticResource WrappedRangeButton}" Click="WrappedRange_Click"/>
+                        <ToggleButton x:Name="WrappedRangeMonth" Content="Month" Tag="Month"
+                                      Style="{StaticResource WrappedRangeButton}" Click="WrappedRange_Click"/>
+                        <ToggleButton x:Name="WrappedRangeYear" Content="Year" Tag="Year"
+                                      Style="{StaticResource WrappedRangeButton}" Click="WrappedRange_Click"/>
+                        <ToggleButton x:Name="WrappedRangeAll" Content="All Time" Tag="All"
+                                      Style="{StaticResource WrappedRangeButton}" Click="WrappedRange_Click"/>
+                        <ToggleButton x:Name="WrappedRangeCustom" Content="Custom" Tag="Custom"
+                                      Style="{StaticResource WrappedRangeButton}" Click="WrappedRange_Click"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Custom date-range calendar popup -->
+                <Popup x:Name="WrappedCustomPopup" PlacementTarget="{Binding ElementName=WrappedRangeCustom}"
+                       Placement="Bottom" VerticalOffset="6" StaysOpen="False" AllowsTransparency="True">
+                    <Border Background="{DynamicResource GlassFloatingBg}" BorderBrush="{DynamicResource GlassBorderBrush}"
+                            BorderThickness="1" CornerRadius="10" Padding="12">
+                        <StackPanel Width="260">
+                            <TextBlock Text="Custom range" FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,2"/>
+                            <TextBlock Text="Click a start date, then shift-click or drag to the end."
+                                       FontSize="11" Foreground="{DynamicResource TextMuted}"
+                                       TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <Calendar x:Name="WrappedCustomCalendar" Style="{StaticResource WrappedCalendar}"
+                                      SelectionMode="SingleRange"
+                                      SelectedDatesChanged="WrappedCustomCalendar_SelectedDatesChanged"/>
+                            <TextBlock x:Name="WrappedCustomRangeText" Text="No range selected"
+                                       FontSize="11" Foreground="{DynamicResource TextSecondary}"
+                                       Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                                <Button Content="Cancel" Click="WrappedCustomCancel_Click"
+                                        Style="{StaticResource WrappedSecondaryButton}" Margin="0,0,8,0"/>
+                                <Button x:Name="WrappedCustomApplyBtn" Content="Apply"
+                                        Click="WrappedCustomApply_Click" Style="{StaticResource WrappedPrimaryButton}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+            </StackPanel>
+
+            <!-- Close -->
+            <Button x:Name="WrappedCloseButton" Click="WrappedClose_Click" Cursor="Hand"
+                    Panel.ZIndex="10" Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Margin="0,-4,-6,0" Background="Transparent" BorderThickness="0" Padding="0"
+                    ToolTip="Close (Esc)">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="xbd" Width="34" Height="34" CornerRadius="17"
+                                Background="Transparent" BorderBrush="{DynamicResource BorderColor}"
+                                BorderThickness="1">
+                            <Path x:Name="xglyph" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Data="M 0,0 L 11,11 M 11,0 L 0,11" Stroke="{DynamicResource TextMuted}"
+                                  StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="xbd" Property="Background" Value="#22FFFFFF"/>
+                                <Setter TargetName="xbd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                                <Setter TargetName="xglyph" Property="Stroke" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+
+            <!-- Three landscape columns (scrollable when they overflow the window) -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
+            <Grid VerticalAlignment="Top">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Column 0 -->
+                <StackPanel x:Name="WrappedCol0" Grid.Column="0" Margin="0,0,9,0">
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource WrappedCard}" Margin="0,0,6,0">
+                            <StackPanel>
+                                <TextBlock x:Name="WStatFilesText" Text="0" FontSize="28" FontWeight="Bold"
+                                           Foreground="{DynamicResource AccentColor}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Files Scanned" FontSize="11"
+                                           Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="1" Style="{StaticResource WrappedCard}" Margin="3,0,3,0">
+                            <StackPanel>
+                                <TextBlock x:Name="WStatHoursText" Text="0" FontSize="28" FontWeight="Bold"
+                                           Foreground="{DynamicResource AccentColor}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Hours Listened" FontSize="11"
+                                           Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="2" Style="{StaticResource WrappedCard}" Margin="6,0,0,0">
+                            <StackPanel>
+                                <TextBlock x:Name="WStatSessionsText" Text="0" FontSize="28" FontWeight="Bold"
+                                           Foreground="{DynamicResource AccentColor}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Scan Sessions" FontSize="11"
+                                           Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Border Style="{StaticResource WrappedCard}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock x:Name="WStatLibrarySize" Text="-" FontSize="18" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Library" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock x:Name="WStatTotalPlays" Text="-" FontSize="18" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Plays" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock x:Name="WStatUniqueArtists" Text="-" FontSize="18" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Artists" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="3">
+                                <TextBlock x:Name="WStatUniqueTracks" Text="-" FontSize="18" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                <TextBlock Text="Tracks" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Library Quality" Style="{StaticResource WrappedCardTitle}"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock x:Name="WStatAvgBitrate" Text="-" FontSize="17" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center" TextAlignment="Center"/>
+                                    <TextBlock Text="Avg Bitrate" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock x:Name="WStatAvgLufs" Text="-" FontSize="17" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Avg LUFS" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock x:Name="WStatAvgDr" Text="-" FontSize="17" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Avg DR" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="3">
+                                    <TextBlock x:Name="WStatClipping" Text="-" FontSize="17" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Clipping" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Grid>
+                            <Border Background="#22FFFFFF" CornerRadius="8" Padding="12,9" Margin="0,14,0,0">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <TextBlock Text="Audiophile rating: " FontSize="12"
+                                               Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="WStatAudiophile" Text="-" FontSize="13" FontWeight="Bold"
+                                               Foreground="{DynamicResource AccentColor}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Averages" Style="{StaticResource WrappedCardTitle}"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock x:Name="WStatAvgFileSize" Text="-" FontSize="18" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Avg File Size" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock x:Name="WStatAvgPlaysPerTrack" Text="-" FontSize="18" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Plays / Track" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Activity over time" Style="{StaticResource WrappedCardTitle}"/>
+                            <Grid x:Name="WActivityChartHost" Height="130"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Column 1 -->
+                <StackPanel x:Name="WrappedCol1" Grid.Column="1" Margin="9,0,9,0">
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Resolution" Style="{StaticResource WrappedCardTitle}"/>
+                            <TextBlock Text="Sample rate" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,4"/>
+                            <StackPanel x:Name="WSampleRatePanel" Orientation="Vertical"/>
+                            <TextBlock Text="Bit depth" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,12,0,4"/>
+                            <StackPanel x:Name="WBitDepthPanel" Orientation="Vertical"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Channel Layout" Style="{StaticResource WrappedCardTitle}"/>
+                            <StackPanel x:Name="WChannelPanel" Orientation="Vertical"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Loudness &amp; Dynamics" Style="{StaticResource WrappedCardTitle}"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock x:Name="WStatDrRating" Text="-" FontSize="17" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Dynamic range" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock x:Name="WStatClippingPct" Text="-" FontSize="17" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Files clipping" FontSize="11" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <Grid Margin="0,0,0,10">
+                                <TextBlock Text="Formats &amp; Codecs" FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Left"/>
+                                <TextBlock x:Name="WStatLosslessRatio" Text="" FontSize="12"
+                                           Foreground="{DynamicResource AccentColor}" HorizontalAlignment="Right"/>
+                            </Grid>
+                            <StackPanel x:Name="WFormatsPanel" Orientation="Vertical"/>
+                            <Grid Margin="0,8,0,0">
+                                <TextBlock x:Name="WStatLosslessLossy" Text="" FontSize="11"
+                                           Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Left"/>
+                                <TextBlock x:Name="WStatMqaCount" Text="" FontSize="11"
+                                           Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Right"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Format mix" Style="{StaticResource WrappedCardTitle}"/>
+                            <Grid x:Name="WFormatDonutHost" Height="150"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Column 2 -->
+                <StackPanel x:Name="WrappedCol2" Grid.Column="2" Margin="9,0,0,0">
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Top Artists" Style="{StaticResource WrappedCardTitle}"/>
+                            <StackPanel x:Name="WArtistsPanel" Orientation="Vertical"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Top Albums" Style="{StaticResource WrappedCardTitle}"/>
+                            <StackPanel x:Name="WAlbumsPanel" Orientation="Vertical"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Top Tracks" Style="{StaticResource WrappedCardTitle}"/>
+                            <StackPanel x:Name="WTracksPanel" Orientation="Vertical"/>
+                            <TextBlock x:Name="WStatMostByTime" Text="" FontSize="11"
+                                       Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource WrappedCard}">
+                        <StackPanel>
+                            <TextBlock Text="Quality trend" Style="{StaticResource WrappedCardTitle}"/>
+                            <Grid x:Name="WQualityTrendHost" Height="130"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+            </ScrollViewer>
+
+            <!-- Footer -->
+            <StackPanel Grid.Row="2" Margin="0,4,0,0">
+                <TextBlock Text="All data is stored locally on your PC. Nothing is uploaded or shared."
+                           FontSize="11" Foreground="{DynamicResource TextMuted}"
+                           HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <Button Content="Reset Stats" Click="WrappedResetStats_Click"
+                            Style="{StaticResource WrappedSecondaryButton}" Margin="0,0,8,0"/>
+                    <Button Content="Close" Click="WrappedClose_Click"
+                            Style="{StaticResource WrappedPrimaryButton}"/>
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+
+        <!-- Themed reset-stats confirmation -->
+        <Grid x:Name="WrappedResetConfirmOverlay" Visibility="Collapsed" Panel.ZIndex="50"
+              Background="#99000000" MouseLeftButtonDown="WrappedResetConfirmDim_MouseDown">
+            <Border Background="{DynamicResource PanelBg}" BorderBrush="{DynamicResource BorderColor}"
+                    BorderThickness="1" CornerRadius="12" Padding="24,20" MaxWidth="420"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border.Effect>
+                    <DropShadowEffect ShadowDepth="0" BlurRadius="24" Opacity="0.45" Color="Black"/>
+                </Border.Effect>
+                <StackPanel>
+                    <TextBlock Text="Reset stats?" FontSize="18" FontWeight="Bold"
+                               Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+                    <TextBlock Text="This permanently clears all locally-stored listening and analysis statistics. This cannot be undone."
+                               FontSize="13" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,20"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Content="Reset" Click="WrappedResetConfirmYes_Click"
+                                Style="{StaticResource WrappedSecondaryButton}" Margin="0,0,8,0"/>
+                        <Button Content="Cancel" Click="WrappedResetConfirmCancel_Click"
+                                Style="{StaticResource WrappedPrimaryButton}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 
     </Grid>
