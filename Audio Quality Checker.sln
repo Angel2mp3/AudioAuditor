@@ -10,6 +10,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditor.Core", "AudioA
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditor.Avalonia", "AudioAuditor.Avalonia\AudioAuditor.Avalonia.csproj", "{B2C3D4E5-2345-6789-ABCD-EF0123456789}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditor.Core.Tests", "AudioAuditor.Core.Tests\AudioAuditor.Core.Tests.csproj", "{A9DFA18A-9FEF-4634-BDA2-E5611FB0A64C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AudioAuditor.Windows.Tests", "AudioAuditor.Windows.Tests\AudioAuditor.Windows.Tests.csproj", "{D6184E06-90A0-4EEA-8A0C-F38E4B4A9A01}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,6 +36,14 @@ Global
 		{B2C3D4E5-2345-6789-ABCD-EF0123456789}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B2C3D4E5-2345-6789-ABCD-EF0123456789}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B2C3D4E5-2345-6789-ABCD-EF0123456789}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A9DFA18A-9FEF-4634-BDA2-E5611FB0A64C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9DFA18A-9FEF-4634-BDA2-E5611FB0A64C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9DFA18A-9FEF-4634-BDA2-E5611FB0A64C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9DFA18A-9FEF-4634-BDA2-E5611FB0A64C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D6184E06-90A0-4EEA-8A0C-F38E4B4A9A01}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D6184E06-90A0-4EEA-8A0C-F38E4B4A9A01}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D6184E06-90A0-4EEA-8A0C-F38E4B4A9A01}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D6184E06-90A0-4EEA-8A0C-F38E4B4A9A01}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

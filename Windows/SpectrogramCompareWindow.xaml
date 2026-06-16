@@ -221,8 +221,8 @@
         </Style>
     </Window.Resources>
 
-    <Border CornerRadius="10" Background="{DynamicResource WindowBg}"
-            BorderBrush="{DynamicResource BorderColor}" BorderThickness="1">
+    <Border CornerRadius="10" Background="{DynamicResource GlassOverlayBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="40"/>

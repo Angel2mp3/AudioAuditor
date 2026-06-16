@@ -168,8 +168,8 @@
         </Style>
     </Window.Resources>
 
-    <Border CornerRadius="10" Background="{DynamicResource WindowBg}"
-            BorderBrush="{DynamicResource BorderColor}" BorderThickness="1">
+    <Border CornerRadius="10" Background="{DynamicResource GlassOverlayBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="40"/>
@@ -214,7 +214,7 @@
             </ScrollViewer>
 
             <!-- Bottom toolbar -->
-            <Border Grid.Row="2" Background="{DynamicResource PanelBg}" Padding="10,6"
+            <Border Grid.Row="2" Background="{DynamicResource GlassToolbarBg}" Padding="10,6"
                     CornerRadius="0,0,10,10">
                 <DockPanel>
                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">

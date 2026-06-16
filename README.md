@@ -9,20 +9,22 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/.NET-8.0-8366e0?style=plastic&logo=dotnet" alt=".NET 8"/>
-  <img src="https://img.shields.io/badge/Platform-Windows-1fa8fd?style=plastic&logo=windows" alt="Windows"/>
-  <img src="https://img.shields.io/badge/UI-WPF-55a4f7?style=plastic" alt="WPF"/>
-  <img src="https://img.shields.io/badge/License-Apache%202.0-89276f?style=plastic" alt="License"/>
-  <img src="https://img.shields.io/badge/Version-1.7.0-4f50c6?style=plastic" alt="Version 1.7.0"/>
+  <img src="https://img.shields.io/badge/.NET-8.0-8366e0?style=for-the-badge&logo=dotnet&logoColor=white" alt=".NET 8"/>
+  <img src="https://img.shields.io/badge/platform-Windows-1fa8fd?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"/>
+  <img src="https://img.shields.io/badge/license-Apache%202.0-89276f?style=for-the-badge" alt="Apache 2.0 License"/>
+  <img src="https://img.shields.io/badge/version-1.8.0-4f50c6?style=for-the-badge" alt="Version 1.8.0"/>
   <br/>
+  <a href="https://audioauditor-download-badge.vercel.app/api/count">
+    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Faudioauditor-download-badge.vercel.app%2Fapi%2Fbadge&style=for-the-badge" alt="Combined downloads"/>
+  </a>
   <a href="https://ko-fi.com/angelsoftware">
-    <img src="https://img.shields.io/badge/Support_on-Ko--fi-f26b2e?style=plastic&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
+    <img src="https://img.shields.io/badge/support-Ko--fi-f26b2e?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
   </a>
   <a href="https://audioauditor.org">
-    <img src="https://img.shields.io/badge/Website-audioauditor.org-4f50c6?style=plastic&logo=googlechrome&logoColor=white" alt="Website"/>
+    <img src="https://img.shields.io/badge/website-audioauditor.org-4f50c6?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"/>
   </a>
   <a href="https://fmhy.net/audio#spectrum-analyzers">
-    <img src="https://img.shields.io/badge/Featured%20on-FMHY-b051d4?style=plastic" alt="Featured on FMHY"/>
+    <img src="https://img.shields.io/badge/featured%20on-FMHY-b051d4?style=for-the-badge" alt="Featured on FMHY"/>
   </a>
 </p>
 
@@ -34,7 +36,7 @@
 
 ## Overview
 
-**AudioAuditor** is a feature-rich desktop application for Windows that analyzes your audio files to detect **fake lossless**, verify **true quality**, identify **clipping**, detect **MQA encoding**, detect **AI-generated audio**, estimate **effective frequency cutoffs**, and much more — all wrapped in a sleek, themeable interface with a built-in audio player, equalizer, spatial audio, spectrogram viewer, and real-time visualizer.
+**AudioAuditor** is a feature-rich audio analysis app for Windows that analyzes your audio files to detect **fake lossless**, verify **true quality**, identify **clipping**, detect **MQA encoding**, detect **AI-generated audio**, estimate **effective frequency cutoffs**, and much more — all wrapped in a sleek, themeable interface with a built-in audio player, equalizer, spatial audio, spectrogram viewer, and real-time visualizer.
 
 Whether you're an audiophile verifying your FLAC collection, a music producer checking masters, or just curious about the true quality of your library, AudioAuditor gives you the data you need at a glance.
 
@@ -88,6 +90,8 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 | WV (WavPack) | WMA | |
 | ALAC | M4A | |
 
+> **Cross-platform note (CLI):** On Windows every format above is supported. On the **Linux/macOS CLI builds**, decoding uses fully-managed decoders — **FLAC, WAV, AIFF, OGG/Vorbis, Opus, and MP3/MP2** analyze everywhere. Formats that rely on Windows Media Foundation (**AAC/M4A, WMA, ALAC, TTA, Musepack**) still have their metadata read but skip spectral analysis on Linux/macOS. The Windows desktop app and Windows CLI support them all. (This will be worked on in a future version)
+
 ### Built-in Audio Player
 - Full playback controls — Shuffle, Previous, Rewind 5s, Play/Pause, Forward 5s, Next
 - **Shuffle mode** — Toggle shuffle to play tracks in random order; works with auto-play next, manual next/prev, and queue
@@ -100,7 +104,7 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - Audio normalization toggle (peak-based, targets −1 dB)
 - **Hi-res audio support** — Native playback of high sample-rate audio (96 kHz, 192 kHz, etc.) with automatic fallback resampling if the device can't handle the native rate
 - **Spatial Audio** — Headphone-optimized soundstage widening using crossfeed, HRTF-like interaural time delay, head shadow simulation, and early reflections
-- **10-band Parametric Equalizer** — 32 Hz to 16 kHz with ±12 dB per band, soft clipping protection, collapsible panel, and per-band reset
+- **10-band Parametric Equalizer** — 32 Hz to 16 kHz with ±12 dB per band, soft clipping protection, collapsible panel, per-band reset, built-in presets, and custom profile save/delete
 - **Seek Safety Protection** — Multi-layered audio safety system prevents loud pops or static when seeking
 - **Loop Modes** — Cycle between Loop Off, Loop All, and Loop One with a single button
 - **Seek Tooltip** — Hovering over the seek slider shows a live time preview that follows your cursor
@@ -108,12 +112,19 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Main Window Color Match** — Optionally tint the entire UI dynamically from the currently playing track's album art
 - **Offline Mode** — Disable all network calls with a single toggle
 - **Lyrics Save & Auto-Save** — One-click export of fetched timed lyrics as `.lrc` files, or enable auto-save
+- **Mini Player** — A compact, draggable, **always-on-top** floating window (toolbar button) with cover art, title/artist, transport, seek, volume/mute, and shuffle. It has its own optional inline **Circles** visualizer that runs independently of the main window, and it remembers its style, ColorMatch toggle, and size/position across restarts
 
 ### Now Playing Panel
 - **Immersive full-panel view** — Click the album cover or press the expand button on the playbar to open a two-column Now Playing panel: album art with color-matched glows on the left, synced lyrics on the right
+- **Configurable background effects** — Choose Off, Color Drift, Stars, Rain, Snow, **Leaves**, or **Underwater**. Stars include independent per-star twinkle/parallax and occasional shooting stars; Rain has wind-blown streaks with optional lightning; Snow uses soft drifting flakes; Leaves tumble and sway on the wind; Underwater is a calm deep-sea scene with rising bubbles, drifting light shafts, swaying seaweed, and occasional fish. Effect density, lightning frequency, flake/leaf size, and a global animation speed are all adjustable with theme-matched sliders
 - **Album Color-Match Theming** — Dominant colors extracted from the album art are applied to the panel background, glows, visualizer accent colors, and even the **Windows title bar** (via DWM) for a fully cohesive look
-- **Color Cache (v1.7.0)** — Cached extracted album-art colors keep skipping and scrolling through Now Playing with **Color Match** enabled smooth and snappy. **On by default**, in-memory only — cleared when the app closes. An optional **Persist color cache to disk** sub-option (off by default) saves a very small amount of color data (a few bytes of RGB per track, with hashed keys — no file paths) to `%APPDATA%\AudioAuditor\` so the smoothness survives app restarts
+- **Color Cache** — Cached extracted album-art colors keep skipping and scrolling through Now Playing with **Color Match** enabled smooth and snappy. **On by default**, in-memory only — cleared when the app closes. An optional **Persist color cache to disk** sub-option (off by default) saves a very small amount of color data (a few bytes of RGB per track, with hashed keys — no file paths) to `%APPDATA%\AudioAuditor\` so the smoothness survives app restarts
+- **ColorMatch eyedropper** — Pick up to three colors directly from the album cover to override the extracted palette for the current track; right-click the eyedropper to reset
 - **Synced Lyrics** — Automatic time-synced lyrics from multiple sources: embedded tags, local `.lrc` files, LrcLib, Netease Music, and Musixmatch. Lyrics auto-scroll and highlight the current line; click any line to seek directly to that timestamp. Cycle through providers with the source button. Drag-and-drop `.lrc` files onto the panel to load them instantly
+- **Explicit vs Clean detection** — Reads a version hint from tags (title markers like `(Explicit)`/`[Clean]`/`(Radio Edit)`, ID3v2 `iTunesAdvisory`, MP4 `rtng`) and ranks lyric search candidates so explicit tracks don't get clean lyrics (and vice-versa). A **"Wrong version?"** button in the lyrics header toggles Explicit↔Clean and re-fetches
+- **Censored-lyrics auto-fallback** *(opt-in)* — When a provider returns lyrics with profanity masked by `*****`/`#####`, AudioAuditor automatically tries the next provider for a clean copy
+- **Look Up This Song** — The Now Playing magnifier has its **own** configurable search-service list (up to 6, with custom URLs/icons), separate from the main window's toolbar buttons; one button seeds it from your main-window setup
+- **Focused Lyrics mode** — Keep the active synced lyric line clear while inactive lines are softly blurred for easier reading during playback
 - **Lyrics Off Mode** — Hide lyrics completely to show only album art + visualizer
 - **Lyrics Translation (beta)** — Real-time translation into any supported language; auto-detects the source language or lets you set it manually
 - **Karaoke Mode (beta)** — Word-by-word highlighting that illuminates each word as it's sung with smooth color transitions
@@ -121,7 +132,9 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 - **Dedicated Seek Bar** — Full drag-and-seek slider inside the Now Playing panel with no position jumping while dragging
 - **Visualizer Placement** — Choose between a full-width visualizer bar above the playbar or a compact strip under the album cover
 - **Visualizer Drag-Resize** — Grab the handle between the album art and lyrics to resize the visualizer strip from 40–400 px
-- **Layout Customization** — Adjust album cover size and position, title and artist text size and position, lyrics panel size and position, and visualizer size and position via a live-preview popup. All layout preferences persist across sessions
+- **Layout Customization** — Adjust album cover size and position, title and artist text size and position, lyrics panel size and position, and visualizer size and position via a live-preview popup organized into collapsible sections. All layout preferences persist across sessions
+- **Layout Profiles** — Save named layouts; profiles are **visualizer-aware**, capturing separate windowed/fullscreen × visualizer-on/off arrangements (sizes, offsets, visualizer height & placement) so one saved look adapts to every mode
+- **Album Cover Glow slider** — Size the halo around the cover from off (`0`) through the default soft glow up to a large bloom (`2.0`); the breathing pulse respects the scale and the setting persists
 - **Auto-Scaling Layout** — The cover, visualizer, and surrounding layout scale proportionally when the visualizer is toggled on or off, so a single slider setting looks right in both modes without needing separate profiles
 - **NP Control Bar** — Shuffle, Loop, Auto-Play, Visualizer, Visualizer Placement, Lyrics Off, Translate, Karaoke, Color Match, Queue, and Settings buttons — all directly accessible from the panel
 - **Queue Button & Popup** — Opens the full Queue window with drag-and-drop reordering, plus an **Up Next** preview showing the next track
@@ -160,10 +173,12 @@ Whether you're an audiophile verifying your FLAC collection, a music producer ch
 ### Tools & Batch Operations
 - **Waveform Comparison** — Select two files (Ctrl+Click) and compare waveforms side-by-side with correlation, RMS difference, and peak difference stats
 - **Batch Rename & Organize** — Rename files using patterns (`{artist}`, `{title}`, `{track}`, etc.) with collision detection and optional folder organization
+- **Auto Rename from metadata** — Right-click selected files and rename them to `Artist - Title` or `Title - Artist` using tag metadata, with collision checks and safe filename cleanup
 - **Duplicate Detection** — Scan your library for duplicates by metadata match (artist + title) and file fingerprint (size + duration)
 - **Playlist Import** — Import `.m3u`, `.m3u8`, and `.pls` playlist files; resolves relative and absolute paths
 - **Cue Sheet Support** — Import `.cue` files; parses track boundaries and adds virtual entries with full analysis
 - **Metadata Strip Tool** — Remove all metadata tags from selected audio files (ID3, Vorbis, APE, M4A)
+- **Batch Metadata Editor** — Select multiple files and fetch missing tags from online providers (MusicBrainz and others). Pick which fields (title, artist, album, album-artist, year, track/disc, genre, composer, lyrics, cover art…) and providers to use, **preview every proposed change** in a grid, then apply. "Missing-only" by default so existing tags aren't clobbered
 - **Quick Rename** — Right-click → Add `[Bitrate]` or `[Real Bitrate]` to filenames instantly
 
 ### Music Service Integration
@@ -211,7 +226,7 @@ All columns exported including: Status, Title, Artist, File Name, File Path, Sam
 
 ### Integrations
 - **Discord Rich Presence** — Shows currently playing track, artist, elapsed time, and song duration bar in your Discord status. Fetches album art from Last.fm when available. Includes play/pause state icons and automatic reconnection (toggle in Settings)
-- **Last.fm Scrobbling** — Full authentication flow with browser-based token exchange, Now Playing updates, and automatic scrobbling at 50% or 4 minutes (whichever comes first)
+- **Multi-Service Scrobbling** — Scrobble simultaneously to **Last.fm**, **Libre.fm**, **ListenBrainz**, and **Maloja** (self-hosted). Each is enabled/authenticated independently in Settings → Integrations and a single play fans out to every active service. **Configurable thresholds** (scrobble-at-percent, scrobble-at-seconds, minimum track length — first rule met fires), anti-duplicate by furthest position reached, a **per-song blacklist** (cross-library by Artist|Title), **Pause All Scrobbling**, one-off "Don't Scrobble", and **Scrobble Now**. A corner ♫ status widget in the main window shows state (Scrobbling / Paused / Offline / Not connected) and per-service profile links. Credentials are stored encrypted (Windows DPAPI)
 - **Windows Media Session (SMTC)** — Publishes now-playing info to System Media Transport Controls so media overlays (FluentFlyout, volume OSD, etc.) display the current track and album art
 
 ### Performance Controls
@@ -222,6 +237,9 @@ All columns exported including: Status, Title, Artist, File Name, File Path, Sam
 - When memory usage approaches the configured limit, AudioAuditor automatically pauses processing, triggers garbage collection, and waits for memory to free up before continuing
 - Both limits apply to file analysis and spectrogram batch export
 - Prevents CPU and memory spikes that could lag or freeze your system when processing large folders
+- **Reduce Motion** — A single Settings → Appearance toggle that calms the whole app: Now Playing backgrounds, cover glow, lyric transitions, playbar effects, and both the main and mini-player visualizers all stop
+- **Battery Saver** — A Settings → Cache & Files performance mode that disables animations to save power, with a master toggle, per-area checkboxes (Now Playing backgrounds, visualizer, cover glow, lyric transitions, waveform & playbar effects), and an "Entire program" option. Applies live, no restart
+- **Hardware-acceleration control** — A render-mode selector (Auto / **Force software (CPU only)**) for machines with flaky GPU drivers, plus a read-out of the detected render tier. Applies on restart
 
 ### Theming
 
@@ -241,6 +259,21 @@ All columns exported including: Status, Title, Artist, File Name, File Path, Sam
 | **Brown** | Warm chocolate tones |
 
 Each theme covers window backgrounds, panels, toolbars, headers, DataGrid rows (alternating colors and hover states), scrollbars, buttons, inputs, borders, context menus, dropdown menus, title bar caption color (via Windows DWM), and playbar waveform colors.
+
+**Custom Themes** — Build your own theme in Settings → Appearance: name it, set the palette, and watch a live preview update as you drag the controls. Saved custom themes persist and appear alongside the built-ins in the theme picker, and can be re-edited or deleted (built-ins can't).
+
+### Your Wrapped
+- **AudioAuditor Wrapped** — A single, roomy stats dashboard of your local listening and library stats: files scanned, hours listened, top artists/albums/tracks, unique albums, favorite formats, library quality, active date range/days active, average plays per track, and your most-listened track by time
+- **100% local** — Stats are gathered entirely from your own plays/scans/analyses (opt-in collection), never uploaded, and can be reset anytime
+- **Toolbar button** — Opens from a present/gift icon in the main toolbar (between Mini Player and the music-service buttons) and fills the current window instead of forcing fullscreen
+
+### Sessions & Recovery
+- **Session Restore** — AudioAuditor remembers which files and folders you had loaded and offers to reload them on the next launch
+- **Crash Recovery** — A pending-recovery snapshot lets the app repopulate your working set after an unclean exit; pairs with the scan cache so the re-scan of unchanged files is instant
+
+### Toolbar Customization
+- **Optional toolbar buttons** — Settings → Appearance toggles let you hide the **Your Wrapped**, **Mini Player**, and **music-service** buttons if you don't use them (all shown by default)
+- **Open With support** — Drag a file/folder onto `AudioAuditor.exe` or use Windows "Open with… → AudioAuditor" to load audio files, archives, playlists, or folders; if the app is already running, the items are forwarded to the existing window instead of being lost
 
 ---
 
@@ -396,9 +429,9 @@ Pause states are shown in the progress bar: `[PAUSED]`, `[FINISHING IN-FLIGHT...
 
 ---
 
-### CLI Fun Features
+### CLI UI: 
 
-When scanning, the CLI isn't just a boring progress bar — it's alive:
+When scanning, the CLI isn't just a boring progress bar:
 
 - **🎬 Scanning Word Animation** — Every 9–13 seconds a new word is picked from a rotating vocabulary of 42 terms (*Analyzing, Scrutinizing, Inspecting, Dissecting, Audio-ing, Fingerprinting, Triangulating…*) and smoothly morphs into place letter-by-letter at ~14 letters/second. Suppressed with `--no-fun`.
 - **⭐ Pulsing Star** — A Unicode star breathes in and out (`·` → `✦` → `✧` → `★`) next to the progress bar. Changes color to indicate state: **cyan** = running, **yellow** = paused, **red** = stopping.
@@ -407,22 +440,6 @@ When scanning, the CLI isn't just a boring progress bar — it's alive:
 - **⏱️ ETA Display** — Pass `--eta` to see a live estimated time remaining. Calculated from a rolling 30-second completion window with exponential smoothing. Formats as `ETA <10s`, `ETA 45s`, or `ETA 2m 15s`. Default is off to keep the output clean.
 
 **AI Detection Parity** — `analyze`, `export`, `info`, and `--json` output now include the same three-state AI verdict (Yes / Possible / No) and confidence score shown in the GUI. `info <file>` adds a leading `AI Detection: {Verdict} ({Confidence}% confidence)` line above the per-detector breakdown; `--json` adds `aiVerdict` and `aiConfidence` fields.
-
-### Install via WinGet
-
-Once the package is available in the [winget-pkgs](https://github.com/microsoft/winget-pkgs) repository, you can install either edition with a single command:
-
-```powershell
-# GUI desktop app
-winget install Angel.AudioAuditor
-
-# CLI tool
-winget install Angel.AudioAuditorCLI
-```
-
-WinGet will automatically handle downloading the executable and making it available on your system. The `AudioAuditorCLI` command will be added to your PATH. The GUI app can be launched by running `AudioAuditor` from a terminal or via its shortcut.
-
-> **Note for new versions:** When a new release is published, update the `InstallerUrl`, `InstallerSha256`, and `PackageVersion` fields in the manifests under `winget/manifests/` and submit a PR to [winget-pkgs](https://github.com/microsoft/winget-pkgs).
 
 ### Build from Source
 
@@ -509,14 +526,14 @@ Or open `Audio Quality Checker.sln` in Visual Studio 2022+ and press **F5**.
 
 | Section | Options |
 |---------|---------|
-| **Appearance** | Color Theme (10 themes), Playbar Theme (11 + Follow Theme), Visualizer Theme, Rainbow Visualizer Bars, Color Match, Full Volume Visualizer |
+| **Appearance** | Color Theme (10 themes + Custom Theme editor), Playbar Theme (11 + Follow Theme), Visualizer Theme, Rainbow Visualizer Bars, Color Match, Full Volume Visualizer, Reduce Motion, Now Playing visuals & background mode, Now Playing "Look Up This Song" services, optional toolbar buttons |
 | **Playback** | Auto-Play Next, Audio Normalization, Crossfade (1–15s), Crossfade on Manual Skip, Gapless Playback, Spatial Audio, Loop Mode, Lyrics Auto-Save |
 | **Analysis** | Toggle individual detectors (Silence, Fake Stereo, DR, True Peak, LUFS, Clipping, MQA, AI, BPM, Rip Quality), Silence Threshold, Edge Skip Zone, Frequency Cutoff Allow, Always Full Analysis |
 | **Visualizer** | Mode selection (6 modes), Auto-Cycle toggle with speed (5–60s), Custom cycle mode list, Independent theme, Full Volume rendering |
-| **Cache & Files** | Scan Cache, Quick Rename Patterns, Default Folders, Clear Favorites, Clear Cache, Reset Layout |
+| **Cache & Files** | Scan Cache, Quick Rename Patterns, Default Folders, Focus Newly Added Songs, Session Restore, Battery Saver (master + per-area), Clear Favorites, Clear Cache, Reset Layout |
 | **Export** | Default export format (CSV, TXT, PDF, XLSX, DOCX) |
-| **Integrations** | Discord Rich Presence, Last.fm Scrobbling, Offline Mode, AcoustID Fingerprinting |
-| **Performance** | CPU usage limit — Auto, Low, Medium, High, Maximum; Memory limit — Auto, Low, Medium, High, Very High, Maximum |
+| **Integrations** | Multi-service scrobbling (Last.fm, Libre.fm, ListenBrainz, Maloja) with thresholds, blacklist & pause, Discord Rich Presence, Offline Mode, AcoustID Fingerprinting |
+| **Performance** | CPU usage limit — Auto, Low, Medium, High, Maximum; Memory limit — Auto, Low, Medium, High, Very High, Maximum; Hardware acceleration (Auto / Force software) |
 
 ---
 
@@ -529,15 +546,22 @@ AudioAuditor is designed with privacy in mind:
 | Theme preference | `theme.txt` | `%AppData%\AudioAuditor\` |
 | Settings & options | `options.txt` | `%AppData%\AudioAuditor\` |
 | Analysis result cache | `scan_cache.json` | `%AppData%\AudioAuditor\` |
+| Favorites | `favorites.json` | `%AppData%\AudioAuditor\` |
+| Custom themes | `custom-themes.json` | `%AppData%\AudioAuditor\` |
+| EQ profiles | `eq-profiles.json` | `%AppData%\AudioAuditor\` |
+| Now Playing layout profiles | `np-layout-profiles.json` | `%AppData%\AudioAuditor\` |
+| Album-art color cache *(opt-in disk persist)* | `np_color_cache.json` | `%AppData%\AudioAuditor\` |
+| Listening stats *(Wrapped — opt-in)* | `stats.json` | `%AppData%\AudioAuditor\` |
+| Session restore & crash recovery | `last_session.json`, `recovery_pending.json` | `%AppData%\AudioAuditor\` |
 | Anonymous install ID *(SH Labs opt-in only)* | `install_id.txt` | `%AppData%\AudioAuditor\` |
-| Last.fm credentials | `session.dat` | `Documents\AudioAuditor\` |
+| Scrobble credentials *(Last.fm / Libre.fm / ListenBrainz / Maloja)* | `session.dat` *(DPAPI-encrypted)* | `Documents\AudioAuditor\` |
 | SH Labs result cache *(opt-in only)* | `shlabs_cache.dat` | `Documents\AudioAuditor\` |
 | SH Labs rate-limit counters *(opt-in only)* | `shlabs_usage.dat` | `Documents\AudioAuditor\` |
 | Analyzed file data | Memory only | Not persisted — cleared on exit |
 | Audio queue | Memory only | Not persisted — cleared on exit |
 | Spectrograms | Memory only | Only saved if user explicitly exports |
 
-`options.txt` stores theme names, boolean flags, service slot names, custom URLs/icons, EQ gains, and performance limits — no sensitive data. Last.fm credentials are stored separately in `session.dat` in your Documents folder. All three SH Labs files are only created if you opt in to SH Labs detection; the install ID is a random GUID (not derived from any machine info) used solely for rate limiting (15/day, 100/month).
+`options.txt` stores theme names, boolean flags, service slot names, custom URLs/icons, EQ gains, scrobble thresholds, the per-song scrobble blacklist, and performance limits — no sensitive data. Scrobble credentials for all four services (Last.fm, Libre.fm, ListenBrainz, Maloja) are stored separately and **encrypted with Windows DPAPI** in `session.dat` in your Documents folder. All three SH Labs files are only created if you opt in to SH Labs detection; the install ID is a random GUID (not derived from any machine info) used solely for rate limiting (15/day, 100/month).
 
 **Network calls** — AudioAuditor makes network requests only in these specific situations:
 
@@ -545,86 +569,74 @@ AudioAuditor is designed with privacy in mind:
 |---------|-------------|
 | Click a music service search button | The configured service (Spotify, Tidal, etc.) |
 | Discord Rich Presence enabled | Discord IPC (local process only) |
-| Last.fm scrobbling enabled | Last.fm API |
+| Scrobbling enabled *(per service)* | Last.fm / Libre.fm / ListenBrainz / your Maloja server |
 | SH Labs AI detection *(opt-in)* | Cloudflare Worker proxy — no raw audio leaves your device |
 | AcoustID fingerprinting *(user-initiated)* | `api.acoustid.org` + `musicbrainz.org` |
 | Update check *(opt-in, silent on startup)* | `api.github.com` — version number only |
 
 - **No telemetry or analytics** — nothing is collected or reported without your explicit action
 - **Minimal disk footprint** — only small settings/cache files; temp archive extractions are cleaned up automatically
-- **No log files** — nothing written to event logs or log files
 - **Zero AI training** — nothing analyzed or played is ever used to train generative AI
 
 ---
 
 ## Project Structure
 
+The codebase is organized into three shipped projects — the **WPF desktop app**, a
+platform-independent **`AudioAuditor.Core`** engine, and a cross-platform **CLI** — with large
+classes split into focused `partial` files (shown below as `Name(.Aspect/.Aspect).cs`).
+
 ```
 AudioAuditor/
-├── App.xaml / App.xaml.cs                      # WPF application entry point & theme bootstrap
-├── AudioQualityChecker.csproj                  # WPF GUI project file
-├── Audio Quality Checker.sln                   # Solution file
-├── CHANGELOG.md                                # Version history and release notes
-├── LICENSE                                     # Apache 2.0
+├── App.xaml / App.xaml.cs                    # WPF entry point — single-instance + GPU/render-mode bootstrap
+├── GlobalUsings.cs                           # Shared global using directives
+├── AudioQualityChecker.csproj                # WPF desktop app (Windows)
+├── Audio Quality Checker.sln                 # Solution
+├── CHANGELOG.md  ·  LICENSE (Apache-2.0)
 │
-├── Models/
-│   └── AudioFileInfo.cs                        # Core data model — 20+ analysis properties
+├── AudioAuditor.Core/                        # Platform-independent engine — shared by the app and CLI
+│   ├── Models/                               # AudioFileInfo, CustomThemeDefinition, NpLayoutProfile
+│   ├── Abstractions/                         # Settings interfaces (decouple Core from the WPF app)
+│   └── Services/
+│       ├── AudioAnalyzer(.Quality/.Loudness/.BpmDetector/.Optimizer/.FullFilePass).cs  # analysis engine (partials)
+│       ├── AudioAnalyzerEngine.cs            # FFT / spectral DSP
+│       ├── AiWatermarkDetector.cs · ExperimentalAiDetector.cs · SHLabsDetectionService.cs  # AI detection
+│       ├── MqaDetector.cs · AcoustIdService.cs · FlacReader.cs · AudioFormatReaders.cs
+│       ├── LyricService.cs · MetadataEnrichmentService.cs · ExportService.cs · Equalizer.cs
+│       ├── SpatialAudioProcessor.cs · CueSheetParser.cs · ShuffleEngine.cs · SmartRenameService.cs
+│       ├── FavoritesService.cs · ScanCacheService.cs · IntegrityVerifier.cs · UpdateChecker.cs
+│       └── Scrobbling/                       # IScrobbler + Last.fm / Libre.fm / ListenBrainz / Maloja + ScrobbleManager
 │
-├── Services/                                   # Analysis & integration services
-│   ├── AcoustIdService.cs                      # AcoustID fingerprinting + MusicBrainz lookup
-│   ├── AiWatermarkDetector.cs                  # AI audio detection — metadata, byte patterns, C2PA
-│   ├── AlbumColorExtractor.cs                  # Dominant color extraction from album art
-│   ├── AudioAnalyzer.cs                        # Main analysis engine — FFT, BPM, DR, LUFS, True Peak
-│   ├── AudioFormatReaders.cs                   # Custom decoders — APE, WavPack, DSD, Opus, ALAC
-│   ├── AudioPlayer.cs                          # NAudio playback — crossfade, normalization, EQ, spatial pipeline
-│   ├── CueSheetParser.cs                       # .cue file parser with track/index/timing support
-│   ├── DiscordRichPresenceService.cs           # Discord Rich Presence integration
-│   ├── Equalizer.cs                            # 10-band parametric EQ with BiQuad filters
-│   ├── ExperimentalAiDetector.cs               # Spectral/temporal neural watermark analysis
-│   ├── ExportService.cs                        # CSV / TXT / PDF / XLSX / DOCX export
-│   ├── FlacReader.cs                           # Custom managed FLAC decoder
-│   ├── LastFmService.cs                        # Last.fm scrobbling, Now Playing, OAuth
-│   ├── LyricService.cs                         # Multi-provider lyrics (LrcLib, Netease, embedded)
-│   ├── MqaDetector.cs                          # MQA & MQA Studio detection
-│   ├── SHLabsDetectionService.cs               # SH Labs cloud AI detection API client
-│   ├── SmtcService.cs                          # Windows SMTC (media key / overlay) integration
-│   ├── SpatialAudioProcessor.cs                # Crossfeed, HRTF ITD, head shadow, reflections
-│   ├── SpectrogramGenerator.cs                 # Spectrogram bitmap generation with log-frequency scaling
-│   ├── ThemeManager.cs                         # Theme engine & settings persistence
-│   ├── TranslateService.cs                     # Lyrics translation service
-│   └── UpdateChecker.cs                        # GitHub release update checker
+├── Services/                                 # Desktop-only services (WPF)
+│   ├── AudioPlayer(.Crossfade/.Gapless).cs   # NAudio playback (partials)
+│   ├── ThemeManager(.Brushes/.NowPlaying/.Persistence/.Scrobbling/.Visualizer/.Performance).cs  # theme engine (partials)
+│   ├── AnimationPolicy.cs                     # Reduce Motion / Battery Saver gate
+│   ├── SpectrogramGenerator.cs · MiniVisualizerRenderer.cs · SmtcService.cs
+│   ├── DiscordRichPresenceService.cs · TranslateService.cs · EqProfileManager.cs
+│   └── SessionRestoreService.cs · LocalCrashLogger.cs · LocalStatsCollector.cs · CustomThemeStore.cs
 │
-├── AudioAuditorCLI/
-│   ├── AudioAuditorCLI.csproj
-│   └── Program.cs                              # Analyze, export, metadata, info, spectrogram, interactive mode
+├── Windows/                                  # WPF windows & UI (partial-class heavy)
+│   ├── MainWindow(.Spectrogram/.Waveform/.MusicServiceSearch/.Overlays/.TitleBar/.Tray/.Wrapped).cs
+│   ├── Np*.cs                                # Now Playing — NpCore, NpColors(.Animations/.GlowPulse/.Underwater),
+│   │                                         #   NpLyrics, NpEqualizer, NpSearch, NpScrobbleWidget, NpLayout, …
+│   ├── SettingsWindow(.Performance/.NowPlaying/.Scrobbling/.NpServices/.CustomThemeEditor).cs
+│   ├── NowPlayingWindow · MiniPlayerWindow · CreditsWindow · WelcomeDialog
+│   └── Spectrogram / Waveform / Metadata / BatchRename / Duplicate / Queue dialogs
 │
-├── Converters/
-│   └── StatusConverters.cs                     # XAML value converters for status, bitrate, MQA, AI colors
+├── AudioAuditorCLI/                          # Cross-platform CLI (Windows / Linux / macOS)
+│   └── Program(.Commands/.ConsoleUI/.Interactive).cs   # analyze, export, metadata, info, spectrogram, interactive
 │
-├── Windows/
-│   ├── MainWindow.xaml / .xaml.cs              # Main UI — toolbar, DataGrid, player, waveform, visualizer
-│   ├── NowPlayingWindow.xaml / .xaml.cs        # Immersive Now Playing panel with synced lyrics
-│   ├── SettingsWindow.xaml / .xaml.cs          # Settings — themes, options, integrations, performance
-│   ├── QueueWindow.xaml / .xaml.cs             # Playback queue with drag-and-drop reordering
-│   ├── SpectrogramViewWindow.xaml / .xaml.cs   # Fullscreen single-file spectrogram viewer
-│   ├── SpectrogramCompareWindow.xaml / .xaml.cs # Side-by-side spectrogram compare (Stacked/Overlay/Wipe)
-│   ├── ErrorDialog.xaml / .xaml.cs             # Error dialog
-│   ├── MetadataEditorWindow.xaml / .xaml.cs    # Audio metadata tag editor
-│   ├── MetadataStripWindow.xaml / .xaml.cs     # Bulk metadata strip tool
-│   ├── BatchRenameWindow.xaml / .xaml.cs       # Batch rename & organize via tag patterns
-│   ├── DuplicateDetectionWindow.xaml / .xaml.cs # Duplicate detection by metadata/fingerprint
-│   └── WaveformCompareWindow.xaml / .xaml.cs   # Side-by-side waveform comparison with stats
-│
-└── Resources/
-    ├── icon.png / app.ico                      # App icon
-    └── [service logos]                         # Spotify, Tidal, Apple Music, YouTube Music, Deezer, etc.
+├── Converters/StatusConverters.cs           # XAML value converters (status, bitrate, MQA, AI colors)
+├── installer/AudioAuditor.iss               # Inno Setup installer script
+├── Third.Party.Notices/                     # Bundled open-source license texts
+└── Resources/                               # App icon + service logos
 ```
 
 ---
 
 ## Interactive Code Tour
 
-Explore all 23 source files across 6 architectural layers in an interactive graph — click any node to see what it does, or take the guided tour.
+Explore all 137 source files across 10 architectural layers in an interactive graph — click any node to see what it does, or take the guided tour.
 
 <p align="center">
   <a href="https://audioauditor.org/#code">
@@ -650,10 +662,20 @@ Explore all 23 source files across 6 architectural layers in an interactive grap
 | [**SharpCompress**](https://github.com/adamhathcock/sharpcompress) | 0.38.0 | Archive extraction support |
 | [**SkiaSharp**](https://github.com/mono/SkiaSharp) | 2.88.9 | Cross-platform 2D graphics for CLI spectrogram PNG generation |
 | [**DiscordRichPresence**](https://github.com/Lachee/discord-rpc-csharp) | 1.2.1.24 | Discord Rich Presence client for playback status |
-| [**Last.fm Web API**](https://www.last.fm/api) | — | Scrobbling and Now Playing updates |
+| [**Last.fm**](https://www.last.fm/api) / [**Libre.fm**](https://libre.fm/) / [**ListenBrainz**](https://listenbrainz.org/) / [**Maloja**](https://github.com/krateng/maloja) | — | Multi-service scrobbling and Now Playing updates |
 | [**AcoustID / Chromaprint**](https://acoustid.org/) | — | Audio fingerprinting via fpcalc + MusicBrainz lookup |
 | **Windows DWM API** | — | Native title bar color theming via `DwmSetWindowAttribute` |
 | **Windows SMTC** | — | System Media Transport Controls for media overlay integration |
+
+---
+
+## Support & Supporters
+
+AudioAuditor is built and maintained in my free time. If you find it useful, consider supporting development so I can keep adding features, improving performance, and squashing bugs.
+
+<a href="https://ko-fi.com/angelsoftware">
+  <img src="https://img.shields.io/badge/Support_on-Ko--fi-f26b2e?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
+</a>
 
 ---
 
@@ -681,13 +703,14 @@ If you'd like to contribute, feel free to open an issue or submit a pull request
 |---------|---------|-------|
 | [**NAudio**](https://github.com/naudio/naudio) by Mark Heath | MIT | Audio playback, waveform reading, sample provider pipeline, FFT analysis, crossfade mixing, and all audio I/O |
 | [**NAudio.Vorbis**](https://github.com/naudio/Vorbis) by Andrew Ward | MIT | OGG Vorbis audio file decoding and playback support |
+| [**NLayer**](https://github.com/naudio/NLayer) by Mark Heath & Andrew Ward | MIT | Pure-managed MP3/MPEG decoder — enables MP3 analysis on Linux/macOS (and as a Windows fallback) |
 | [**Concentus & Concentus.OggFile**](https://github.com/lostromb/concentus) by Logan Stromberg | MIT/BSD | Pure managed Opus audio decoding for .opus file support |
 | [**TagLibSharp**](https://github.com/mono/taglib-sharp) by Mono Project | LGPL-2.1 | Reading and writing audio metadata tags across all supported formats (ID3v2, Xiph Comment, APEv2, M4A atoms) |
 | [**ClosedXML**](https://github.com/ClosedXML/ClosedXML) by ClosedXML Contributors | MIT | Excel workbook generation with styled cells, headers, and auto-fit columns |
 | [**discord-rpc-csharp**](https://github.com/Lachee/discord-rpc-csharp) by Lachee | MIT | Discord Rich Presence client for showing playback status |
 | [**SkiaSharp**](https://github.com/mono/SkiaSharp) by Microsoft / Mono | MIT | Spectrogram PNG generation in the CLI |
 | [**SharpCompress**](https://github.com/adamhathcock/sharpcompress) by Adam Hathcock | MIT | Archive extraction support (ZIP, RAR, 7Z, TAR) |
-| [**System.Security.Cryptography.ProtectedData**](https://github.com/dotnet/runtime) by Microsoft | MIT | Windows credential protection for Last.fm session storage |
+| [**System.Security.Cryptography.ProtectedData**](https://github.com/dotnet/runtime) by Microsoft | MIT | Windows DPAPI credential protection for scrobble session storage (Last.fm, Libre.fm, ListenBrainz, Maloja) |
 
 ### Framework & Platform
 
@@ -698,6 +721,7 @@ If you'd like to contribute, feel free to open an issue or submit a pull request
 
 ### Algorithms & References
 
+- **MQA Codec Reverse-Engineering** — MQA detection is ported from our own [MQA-Toolkit](https://github.com/Angel2mp3/MQA-Toolkit) Python project. The underlying codec reverse-engineering (the 36-bit sync word and original-sample-rate decoding) is the work of Stavros Avramidis — [**purpl3F0x/MQA_identifier**](https://github.com/purpl3F0x/MQA_identifier) (Apache-2.0) — and [**Dniel97/MQA-identifier-python**](https://github.com/Dniel97/MQA-identifier-python)
 - [**Cooley-Tukey FFT Algorithm**](https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm) — The radix-2 FFT implementation is based on the classic Cooley-Tukey algorithm for spectral analysis
 - [**Fisher-Yates Shuffle**](https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle) — Modern Fisher-Yates algorithm used for fair deck-based shuffle ensuring every track plays once per cycle
 - [**NAudio Documentation & Samples**](https://github.com/naudio/NAudio/tree/master/Docs) — Referenced for `AudioFileReader`, `WaveOutEvent`, `BufferedWaveProvider`, `MixingSampleProvider`, FFT windowing, and `MediaFoundationReader` usage patterns
@@ -705,7 +729,7 @@ If you'd like to contribute, feel free to open an issue or submit a pull request
 - [**LAME MP3 Encoder Lowpass Specifications**](https://wiki.hydrogenaud.io/index.php?title=LAME) — Lowpass filter frequency thresholds per bitrate used as reference for bitrate estimation from spectral cutoff detection
 - [**Microsoft DWM API Documentation**](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmsetwindowattribute) — Used for `DWMWA_USE_IMMERSIVE_DARK_MODE` and `DWMWA_CAPTION_COLOR` title bar customization
 - [**Head-Related Transfer Function (HRTF)**](https://en.wikipedia.org/wiki/Head-related_transfer_function) — Concepts referenced for spatial audio crossfeed, interaural time delay, and head shadow simulation
-- [**Last.fm API**](https://www.last.fm/api) — Scrobbling protocol and authentication flow
+- [**Last.fm API**](https://www.last.fm/api) / [**Libre.fm**](https://libre.fm/) / [**ListenBrainz**](https://listenbrainz.org/) / [**Maloja**](https://github.com/krateng/maloja) — Scrobbling protocols and authentication flows (Audioscrobbler 2.0 for Last.fm/Libre.fm; ListenBrainz submit API for ListenBrainz/Maloja)
 - [**MusicBrainz**](https://musicbrainz.org/), [**Discogs**](https://www.discogs.com/), [**AllMusic**](https://www.allmusic.com/), [**Rate Your Music**](https://rateyourmusic.com/) — Metadata search integration targets
 
 ---

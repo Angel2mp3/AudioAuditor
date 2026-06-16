@@ -42,9 +42,7 @@ namespace AudioQualityChecker.Services
         private const string InstallIdKey = "InstallId";
 
         // ── Local cache file paths ──
-        private static readonly string CacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "AudioAuditor");
+        private static readonly string CacheDir = AppPaths.DocumentsDirectory;
         private static readonly string ResultCacheFile = Path.Combine(CacheDir, "shlabs_cache.dat");
         private static readonly string UsageFile = Path.Combine(CacheDir, "shlabs_usage.dat");
 
@@ -319,7 +317,7 @@ namespace AudioQualityChecker.Services
         {
             try
             {
-                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AudioAuditor");
+                string dir = AppPaths.AppDataDirectory;
                 string idFile = Path.Combine(dir, "install_id.txt");
                 if (File.Exists(idFile))
                 {
