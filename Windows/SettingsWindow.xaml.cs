@@ -6,8 +6,13 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using AudioQualityChecker.Models;
 using AudioQualityChecker.Services;
+using AudioQualityChecker.Services.Scrobbling;
 using Microsoft.Win32;
+using Forms = System.Windows.Forms;
 
 namespace AudioQualityChecker
 {
@@ -18,10 +23,22 @@ namespace AudioQualityChecker
         private bool _apiKeysVisible = false; // hidden by default
         private string _realApiKey = "";
         private string _realApiSecret = "";
+        private string _realLibreApiKey = "";
+        private string _realLibreApiSecret = "";
+        private bool _libreFmKeysVisible = false;
+        private string? _libreFmToken;
+        private bool _listenBrainzTokenVisible = false;
+        private string _realListenBrainzUsername = "";
+        private string _realListenBrainzToken = "";
+        private bool _malojaKeyVisible = false;
+        private string _realMalojaKey = "";
+        private bool _suppressScrobbleTextEvents;
         private bool _discordIdVisible = false;
         private string _realDiscordAppId = "";
         private bool _acoustIdKeyVisible = false;
         private string _realAcoustIdKey = "";
+        private DispatcherTimer? _crossfadePreviewTimer;
+        private CustomThemeDefinition _customThemeEditorBase = CustomThemeDefinition.CreateDefault();
 
         /// <summary>When true, MainWindow should show the SH Labs privacy overlay after Settings closes.</summary>
         public bool RequestPrivacyOnClose { get; private set; }
@@ -32,9 +49,15 @@ namespace AudioQualityChecker
         public SettingsWindow()
         {
             InitializeComponent();
+            WireCustomThemeEditorEvents();
+            Closed += (_, _) =>
+            {
+                _crossfadePreviewTimer?.Stop();
+                _crossfadePreviewTimer = null;
+            };
 
             // Populate theme combo
-            foreach (var theme in ThemeManager.AvailableThemes)
+            foreach (var theme in ThemeManager.GetAvailableThemeNames())
                 ThemeCombo.Items.Add(theme);
             ThemeCombo.SelectedItem = ThemeManager.CurrentTheme;
 
@@ -45,12 +68,62 @@ namespace AudioQualityChecker
                 ? "Follow Theme"
                 : ThemeManager.CurrentPlaybarTheme;
 
+            foreach (PlaybarAnimationStyle style in Enum.GetValues(typeof(PlaybarAnimationStyle)))
+            {
+                MainPlaybarAnimationCombo.Items.Add(style);
+                NpPlaybarAnimationCombo.Items.Add(style);
+            }
+            MainPlaybarAnimationCombo.SelectedItem = ThemeManager.MainPlaybarAnimationStyle;
+            NpPlaybarAnimationCombo.SelectedItem = ThemeManager.NpPlaybarAnimationStyle;
+            // "Color Drift" is intentionally NOT a mode — it's controlled by the ChkNpColorDriftGlow
+            // toggle below, which can layer the drift glow under any effect.
+            foreach (var mode in new[] { "Off", "Stars", "Rain", "Snow", "Leaves", "Underwater" })
+                NpBackgroundAnimationCombo.Items.Add(mode);
+            NpBackgroundAnimationCombo.SelectedItem =
+                ThemeManager.NormalizeNpBackgroundAnimationMode(ThemeManager.NpBackgroundAnimationMode);
+            ChkNpColorDriftGlow.IsChecked = ThemeManager.NpColorDriftBackgroundEnabled;
+            ChkNpBackgroundUseAlbumColors.IsChecked = ThemeManager.NpBackgroundUseAlbumColors;
+            ChkNpBackgroundCycle.IsChecked = ThemeManager.NpBackgroundCycleEnabled;
+            NpBackgroundCycleSpeedSlider.Value = Math.Clamp(ThemeManager.NpBackgroundCycleSpeed, 0.25, 3.0);
+            NpBackgroundCycleSpeedLabel.Text = $"{NpBackgroundCycleSpeedSlider.Value:0.0}x";
+            ChkNpBackgroundCycleOnSongChange.IsChecked = ThemeManager.NpBackgroundCycleOnSongChange;
+            NpStarDensitySlider.Value = ThemeManager.ClampNpStarDensity(ThemeManager.NpStarDensity);
+            NpStarDensityLabel.Text = $"{NpStarDensitySlider.Value:0.0}x";
+            ChkNpShootingStars.IsChecked = ThemeManager.NpShootingStarsEnabled;
+            NpShootingStarDensitySlider.Value = ThemeManager.ClampNpShootingStarDensity(ThemeManager.NpShootingStarDensity);
+            NpShootingStarDensityLabel.Text = $"{NpShootingStarDensitySlider.Value:0.0}x";
+            NpRainIntensitySlider.Value = ThemeManager.ClampNpRainIntensity(ThemeManager.NpRainIntensity);
+            NpRainIntensityLabel.Text = $"{NpRainIntensitySlider.Value:0.0}x";
+            ChkNpRainLightning.IsChecked = ThemeManager.NpRainLightningEnabled;
+            NpRainLightningSlider.Value = ThemeManager.ClampNpRainLightningAmount(ThemeManager.NpRainLightningAmount);
+            NpRainLightningLabel.Text = $"{NpRainLightningSlider.Value:0.0}x";
+            NpSnowDensitySlider.Value = ThemeManager.ClampNpSnowDensity(ThemeManager.NpSnowDensity);
+            NpSnowDensityLabel.Text = $"{NpSnowDensitySlider.Value:0.0}x";
+            NpSnowflakeSlider.Value = ThemeManager.ClampNpSnowflakeAmount(ThemeManager.NpSnowflakeAmount);
+            NpSnowflakeLabel.Text = $"{NpSnowflakeSlider.Value:0.0}x";
+            NpUnderwaterBubbleSlider.Value = ThemeManager.ClampNpUnderwaterBubbleDensity(ThemeManager.NpUnderwaterBubbleDensity);
+            NpUnderwaterBubbleLabel.Text = $"{NpUnderwaterBubbleSlider.Value:0.0}x";
+            NpUnderwaterCausticSlider.Value = ThemeManager.ClampNpUnderwaterCausticIntensity(ThemeManager.NpUnderwaterCausticIntensity);
+            NpUnderwaterCausticLabel.Text = $"{NpUnderwaterCausticSlider.Value:0.0}x";
+            ChkNpUnderwaterFish.IsChecked = ThemeManager.NpUnderwaterFishEnabled;
+            ChkNpUnderwaterSeaweed.IsChecked = ThemeManager.NpUnderwaterSeaweedEnabled;
+            NpAnimationSpeedSlider.Value =
+                ThemeManager.ClampNpBackgroundAnimationSpeed(ThemeManager.NpBackgroundAnimationSpeed);
+            NpAnimationSpeedLabel.Text = $"{NpAnimationSpeedSlider.Value:0.0}x";
+            NpUpdateBgEffectRowsVisibility();
+
             // Populate visualizer theme combo
-            foreach (var vt in ThemeManager.AvailableVisualizerThemes)
+            foreach (var vt in ThemeManager.GetAvailableVisualizerThemeNames())
                 VisualizerThemeCombo.Items.Add(vt);
             VisualizerThemeCombo.SelectedItem = ThemeManager.IsVisualizerFollowingPlaybar
                 ? "Follow Playbar"
                 : ThemeManager.CurrentVisualizerTheme;
+            LoadCustomThemeEditor(ThemeManager.GetThemeDefinition(ThemeManager.CurrentTheme)
+                ?? (CustomThemeDefinition.CreateDefault() with
+                {
+                    Name = $"{ThemeManager.CurrentTheme} Custom",
+                    BaseTheme = ThemeManager.CurrentTheme
+                }));
 
             // Set play option checkboxes from saved state
             ChkAutoPlay.IsChecked = ThemeManager.AutoPlayNext;
@@ -58,6 +131,7 @@ namespace AudioQualityChecker
             ChkCrossfade.IsChecked = ThemeManager.Crossfade;
             CrossfadeSlider.Value = ThemeManager.CrossfadeDuration;
             CrossfadeDurationLabel.Text = $"{ThemeManager.CrossfadeDuration}s";
+            CrossfadeDurationBox.Text = ThemeManager.CrossfadeDuration.ToString();
             ChkCrossfadeOnManualSkip.IsChecked = ThemeManager.CrossfadeOnManualSkip;
             foreach (ComboBoxItem item in CrossfadeCurveCombo.Items)
                 if (item.Tag?.ToString() == ThemeManager.CrossfadeCurve.ToString())
@@ -80,6 +154,16 @@ namespace AudioQualityChecker
                     serviceCombos[i].Items.Add(svc);
                 serviceCombos[i].SelectedItem = ThemeManager.MusicServiceSlots[i];
             }
+
+            // Initialize service visibility checkboxes
+            var visibleChecks = new[] { ChkServiceVisible0, ChkServiceVisible1, ChkServiceVisible2, ChkServiceVisible3, ChkServiceVisible4, ChkServiceVisible5 };
+            for (int i = 0; i < 6; i++)
+                visibleChecks[i].IsChecked = ThemeManager.MusicServiceSlotVisible[i];
+
+            // Initialize main toolbar visibility checkboxes
+            ChkShowWrappedButton.IsChecked = ThemeManager.ShowWrappedButton;
+            ChkShowMiniPlayerButton.IsChecked = ThemeManager.ShowMiniPlayerButton;
+            ChkShowMusicServiceButtons.IsChecked = ThemeManager.ShowMusicServiceButtons;
 
             // Populate custom URL/icon fields
             var urlBoxes = new[] { CustomUrlBox0, CustomUrlBox1, CustomUrlBox2, CustomUrlBox3, CustomUrlBox4, CustomUrlBox5 };
@@ -126,8 +210,43 @@ namespace AudioQualityChecker
             LastFmApiSecretBox.Text = ThemeManager.LastFmApiSecret;
             UpdateLastFmStatus();
 
+            // Libre.fm
+            _realLibreApiKey = ThemeManager.LibreFmApiKey;
+            _realLibreApiSecret = ThemeManager.LibreFmApiSecret;
+            LibreFmApiKeyBox.Text = ThemeManager.LibreFmApiKey;
+            LibreFmApiSecretBox.Text = ThemeManager.LibreFmApiSecret;
+            ChkLibreFmEnabled.IsChecked = ThemeManager.LibreFmEnabled;
+            UpdateLibreFmStatus();
+
+            // ListenBrainz
+            _realListenBrainzUsername = ThemeManager.ListenBrainzUsername;
+            _realListenBrainzToken = ThemeManager.ListenBrainzUserToken;
+            ListenBrainzUsernameBox.Text = ThemeManager.ListenBrainzUsername;
+            ListenBrainzTokenBox.Text = ThemeManager.ListenBrainzUserToken;
+            ChkListenBrainzEnabled.IsChecked = ThemeManager.ListenBrainzEnabled;
+            UpdateListenBrainzStatus();
+
+            // Maloja
+            _realMalojaKey = ThemeManager.MalojaApiKey;
+            MalojaServerBox.Text = ThemeManager.MalojaServerUrl;
+            MalojaUsernameBox.Text = ThemeManager.MalojaUsername;
+            MalojaKeyBox.Text = ThemeManager.MalojaApiKey;
+            ChkMalojaEnabled.IsChecked = ThemeManager.MalojaEnabled;
+            UpdateMalojaStatus();
+
+            // Scrobble thresholds
+            _suppressScrobbleTextEvents = true;
+            ScrobbleAtPercentBox.Text = ThemeManager.ScrobbleAtPercent.ToString();
+            ScrobbleAtSecondsBox.Text = ThemeManager.ScrobbleAtSeconds.ToString();
+            MinScrobbleTrackSecondsBox.Text = ThemeManager.MinScrobbleTrackSeconds.ToString();
+            ChkPauseScrobbling.IsChecked = ThemeManager.PauseScrobbling;
+            _suppressScrobbleTextEvents = false;
+
             // Hide API keys by default (use dot masking)
             ApplyApiKeyVisibility();
+            ApplyLibreFmVisibility();
+            ApplyListenBrainzVisibility();
+            ApplyMalojaVisibility();
 
             // AcoustID
             _realAcoustIdKey = ThemeManager.AcoustIdApiKey;
@@ -150,8 +269,8 @@ namespace AudioQualityChecker
             };
 
             // Performance / concurrency
-            int selectedConcurrencyIdx = 0;
-            bool cpuMatchedPreset = false;
+            // Populate the combo list first; preset selection is resolved in a second pass
+            // so that Auto (raw field == 0) wins over a numerically-matching preset.
             for (int ci = 0; ci < ThemeManager.ConcurrencyPresets.Length; ci++)
             {
                 var (label, value) = ThemeManager.ConcurrencyPresets[ci];
@@ -159,27 +278,37 @@ namespace AudioQualityChecker
                     ? $"{label} — {ThemeManager.DefaultConcurrency} threads"
                     : label;
                 ConcurrencyCombo.Items.Add(display);
-                if (value >= 0 && (value == ThemeManager.MaxConcurrency ||
-                    (value == 0 && ThemeManager.MaxConcurrency == ThemeManager.DefaultConcurrency)))
-                {
-                    selectedConcurrencyIdx = ci;
-                    cpuMatchedPreset = true;
-                }
             }
-            // If current value doesn't match any fixed preset, select Custom
-            if (!cpuMatchedPreset && ThemeManager.MaxConcurrency != ThemeManager.DefaultConcurrency)
+            int selectedConcurrencyIdx;
+            if (ThemeManager.IsConcurrencyAuto)
             {
-                selectedConcurrencyIdx = ThemeManager.ConcurrencyPresets.Length - 1; // Custom
-                CustomCpuPanel.Visibility = Visibility.Visible;
-                CustomCpuBox.Text = ThemeManager.MaxConcurrency.ToString();
+                selectedConcurrencyIdx = 0; // Auto preset is always index 0
+            }
+            else
+            {
+                int savedValue = ThemeManager.MaxConcurrency;
+                int matchIdx = -1;
+                for (int ci = 0; ci < ThemeManager.ConcurrencyPresets.Length; ci++)
+                {
+                    var (_, value) = ThemeManager.ConcurrencyPresets[ci];
+                    if (value > 0 && value == savedValue) { matchIdx = ci; break; }
+                }
+                if (matchIdx >= 0)
+                {
+                    selectedConcurrencyIdx = matchIdx;
+                }
+                else
+                {
+                    selectedConcurrencyIdx = ThemeManager.ConcurrencyPresets.Length - 1; // Custom
+                    CustomCpuPanel.Visibility = Visibility.Visible;
+                    CustomCpuBox.Text = savedValue.ToString();
+                }
             }
             ConcurrencyCombo.SelectedIndex = selectedConcurrencyIdx;
             ConcurrencyInfoText.Text = $"Your system has {Environment.ProcessorCount} logical processors. " +
                 $"Presets scale dynamically to your hardware. Lower values reduce CPU spikes.";
 
-            // Memory limit
-            int selectedMemoryIdx = 0;
-            bool memMatchedPreset = false;
+            // Memory limit — same Auto-wins-over-numeric-match policy as concurrency above
             for (int mi = 0; mi < ThemeManager.MemoryPresets.Length; mi++)
             {
                 var (label, valueMB) = ThemeManager.MemoryPresets[mi];
@@ -187,19 +316,31 @@ namespace AudioQualityChecker
                     ? $"{label} — {ThemeManager.DefaultMemoryMB:N0} MB"
                     : label;
                 MemoryLimitCombo.Items.Add(display);
-                if (valueMB >= 0 && (valueMB == ThemeManager.MaxMemoryMB ||
-                    (valueMB == 0 && ThemeManager.MaxMemoryMB == ThemeManager.DefaultMemoryMB)))
-                {
-                    selectedMemoryIdx = mi;
-                    memMatchedPreset = true;
-                }
             }
-            // If current value doesn't match any fixed preset, select Custom
-            if (!memMatchedPreset && ThemeManager.MaxMemoryMB != ThemeManager.DefaultMemoryMB)
+            int selectedMemoryIdx;
+            if (ThemeManager.IsMemoryAuto)
             {
-                selectedMemoryIdx = ThemeManager.MemoryPresets.Length - 1; // Custom
-                CustomMemPanel.Visibility = Visibility.Visible;
-                CustomMemBox.Text = ThemeManager.MaxMemoryMB.ToString();
+                selectedMemoryIdx = 0;
+            }
+            else
+            {
+                int savedValueMB = ThemeManager.MaxMemoryMB;
+                int matchIdx = -1;
+                for (int mi = 0; mi < ThemeManager.MemoryPresets.Length; mi++)
+                {
+                    var (_, valueMB) = ThemeManager.MemoryPresets[mi];
+                    if (valueMB > 0 && valueMB == savedValueMB) { matchIdx = mi; break; }
+                }
+                if (matchIdx >= 0)
+                {
+                    selectedMemoryIdx = matchIdx;
+                }
+                else
+                {
+                    selectedMemoryIdx = ThemeManager.MemoryPresets.Length - 1; // Custom
+                    CustomMemPanel.Visibility = Visibility.Visible;
+                    CustomMemBox.Text = savedValueMB.ToString();
+                }
             }
             MemoryLimitCombo.SelectedIndex = selectedMemoryIdx;
             MemoryInfoText.Text = $"Your system has {ThemeManager.TotalSystemMemoryMB:N0} MB total RAM. " +
@@ -217,14 +358,36 @@ namespace AudioQualityChecker
             // Visualizer full-volume
             ChkVisualizerFullVolume.IsChecked = ThemeManager.VisualizerFullVolume;
 
+            // Preload next track
+            ChkPreloadNextTrack.IsChecked = ThemeManager.PreloadNextTrackEnabled;
+
             // NP color cache
             ChkNpColorCache.IsChecked = ThemeManager.NpColorCacheEnabled;
             ChkNpColorCachePersist.IsChecked = ThemeManager.NpColorCachePersist;
+            ChkNpRememberManualColors.IsChecked = ThemeManager.NpRememberManualColorPicks;
+            ChkNpAlbumBackdrop.IsChecked = ThemeManager.NpAlbumBackdropEnabled;
             UpdateNpColorCacheStatus();
+
+            // NP "look up this song" services (independent of main-window slots)
+            InitNpSearchServiceControls();
+
+            // Reduce Motion (inverse of the legacy AnimationsEnabled flag)
+            ChkReduceMotion.IsChecked = ThemeManager.ReduceMotion;
+
+            // Battery Saver + GPU acceleration
+            InitPerformanceControls();
 
             // Scan cache
             ChkScanCache.IsChecked = ThemeManager.ScanCacheEnabled;
+            ChkFocusNewFiles.IsChecked = ThemeManager.FocusNewlyAddedFilesEnabled;
+            ChkRestoreLastSession.IsChecked = ThemeManager.RestoreLastSessionEnabled;
             UpdateCacheStatus();
+
+            // Local stats collection
+            ChkStatsCollection.IsChecked = ThemeManager.StatsCollectionEnabled;
+
+            // Crash logging
+            ChkCrashLogging.IsChecked = ThemeManager.CrashLoggingEnabled;
 
             // Close to tray
             ChkCloseToTray.IsChecked = ThemeManager.CloseToTray;
@@ -270,7 +433,7 @@ namespace AudioQualityChecker
             var hidden = ThemeManager.GetHiddenColumnSet();
             bool Visible(string header) => !hidden.Contains(ThemeManager.NormalizeColumnHeader(header));
 
-            ColFavoriteCb.IsChecked = Visible("★");
+            ColFavoriteCb.IsChecked = ThemeManager.ShowFavoritesColumn;
             ColStatusCb.IsChecked = Visible("Status");
             ColTitleCb.IsChecked = Visible("Title");
             ColArtistCb.IsChecked = Visible("Artist");
@@ -313,6 +476,43 @@ namespace AudioQualityChecker
             UpdateFavoritesStatus();
         }
 
+        /// <summary>
+        /// Tints this window with the Now Playing ColorMatch palette instead of the app theme.
+        /// Called by MainWindow right after construction when Settings is opened while the NP
+        /// screen is showing with ColorMatch on, so Settings visually matches that screen.
+        /// The brushes are written into this window's own resource scope, overriding the
+        /// app-level theme tokens the controls bind to via DynamicResource.
+        /// </summary>
+        public void ApplyColorMatchTint(IReadOnlyDictionary<string, Brush> brushes)
+        {
+            if (brushes == null) return;
+            foreach (var kvp in brushes)
+            {
+                // The NP scoped palette makes floating-surface *fills* slightly translucent
+                // (nice for popups layered over the Now Playing screen). But this Settings
+                // window is a top-level AllowsTransparency window whose root Border IS that
+                // fill — a translucent fill there shows the desktop through the window. Force
+                // background fills fully opaque here while leaving borders, and the source
+                // palette the NP popups share, untouched.
+                Resources[kvp.Key] = kvp.Key.EndsWith("Bg", StringComparison.Ordinal)
+                    ? MakeOpaque(kvp.Value)
+                    : kvp.Value;
+            }
+        }
+
+        /// <summary>Returns a fully-opaque copy of a translucent solid brush; passes anything else through.</summary>
+        private static Brush MakeOpaque(Brush brush)
+        {
+            if (brush is SolidColorBrush scb && scb.Color.A < 255)
+            {
+                var c = scb.Color;
+                var opaque = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
+                opaque.Freeze();
+                return opaque;
+            }
+            return brush;
+        }
+
         private void UpdateCustomPanelVisibility()
         {
             var combos = new[] { ServiceCombo0, ServiceCombo1, ServiceCombo2, ServiceCombo3, ServiceCombo4, ServiceCombo5 };
@@ -324,10 +524,38 @@ namespace AudioQualityChecker
             }
         }
 
-        private void Header_MouseDown(object sender, MouseButtonEventArgs e)
+        // Drag the window from anywhere on its surface, except when the click lands on an
+        // interactive control (so buttons, tabs, sliders, combo boxes, text fields, list items
+        // still work normally). Large containers (TabControl body, ScrollViewers, panels) are NOT
+        // treated as interactive, so their empty areas remain draggable.
+        private void Window_MouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.ChangedButton == MouseButton.Left)
-                DragMove();
+            if (e.ChangedButton != MouseButton.Left) return;
+            if (IsInteractiveOriginalSource(e.OriginalSource as DependencyObject)) return;
+            try { DragMove(); } catch { /* DragMove throws if the button was already released */ }
+        }
+
+        private static bool IsInteractiveOriginalSource(DependencyObject? src)
+        {
+            while (src != null)
+            {
+                switch (src)
+                {
+                    case System.Windows.Controls.Primitives.ButtonBase:       // Button, CheckBox, RadioButton, RepeatButton, ToggleButton
+                    case System.Windows.Controls.Primitives.RangeBase:        // Slider, ScrollBar, ProgressBar
+                    case System.Windows.Controls.Primitives.TextBoxBase:      // TextBox, RichTextBox
+                    case System.Windows.Controls.PasswordBox:
+                    case System.Windows.Controls.ComboBox:
+                    case System.Windows.Controls.ListBox:
+                    case System.Windows.Controls.ListBoxItem:
+                    case System.Windows.Controls.TabItem:
+                    case System.Windows.Controls.Primitives.Thumb:
+                        return true;
+                }
+                src = System.Windows.Media.VisualTreeHelper.GetParent(src)
+                      ?? (src as FrameworkElement)?.Parent;
+            }
+            return false;
         }
 
         private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -336,7 +564,29 @@ namespace AudioQualityChecker
             if (ThemeCombo.SelectedItem is string theme)
             {
                 ThemeManager.ApplyTheme(theme);
+                LoadCustomThemeEditor(ThemeManager.GetThemeDefinition(theme)
+                    ?? (CreateThemeFromEditor() with { Name = $"{theme} Custom", BaseTheme = theme }));
             }
+        }
+
+        private void RefreshThemeCombos(string selectedTheme)
+        {
+            var wasInitializing = _initializing;
+            _initializing = true;
+
+            ThemeCombo.Items.Clear();
+            foreach (var theme in ThemeManager.GetAvailableThemeNames())
+                ThemeCombo.Items.Add(theme);
+            ThemeCombo.SelectedItem = ThemeCombo.Items.Contains(selectedTheme) ? selectedTheme : "Blurple";
+
+            VisualizerThemeCombo.Items.Clear();
+            foreach (var theme in ThemeManager.GetAvailableVisualizerThemeNames())
+                VisualizerThemeCombo.Items.Add(theme);
+            VisualizerThemeCombo.SelectedItem = ThemeManager.IsVisualizerFollowingPlaybar
+                ? "Follow Playbar"
+                : ThemeManager.CurrentVisualizerTheme;
+
+            _initializing = wasInitializing;
         }
 
         private void PlaybarCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -345,6 +595,26 @@ namespace AudioQualityChecker
             if (PlaybarCombo.SelectedItem is string playbarTheme)
             {
                 ThemeManager.SetPlaybarTheme(playbarTheme);
+                ThemeManager.SavePlayOptions();
+            }
+        }
+
+        private void MainPlaybarAnimationCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (MainPlaybarAnimationCombo.SelectedItem is PlaybarAnimationStyle style)
+            {
+                ThemeManager.MainPlaybarAnimationStyle = style;
+                ThemeManager.SavePlayOptions();
+            }
+        }
+
+        private void NpPlaybarAnimationCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (NpPlaybarAnimationCombo.SelectedItem is PlaybarAnimationStyle style)
+            {
+                ThemeManager.NpPlaybarAnimationStyle = style;
                 ThemeManager.SavePlayOptions();
             }
         }
@@ -387,7 +657,34 @@ namespace AudioQualityChecker
         private void CrossfadeSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_initializing) return;
-            int val = (int)CrossfadeSlider.Value;
+            int val = (int)Math.Round(CrossfadeSlider.Value);
+            CrossfadeDurationLabel.Text = $"{val}s";
+            CrossfadeDurationBox.Text = val.ToString();
+            ThemeManager.CrossfadeDuration = val;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void CrossfadeDurationBox_LostFocus(object sender, RoutedEventArgs e) =>
+            ApplyCrossfadeDurationBox();
+
+        private void CrossfadeDurationBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter) return;
+            ApplyCrossfadeDurationBox();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+
+        private void ApplyCrossfadeDurationBox()
+        {
+            if (_initializing) return;
+
+            if (!int.TryParse(CrossfadeDurationBox.Text, out var val))
+                val = ThemeManager.CrossfadeDuration;
+
+            val = Math.Clamp(val, 1, 30);
+            CrossfadeSlider.Value = val;
+            CrossfadeDurationBox.Text = val.ToString();
             CrossfadeDurationLabel.Text = $"{val}s";
             ThemeManager.CrossfadeDuration = val;
             ThemeManager.SavePlayOptions();
@@ -401,6 +698,7 @@ namespace AudioQualityChecker
             {
                 ThemeManager.CrossfadeCurve = curve;
                 ThemeManager.SavePlayOptions();
+                DrawCrossfadePreview();
             }
         }
 
@@ -409,6 +707,89 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.CrossfadeOnManualSkip = ChkCrossfadeOnManualSkip.IsChecked == true;
             ThemeManager.SavePlayOptions();
+        }
+
+        // ═══════════════════════════════════════════
+        //  Crossfade Curve Preview
+        // ═══════════════════════════════════════════
+
+        private void CrossfadeCurveCanvas_Loaded(object sender, RoutedEventArgs e) => DrawCrossfadePreview();
+
+        private void DrawCrossfadePreview()
+        {
+            if (_initializing) return;
+
+            double w = CrossfadeCurveCanvas.ActualWidth;
+            double h = CrossfadeCurveCanvas.ActualHeight;
+            if (w <= 0 || h <= 0) return;
+
+            const int steps = 60;
+            var fadeOutPoints = new PointCollection(steps);
+            var fadeInPoints = new PointCollection(steps);
+            var curve = ThemeManager.CrossfadeCurve;
+
+            for (int i = 0; i < steps; i++)
+            {
+                float t = i / (float)(steps - 1);
+                float outAmp = AudioPlayer.CrossfadeCurveFadeOut(t, curve);
+                float inAmp = AudioPlayer.CrossfadeCurveFadeIn(t, curve);
+
+                double x = w * t;
+                fadeOutPoints.Add(new Point(x, h * (1.0 - outAmp)));
+                fadeInPoints.Add(new Point(x, h * (1.0 - inAmp)));
+            }
+
+            CrossfadeFadeOutLine.Points = fadeOutPoints;
+            CrossfadeFadeInLine.Points = fadeInPoints;
+        }
+
+        private void AnimateCrossfade_Click(object sender, RoutedEventArgs e)
+        {
+            if (_crossfadePreviewTimer != null)
+            {
+                _crossfadePreviewTimer.Stop();
+                _crossfadePreviewTimer = null;
+                CrossfadePlayhead.Visibility = Visibility.Collapsed;
+                BtnAnimateCrossfade.Content = "Animate Preview";
+                return;
+            }
+
+            DrawCrossfadePreview();
+            BtnAnimateCrossfade.Content = "Stop Animation";
+            CrossfadePlayhead.Visibility = Visibility.Visible;
+            int previewStep = 0;
+            const int totalSteps = 60;
+            var curve = ThemeManager.CrossfadeCurve;
+
+            _crossfadePreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+            _crossfadePreviewTimer.Tick += (_, _) =>
+            {
+                if (previewStep >= totalSteps)
+                {
+                    _crossfadePreviewTimer?.Stop();
+                    _crossfadePreviewTimer = null;
+                    CrossfadePlayhead.Visibility = Visibility.Collapsed;
+                    BtnAnimateCrossfade.Content = "Animate Preview";
+                    return;
+                }
+
+                float t = previewStep / (float)(totalSteps - 1);
+                float outAmp = AudioPlayer.CrossfadeCurveFadeOut(t, curve);
+                float inAmp = AudioPlayer.CrossfadeCurveFadeIn(t, curve);
+
+                double w = CrossfadeCurveCanvas.ActualWidth;
+                double h = CrossfadeCurveCanvas.ActualHeight;
+                if (w > 0 && h > 0)
+                {
+                    double x = w * t;
+                    double yOut = h * (1.0 - outAmp);
+                    double yIn = h * (1.0 - inAmp);
+                    Canvas.SetLeft(CrossfadePlayhead, x - 4);
+                    Canvas.SetTop(CrossfadePlayhead, (yOut + yIn) / 2 - 4);
+                }
+                previewStep++;
+            };
+            _crossfadePreviewTimer.Start();
         }
 
         private void CycleSpeedSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -483,6 +864,39 @@ namespace AudioQualityChecker
 
             UpdateCustomPanelVisibility();
             ThemeManager.SavePlayOptions();
+        }
+
+        private void ServiceVisible_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            var checks = new[] { ChkServiceVisible0, ChkServiceVisible1, ChkServiceVisible2, ChkServiceVisible3, ChkServiceVisible4, ChkServiceVisible5 };
+            for (int i = 0; i < 6; i++)
+                ThemeManager.MusicServiceSlotVisible[i] = checks[i].IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void ShowWrappedButton_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.ShowWrappedButton = ChkShowWrappedButton.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+            (Owner as MainWindow)?.ApplyToolbarButtonVisibility();
+        }
+
+        private void ShowMiniPlayerButton_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.ShowMiniPlayerButton = ChkShowMiniPlayerButton.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+            (Owner as MainWindow)?.ApplyToolbarButtonVisibility();
+        }
+
+        private void ShowMusicServiceButtons_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.ShowMusicServiceButtons = ChkShowMusicServiceButtons.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+            (Owner as MainWindow)?.ApplyToolbarButtonVisibility();
         }
 
         private void CustomUrl_Changed(object sender, TextChangedEventArgs e)
@@ -560,16 +974,26 @@ namespace AudioQualityChecker
         {
             if (_initializing) return;
 
-            ThemeManager.SetAnalysisColumnEnabled("Clipping", ColClippingCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("BPM", ColBpmCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("DR", ColDRCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("MQA", ColMqaCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("AI", ColAiCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("Fake Stereo", ColStereoCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("Silence", ColSilenceCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("True Peak", ColTruePeakCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("LUFS", ColLufsCb.IsChecked == true);
-            ThemeManager.SetAnalysisColumnEnabled("Rip Quality", ColRipQualityCb.IsChecked == true);
+            // Track analysis features that flip OFF→ON so we can backfill just that column for
+            // already-loaded rows (instead of forcing the user to clear + re-add everything).
+            var newlyEnabled = new List<string>();
+            void SetFeature(string header, bool nowEnabled)
+            {
+                bool wasEnabled = ThemeManager.IsAnalysisColumnEnabled(header);
+                ThemeManager.SetAnalysisColumnEnabled(header, nowEnabled);
+                if (nowEnabled && !wasEnabled) newlyEnabled.Add(header);
+            }
+
+            SetFeature("Clipping", ColClippingCb.IsChecked == true);
+            SetFeature("BPM", ColBpmCb.IsChecked == true);
+            SetFeature("DR", ColDRCb.IsChecked == true);
+            SetFeature("MQA", ColMqaCb.IsChecked == true);
+            SetFeature("AI", ColAiCb.IsChecked == true);
+            SetFeature("Fake Stereo", ColStereoCb.IsChecked == true);
+            SetFeature("Silence", ColSilenceCb.IsChecked == true);
+            SetFeature("True Peak", ColTruePeakCb.IsChecked == true);
+            SetFeature("LUFS", ColLufsCb.IsChecked == true);
+            SetFeature("Rip Quality", ColRipQualityCb.IsChecked == true);
             ChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
 
             // Build comma-separated list of hidden column headers
@@ -580,6 +1004,12 @@ namespace AudioQualityChecker
                     hidden.Add(ThemeManager.NormalizeColumnHeader(header));
             }
 
+            // Flagless default-hidden columns (★, Date Created) are driven by explicit, persisted
+            // preferences so they survive every default re-application (theme/playbar changes,
+            // the usable-set fallback, version migrations). Check() keeps the raw string
+            // consistent; SetColumnUserShown() is what actually makes the choice stick.
+            ThemeManager.SetColumnUserShown("★", ColFavoriteCb.IsChecked == true);
+            ThemeManager.SetColumnUserShown("Date Created", ColDateCreatedCb.IsChecked == true);
             Check(ColFavoriteCb, "★");
             Check(ColStatusCb, "Status");
             Check(ColTitleCb, "Title");
@@ -615,15 +1045,26 @@ namespace AudioQualityChecker
 
             // Apply to MainWindow immediately if it's open
             if (Owner is MainWindow mw)
+            {
                 mw.ApplyColumnVisibility();
+                // Backfill just the newly-enabled analysis column(s) for already-loaded rows.
+                if (newlyEnabled.Count > 0)
+                    mw.RefreshColumnsForFeatures(newlyEnabled);
+            }
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)
         {
             // Auto-hide API keys when closing
             _apiKeysVisible = false;
+            _libreFmKeysVisible = false;
+            _listenBrainzTokenVisible = false;
+            _malojaKeyVisible = false;
             _discordIdVisible = false;
             ApplyApiKeyVisibility();
+            ApplyLibreFmVisibility();
+            ApplyListenBrainzVisibility();
+            ApplyMalojaVisibility();
             ApplyDiscordIdVisibility();
             Close();
         }
@@ -756,18 +1197,72 @@ namespace AudioQualityChecker
             ThemeManager.SavePlayOptions();
         }
 
-        private void NpColorCache_Changed(object sender, RoutedEventArgs e)
+        private void PreloadNextTrack_Changed(object sender, RoutedEventArgs e)
         {
             if (_initializing) return;
-            ThemeManager.NpColorCacheEnabled = ChkNpColorCache.IsChecked == true;
+            ThemeManager.PreloadNextTrackEnabled = ChkPreloadNextTrack.IsChecked == true;
             ThemeManager.SavePlayOptions();
         }
 
-        private void NpColorCachePersist_Changed(object sender, RoutedEventArgs e)
+        private void SelectNpBackground_Click(object sender, RoutedEventArgs e)
         {
-            if (_initializing) return;
-            ThemeManager.NpColorCachePersist = ChkNpColorCachePersist.IsChecked == true;
+            string? path = PickAndCopyBackgroundImage("np");
+            if (path == null) return;
+            ThemeManager.NpCustomBackgroundImagePath = path;
+            ThemeManager.NpBackgroundMode = "CustomImage";
             ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw)
+                mw.NpRefreshBackdropFromSettings();
+        }
+
+        private void ResetNpBackground_Click(object sender, RoutedEventArgs e)
+        {
+            ThemeManager.NpCustomBackgroundImagePath = "";
+            ThemeManager.NpBackgroundMode = "AlbumArt";
+            ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw)
+                mw.NpRefreshBackdropFromSettings();
+        }
+
+        private void SelectMainBackground_Click(object sender, RoutedEventArgs e)
+        {
+            string? path = PickAndCopyBackgroundImage("main");
+            if (path == null) return;
+            ThemeManager.MainBackgroundImagePath = path;
+            ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw)
+                mw.ApplyMainCustomBackground();
+        }
+
+        private void ResetMainBackground_Click(object sender, RoutedEventArgs e)
+        {
+            ThemeManager.MainBackgroundImagePath = "";
+            ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw)
+                mw.ApplyMainCustomBackground();
+        }
+
+        private string? PickAndCopyBackgroundImage(string prefix)
+        {
+            var dlg = new OpenFileDialog
+            {
+                Title = "Choose background image",
+                Filter = "Image files|*.png;*.jpg;*.jpeg;*.webp;*.bmp|All files|*.*"
+            };
+            if (dlg.ShowDialog(this) != true)
+                return null;
+
+            string ext = Path.GetExtension(dlg.FileName);
+            if (string.IsNullOrWhiteSpace(ext))
+                ext = ".png";
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "AudioAuditor",
+                "backgrounds");
+            Directory.CreateDirectory(dir);
+            string dest = Path.Combine(dir, $"{prefix}-{Guid.NewGuid():N}{ext.ToLowerInvariant()}");
+            File.Copy(dlg.FileName, dest, overwrite: false);
+            return dest;
         }
 
 
@@ -775,12 +1270,62 @@ namespace AudioQualityChecker
         //  Scan Cache
         // ═══════════════════════════════════════════
 
+        private void ReduceMotion_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.ReduceMotion = ChkReduceMotion.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw)
+                mw.ApplyPerformancePolicy();
+        }
+
         private void ScanCache_Changed(object sender, RoutedEventArgs e)
         {
             if (_initializing) return;
             ThemeManager.ScanCacheEnabled = ChkScanCache.IsChecked == true;
             ThemeManager.SavePlayOptions();
             UpdateCacheStatus();
+        }
+
+        private void FocusNewFiles_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.FocusNewlyAddedFilesEnabled = ChkFocusNewFiles.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void RestoreLastSession_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            bool nowOn = ChkRestoreLastSession.IsChecked == true;
+            ThemeManager.RestoreLastSessionEnabled = nowOn;
+
+            // When the user turns this on, scan cache is what makes the restored list
+            // reopen instantly (cached results, no re-analysis). Auto-enable it and tell
+            // the user once — this matches the design discussion: the two settings can
+            // coexist, but restore implicitly requires the cache.
+            bool autoEnabledCache = false;
+            if (nowOn && !ThemeManager.ScanCacheEnabled)
+            {
+                ThemeManager.ScanCacheEnabled = true;
+                ChkScanCache.IsChecked = true;
+                autoEnabledCache = true;
+            }
+
+            ThemeManager.SavePlayOptions();
+            UpdateCacheStatus();
+
+            if (autoEnabledCache && !ThemeManager.RestoreSessionCacheNoticeShown)
+            {
+                if (Owner is MainWindow mw)
+                {
+                    mw.ShowThemedNotice(
+                        "Scan cache turned on too",
+                        "Restore last session works alongside the scan cache so your restored files load instantly without re-analysis. You can turn either off any time.");
+                }
+                ThemeManager.RestoreSessionCacheNoticeShown = true;
+                ThemeManager.SavePlayOptions();
+            }
         }
 
         private void UpdateNpColorCacheStatus()
@@ -799,6 +1344,28 @@ namespace AudioQualityChecker
                     NpColorCacheStatusText.Text = "No persisted cache file";
             }
             catch { }
+        }
+
+        private void StatsCollection_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.StatsCollectionEnabled = ChkStatsCollection.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+        }
+
+        private void ViewWrapped_Click(object sender, RoutedEventArgs e)
+        {
+            // Wrapped is now an in-app overlay on the main window. Close Settings and show it there.
+            var main = Owner as MainWindow;
+            Close();
+            main?.ShowWrappedOverlay();
+        }
+
+        private void CrashLogging_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.CrashLoggingEnabled = ChkCrashLogging.IsChecked == true;
+            ThemeManager.SavePlayOptions();
         }
 
         private void CloseToTray_Changed(object sender, RoutedEventArgs e)
@@ -1024,238 +1591,7 @@ namespace AudioQualityChecker
                 DiscordStatusText.Text = "Ready — enable the checkbox above to connect.";
         }
 
-        // ═══════════════════════════════════════════
-        //  Last.fm
-        // ═══════════════════════════════════════════
-
-        private void LastFmKey_Changed(object sender, TextChangedEventArgs e)
-        {
-            if (_initializing) return;
-            // Only save if keys are visible (not showing dots)
-            if (_apiKeysVisible)
-            {
-                _realApiKey = LastFmApiKeyBox.Text.Trim();
-                _realApiSecret = LastFmApiSecretBox.Text.Trim();
-                ThemeManager.LastFmApiKey = _realApiKey;
-                ThemeManager.LastFmApiSecret = _realApiSecret;
-                ThemeManager.SavePlayOptions();
-            }
-        }
-
-        private void AcoustIdKey_Changed(object sender, TextChangedEventArgs e)
-        {
-            if (_initializing) return;
-            if (_acoustIdKeyVisible)
-            {
-                _realAcoustIdKey = AcoustIdKeyBox.Text.Trim();
-                ThemeManager.AcoustIdApiKey = _realAcoustIdKey;
-            }
-            else
-            {
-                // Don't save dots
-                return;
-            }
-            ThemeManager.SavePlayOptions();
-        }
-
-        private void LastFmCreateApiKey_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                Process.Start(new ProcessStartInfo("https://www.last.fm/api/account/create") { UseShellExecute = true });
-            }
-            catch { }
-        }
-
-        private void AcoustIdCreateApiKey_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                Process.Start(new ProcessStartInfo("https://acoustid.org/new-application") { UseShellExecute = true });
-            }
-            catch { }
-        }
-
-        private async void LastFmAuth_Click(object sender, RoutedEventArgs e)
-        {
-            string apiKey = _realApiKey.Trim();
-            string apiSecret = _realApiSecret.Trim();
-
-            if (string.IsNullOrEmpty(apiKey) || string.IsNullOrEmpty(apiSecret))
-            {
-                LastFmStatusText.Text = "Enter API Key and API Secret first.";
-                return;
-            }
-
-            LastFmStatusText.Text = "Getting auth token...";
-
-            var svc = new LastFmService();
-            svc.Configure(apiKey, apiSecret, "");
-
-            var result = await svc.GetAuthTokenAsync();
-            svc.Dispose();
-
-            if (result == null)
-            {
-                LastFmStatusText.Text = "Failed to get auth token.";
-                return;
-            }
-
-            _lastFmToken = result.Value.token;
-
-            try
-            {
-                Process.Start(new ProcessStartInfo(result.Value.authUrl) { UseShellExecute = true });
-            }
-            catch
-            {
-                LastFmStatusText.Text = "Could not open browser.";
-                return;
-            }
-
-            LastFmStatusText.Text = "Authorize in browser, then click Confirm Auth.";
-            BtnLastFmConfirm.Visibility = Visibility.Visible;
-        }
-
-        private async void LastFmConfirm_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(_lastFmToken))
-            {
-                LastFmStatusText.Text = "Click Authenticate first.";
-                return;
-            }
-
-            LastFmStatusText.Text = "Confirming...";
-
-            var svc = new LastFmService();
-            svc.Configure(_realApiKey.Trim(), _realApiSecret.Trim(), "");
-
-            string? sessionKey = await svc.GetSessionKeyAsync(_lastFmToken);
-            svc.Dispose();
-
-            if (string.IsNullOrEmpty(sessionKey))
-            {
-                LastFmStatusText.Text = "Auth failed. Did you authorize in the browser?";
-                return;
-            }
-
-            ThemeManager.LastFmSessionKey = sessionKey;
-            ThemeManager.LastFmUsername = svc.Username;
-            ThemeManager.LastFmEnabled = true;
-            ThemeManager.SavePlayOptions();
-
-            BtnLastFmConfirm.Visibility = Visibility.Collapsed;
-            _lastFmToken = null;
-            UpdateLastFmStatus();
-        }
-
-        private void UpdateLastFmStatus()
-        {
-            if (!string.IsNullOrEmpty(ThemeManager.LastFmSessionKey))
-                LastFmStatusText.Text = "✓ Authenticated";
-            else
-                LastFmStatusText.Text = "";
-        }
-
-        // ═══════════════════════════════════════════
-        //  API Key Visibility Toggle
-        // ═══════════════════════════════════════════
-
-        private void ToggleApiVisibility_Click(object sender, RoutedEventArgs e)
-        {
-            // If currently visible, save the real values before hiding
-            if (_apiKeysVisible)
-            {
-                _realApiKey = LastFmApiKeyBox.Text.Trim();
-                _realApiSecret = LastFmApiSecretBox.Text.Trim();
-                ThemeManager.LastFmApiKey = _realApiKey;
-                ThemeManager.LastFmApiSecret = _realApiSecret;
-                ThemeManager.SavePlayOptions();
-            }
-            _apiKeysVisible = !_apiKeysVisible;
-            ApplyApiKeyVisibility();
-        }
-
-        private void ApplyApiKeyVisibility()
-        {
-            if (_apiKeysVisible)
-            {
-                // Show keys: restore real text
-                _initializing = true; // prevent saving dots as keys
-                LastFmApiKeyBox.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
-                LastFmApiSecretBox.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
-                LastFmApiKeyBox.Text = _realApiKey;
-                LastFmApiSecretBox.Text = _realApiSecret;
-                LastFmApiKeyBox.IsReadOnly = false;
-                LastFmApiSecretBox.IsReadOnly = false;
-                EyeSlash.Visibility = Visibility.Collapsed;
-                _initializing = false;
-            }
-            else
-            {
-                // Hide keys: replace text with dots
-                _initializing = true;
-                // Store current real values first
-                if (LastFmApiKeyBox.FontFamily.Source != "Segoe UI" || string.IsNullOrEmpty(_realApiKey))
-                {
-                    // Already masked or empty, use stored values
-                }
-                else
-                {
-                    _realApiKey = LastFmApiKeyBox.Text;
-                    _realApiSecret = LastFmApiSecretBox.Text;
-                }
-                LastFmApiKeyBox.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
-                LastFmApiSecretBox.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
-                // Fill with bullet dots matching full width
-                string keyDots = _realApiKey.Length > 0 ? new string('●', Math.Max(_realApiKey.Length, 40)) : "";
-                string secretDots = _realApiSecret.Length > 0 ? new string('●', Math.Max(_realApiSecret.Length, 40)) : "";
-                LastFmApiKeyBox.Text = keyDots;
-                LastFmApiSecretBox.Text = secretDots;
-                LastFmApiKeyBox.IsReadOnly = true;
-                LastFmApiSecretBox.IsReadOnly = true;
-                EyeSlash.Visibility = Visibility.Visible;
-                _initializing = false;
-            }
-        }
-
-        // ═══════════════════════════════════════════
-        //  AcoustID API Key Visibility Toggle
-        // ═══════════════════════════════════════════
-
-        private void ToggleAcoustIdVisibility_Click(object sender, RoutedEventArgs e)
-        {
-            if (_acoustIdKeyVisible)
-            {
-                _realAcoustIdKey = AcoustIdKeyBox.Text.Trim();
-                ThemeManager.AcoustIdApiKey = _realAcoustIdKey;
-                ThemeManager.SavePlayOptions();
-            }
-            _acoustIdKeyVisible = !_acoustIdKeyVisible;
-            ApplyAcoustIdKeyVisibility();
-        }
-
-        private void ApplyAcoustIdKeyVisibility()
-        {
-            if (_acoustIdKeyVisible)
-            {
-                _initializing = true;
-                AcoustIdKeyBox.Text = _realAcoustIdKey;
-                AcoustIdKeyBox.IsReadOnly = false;
-                AcoustIdEyeSlash.Visibility = Visibility.Collapsed;
-                _initializing = false;
-            }
-            else
-            {
-                _initializing = true;
-                string dots = _realAcoustIdKey.Length > 0 ? new string('●', Math.Max(_realAcoustIdKey.Length, 32)) : "";
-                AcoustIdKeyBox.Text = dots;
-                AcoustIdKeyBox.IsReadOnly = true;
-                AcoustIdEyeSlash.Visibility = Visibility.Visible;
-                _initializing = false;
-            }
-        }
-
+        // Scrobbling (Last.fm + Libre.fm + ListenBrainz + Thresholds + API key visibility) - see SettingsWindow.Scrobbling.cs
         // ═══════════════════════════════════════════
         //  Export Format
         // ═══════════════════════════════════════════
@@ -1362,6 +1698,23 @@ namespace AudioQualityChecker
             }
             catch { }
             e.Handled = true;
+        }
+
+        private void OpenCredits_Click(object sender, RoutedEventArgs e)
+        {
+            // Hide Settings while Credits is open, then bring it back when Credits closes, so the two
+            // themed windows don't stack on top of each other.
+            var credits = new CreditsWindow { Owner = this, WindowStartupLocation = WindowStartupLocation.CenterScreen };
+            Hide();
+            try
+            {
+                credits.ShowDialog();
+            }
+            finally
+            {
+                Show();
+                Activate();
+            }
         }
 
         // ═══════════════════════════════════════════

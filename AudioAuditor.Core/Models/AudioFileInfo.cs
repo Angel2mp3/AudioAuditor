@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 
 namespace AudioQualityChecker.Models
@@ -27,6 +29,7 @@ namespace AudioQualityChecker.Models
 
         public string Artist { get; set; } = "";
         public string Title { get; set; } = "";
+        public string Album { get; set; } = "";
         public string FileName { get; set; } = "";
         public string FilePath { get; set; } = "";
         public string FolderPath { get; set; } = "";
@@ -290,6 +293,47 @@ namespace AudioQualityChecker.Models
         {
             get => _favoriteOrder;
             set { _favoriteOrder = value; OnPropertyChanged(); }
+        }
+
+        // Identity / user-state fields that a re-analysis must never overwrite — copying these
+        // would change which row this is, or wipe the favorite star / cue association.
+        private static readonly HashSet<string> NonAnalysisFields = new(StringComparer.Ordinal)
+        {
+            nameof(FilePath), nameof(FileName), nameof(FolderPath), nameof(Extension),
+            nameof(IsFavorite), nameof(FavoriteOrder),
+            nameof(IsCueVirtualTrack), nameof(CueSheetPath), nameof(CueTrackNumber),
+            nameof(CueStartTime), nameof(CueEndTime),
+        };
+
+        // Writable, non-identity scalar properties — the set a refresh may copy. Cached once.
+        private static readonly PropertyInfo[] CopyableAnalysisProperties =
+            typeof(AudioFileInfo)
+                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.CanRead && p.CanWrite && p.GetIndexParameters().Length == 0
+                            && !NonAnalysisFields.Contains(p.Name))
+                .ToArray();
+
+        /// <summary>
+        /// Copies freshly re-analyzed values from <paramref name="other"/> into this row in place
+        /// (so favorites, selection, sort, grouping and row identity are preserved). When
+        /// <paramref name="onlyFields"/> is null every analysis field is copied; otherwise only the
+        /// named properties are — used to fill a single newly-enabled column without touching the
+        /// rest. Raises a blanket PropertyChanged so the grid's computed display columns refresh.
+        /// </summary>
+        public void CopyAnalysisFrom(AudioFileInfo other, IReadOnlyCollection<string>? onlyFields = null)
+        {
+            if (other == null) return;
+
+            foreach (var prop in CopyableAnalysisProperties)
+            {
+                if (onlyFields != null && !onlyFields.Contains(prop.Name))
+                    continue;
+                prop.SetValue(this, prop.GetValue(other));
+            }
+
+            // Empty/null name tells WPF "all bindings on this object may have changed", which
+            // refreshes the display-only columns (BpmDisplay, MqaDisplay, …) that don't notify.
+            OnPropertyChanged(string.Empty);
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

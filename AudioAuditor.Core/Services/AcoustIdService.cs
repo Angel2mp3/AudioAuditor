@@ -37,26 +37,26 @@ namespace AudioQualityChecker.Services
 
         public static string? FindFpcalc()
         {
-            // Next to the running exe
             var appDir = AppDomain.CurrentDomain.BaseDirectory;
-            var local = Path.Combine(appDir, "fpcalc.exe");
-            if (File.Exists(local)) return local;
+            foreach (var name in FpcalcNames())
+            {
+                var local = Path.Combine(appDir, name);
+                if (File.Exists(local)) return local;
 
-            // In AppData alongside settings
-            var appData = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "AudioAuditor");
-            var appDataPath = Path.Combine(appData, "fpcalc.exe");
-            if (File.Exists(appDataPath)) return appDataPath;
+                var appDataPath = AppPaths.AppDataPath(name);
+                if (File.Exists(appDataPath)) return appDataPath;
+            }
 
-            // In PATH
-            var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(';') ?? Array.Empty<string>();
+            var pathDirs = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? Array.Empty<string>();
             foreach (var dir in pathDirs)
             {
                 try
                 {
-                    var candidate = Path.Combine(dir.Trim(), "fpcalc.exe");
-                    if (File.Exists(candidate)) return candidate;
+                    foreach (var name in FpcalcNames())
+                    {
+                        var candidate = Path.Combine(dir.Trim(), name);
+                        if (File.Exists(candidate)) return candidate;
+                    }
                 }
                 catch { }
             }
@@ -75,6 +75,7 @@ namespace AudioQualityChecker.Services
 
             // Offline mode: don't attempt to download fpcalc
             if (AudioAuditorSettings.OfflineMode) return null;
+            if (!OperatingSystem.IsWindows()) return null;
 
             await _downloadLock.WaitAsync(ct);
             try
@@ -83,15 +84,15 @@ namespace AudioQualityChecker.Services
                 existing = FindFpcalc();
                 if (existing != null) return existing;
 
-                var appData = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "AudioAuditor");
+                var appData = AppPaths.AppDataDirectory;
                 Directory.CreateDirectory(appData);
                 var targetPath = Path.Combine(appData, "fpcalc.exe");
                 var tempZip = Path.Combine(appData, "chromaprint.zip");
 
                 // Download the official Chromaprint 1.5.1 Windows release
                 const string downloadUrl = "https://github.com/acoustid/chromaprint/releases/download/v1.5.1/chromaprint-fpcalc-1.5.1-windows-x86_64.zip";
+                // SHA-256 of the official zip — verified against the GitHub release asset
+                const string expectedZipSha256 = "36b478e16aa69f757f376645db0d436073a42c0097b6bb2677109e7835b59bbc";
 
                 using var response = await _http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
                 if (!response.IsSuccessStatusCode) return null;
@@ -100,6 +101,13 @@ namespace AudioQualityChecker.Services
                 using (var fs = new FileStream(tempZip, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
                     await response.Content.CopyToAsync(fs, ct);
+                }
+
+                // Verify integrity before extracting — rejects tampered or corrupted downloads
+                if (!VerifyFileSha256(tempZip, expectedZipSha256))
+                {
+                    TryDelete(tempZip);
+                    return null;
                 }
 
                 // Extract fpcalc.exe from the zip
@@ -128,9 +136,35 @@ namespace AudioQualityChecker.Services
             }
         }
 
+        private static IEnumerable<string> FpcalcNames()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                yield return "fpcalc.exe";
+                yield return "fpcalc";
+            }
+            else
+            {
+                yield return "fpcalc";
+                yield return "fpcalc.exe";
+            }
+        }
+
         private static void TryDelete(string path)
         {
             try { File.Delete(path); } catch { }
+        }
+
+        private static bool VerifyFileSha256(string filePath, string expectedHex)
+        {
+            try
+            {
+                using var stream = File.OpenRead(filePath);
+                var hash = System.Security.Cryptography.SHA256.HashData(stream);
+                string actual = Convert.ToHexString(hash);
+                return actual.Equals(expectedHex, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
         }
 
         /// <summary>

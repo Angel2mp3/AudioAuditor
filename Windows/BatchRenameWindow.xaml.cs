@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using AudioQualityChecker.Models;
+using AudioQualityChecker.Services;
 
 namespace AudioQualityChecker
 {
@@ -16,13 +17,19 @@ namespace AudioQualityChecker
         private readonly List<AudioFileInfo> _files;
         private readonly Action<AudioFileInfo, string> _onFileRenamed;
         private CancellationTokenSource? _previewCts;
+        private List<RenamePreviewItem> _currentPreview = new();
 
         public BatchRenameWindow(List<AudioFileInfo> files, Action<AudioFileInfo, string> onFileRenamed)
         {
             InitializeComponent();
             _files = files;
             _onFileRenamed = onFileRenamed;
-            Loaded += (_, _) => UpdatePreviewAsync();
+            LoadSmartSettings();
+            Loaded += (_, _) =>
+            {
+                UpdateModeVisibility();
+                UpdatePreviewAsync();
+            };
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -37,7 +44,12 @@ namespace AudioQualityChecker
             => UpdatePreviewAsync();
 
         private void Option_Changed(object sender, RoutedEventArgs e)
-            => UpdatePreviewAsync();
+        {
+            UpdateModeVisibility();
+            if (IsLoaded)
+                SaveSmartSettings();
+            UpdatePreviewAsync();
+        }
 
         private async void UpdatePreviewAsync()
         {
@@ -50,6 +62,7 @@ namespace AudioQualityChecker
 
             string pattern = PatternBox.Text;
             bool organize = ChkOrganizeFolders.IsChecked == true;
+            bool smart = RbSmartRename.IsChecked == true;
             var files = _files.ToList(); // snapshot
 
             StatusText.Text = "Generating preview...";
@@ -63,6 +76,9 @@ namespace AudioQualityChecker
             {
                 var items = await Task.Run(() =>
                 {
+                    if (smart)
+                        return BuildSmartPreview(files);
+
                     var list = new List<RenamePreviewItem>();
                     foreach (var file in files)
                     {
@@ -98,9 +114,12 @@ namespace AudioQualityChecker
 
                         list.Add(new RenamePreviewItem
                         {
+                            File = file,
                             CurrentName = currentName,
                             Arrow = "→",
-                            NewName = newName
+                            NewName = newName,
+                            Confidence = "",
+                            Reason = ""
                         });
                     }
                     return list;
@@ -108,9 +127,21 @@ namespace AudioQualityChecker
 
                 if (cts.Token.IsCancellationRequested) return;
 
-                PreviewList.ItemsSource = items;
-                StatusText.Text = $"{items.Count} file{(items.Count != 1 ? "s" : "")}";
-                BtnRename.IsEnabled = true;
+                _currentPreview = items;
+                PreviewList.ItemsSource = _currentPreview;
+                if (smart)
+                {
+                    int high = _currentPreview.Count(i => i.Confidence == SmartRenameConfidence.High.ToString());
+                    int review = _currentPreview.Count(i => i.Confidence == SmartRenameConfidence.Review.ToString());
+                    int skipped = _currentPreview.Count(i => i.Confidence == SmartRenameConfidence.Skip.ToString());
+                    StatusText.Text = $"{high} high-confidence, {review} review, {skipped} skipped";
+                    BtnRename.IsEnabled = high > 0;
+                }
+                else
+                {
+                    StatusText.Text = $"{items.Count} file{(items.Count != 1 ? "s" : "")}";
+                    BtnRename.IsEnabled = true;
+                }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
@@ -118,6 +149,80 @@ namespace AudioQualityChecker
                 StatusText.Text = $"Preview error: {ex.Message}";
                 BtnRename.IsEnabled = true;
             }
+        }
+
+        private void UpdateModeVisibility()
+        {
+            if (!IsLoaded) return;
+            bool smart = RbSmartRename.IsChecked == true;
+            ManualPanel.Visibility = smart ? Visibility.Collapsed : Visibility.Visible;
+            SmartPanel.Visibility = smart ? Visibility.Visible : Visibility.Collapsed;
+            ChkOrganizeFolders.Visibility = smart ? Visibility.Collapsed : Visibility.Visible;
+            ChkSmartIncludeTracks.Visibility = smart ? Visibility.Visible : Visibility.Collapsed;
+            ChkSmartAppendNumbers.Visibility = smart ? Visibility.Visible : Visibility.Collapsed;
+            ChkSmartRenameClean.Visibility = smart ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private List<RenamePreviewItem> BuildSmartPreview(IReadOnlyList<AudioFileInfo> files)
+        {
+            var options = BuildSmartOptions();
+            return SmartRenameService.BuildPreview(files, options)
+                .Select(p => new RenamePreviewItem
+                {
+                    File = p.File,
+                    CurrentName = p.CurrentName,
+                    Arrow = "→",
+                    NewName = p.NewName,
+                    TargetPath = p.TargetPath,
+                    Confidence = p.Confidence.ToString(),
+                    Reason = string.Join("; ", p.Reasons.Distinct())
+                })
+                .ToList();
+        }
+
+        private SmartRenameOptions BuildSmartOptions()
+        {
+            return new SmartRenameOptions
+            {
+                Style = CmbSmartStyle.SelectedIndex switch
+                {
+                    1 => SmartRenameStyle.ArtistTitle,
+                    2 => SmartRenameStyle.TitleArtist,
+                    3 => SmartRenameStyle.TrackArtistTitle,
+                    4 => SmartRenameStyle.AlbumArtistTitle,
+                    _ => SmartRenameStyle.AlbumSafe
+                },
+                FolderMode = CmbSmartFolder.SelectedIndex switch
+                {
+                    1 => SmartRenameFolderMode.ArtistAlbum,
+                    2 => SmartRenameFolderMode.Album,
+                    _ => SmartRenameFolderMode.KeepCurrent
+                },
+                IncludeTrackNumbers = ChkSmartIncludeTracks.IsChecked == true,
+                RenameCleanFiles = ChkSmartRenameClean.IsChecked == true,
+                ConflictBehavior = ChkSmartAppendNumbers.IsChecked == true
+                    ? SmartRenameConflictBehavior.AppendNumber
+                    : SmartRenameConflictBehavior.Skip
+            };
+        }
+
+        private void LoadSmartSettings()
+        {
+            CmbSmartStyle.SelectedIndex = Math.Clamp(ThemeManager.SmartRenameStyleIndex, 0, 4);
+            CmbSmartFolder.SelectedIndex = Math.Clamp(ThemeManager.SmartRenameFolderIndex, 0, 2);
+            ChkSmartIncludeTracks.IsChecked = ThemeManager.SmartRenameIncludeTrackNumbers;
+            ChkSmartAppendNumbers.IsChecked = ThemeManager.SmartRenameAppendDuplicateNumbers;
+            ChkSmartRenameClean.IsChecked = ThemeManager.SmartRenameRenameCleanFiles;
+        }
+
+        private void SaveSmartSettings()
+        {
+            ThemeManager.SmartRenameStyleIndex = Math.Clamp(CmbSmartStyle.SelectedIndex, 0, 4);
+            ThemeManager.SmartRenameFolderIndex = Math.Clamp(CmbSmartFolder.SelectedIndex, 0, 2);
+            ThemeManager.SmartRenameIncludeTrackNumbers = ChkSmartIncludeTracks.IsChecked == true;
+            ThemeManager.SmartRenameAppendDuplicateNumbers = ChkSmartAppendNumbers.IsChecked == true;
+            ThemeManager.SmartRenameRenameCleanFiles = ChkSmartRenameClean.IsChecked == true;
+            ThemeManager.SavePlayOptions();
         }
 
         private static string ApplyPattern(string pattern, AudioFileInfo file)
@@ -203,6 +308,12 @@ namespace AudioQualityChecker
 
         private async void Rename_Click(object sender, RoutedEventArgs e)
         {
+            if (RbSmartRename.IsChecked == true)
+            {
+                await RenameSmartAsync();
+                return;
+            }
+
             string pattern = PatternBox.Text;
             bool organize = ChkOrganizeFolders.IsChecked == true;
             BtnRename.IsEnabled = false;
@@ -286,12 +397,75 @@ namespace AudioQualityChecker
             else
                 BtnRename.IsEnabled = true;
         }
+
+        private async Task RenameSmartAsync()
+        {
+            var items = _currentPreview
+                .Where(i => i.File != null
+                            && i.Confidence == SmartRenameConfidence.High.ToString()
+                            && !string.IsNullOrWhiteSpace(i.TargetPath))
+                .ToList();
+
+            if (items.Count == 0)
+            {
+                StatusText.Text = "No high-confidence smart renames to apply.";
+                return;
+            }
+
+            BtnRename.IsEnabled = false;
+            StatusText.Text = "Applying high-confidence smart renames...";
+            int renamed = 0;
+            int failed = 0;
+
+            await Task.Run(() =>
+            {
+                foreach (var item in items)
+                {
+                    try
+                    {
+                        var file = item.File!;
+                        if (File.Exists(item.TargetPath) &&
+                            !string.Equals(item.TargetPath, file.FilePath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            failed++;
+                            continue;
+                        }
+
+                        string? targetDir = Path.GetDirectoryName(item.TargetPath);
+                        if (!string.IsNullOrWhiteSpace(targetDir))
+                            Directory.CreateDirectory(targetDir);
+
+                        if (!string.Equals(item.TargetPath, file.FilePath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            File.Move(file.FilePath, item.TargetPath);
+                            Dispatcher.Invoke(() => _onFileRenamed(file, item.TargetPath));
+                            renamed++;
+                        }
+                    }
+                    catch
+                    {
+                        failed++;
+                    }
+                }
+            });
+
+            StatusText.Text = $"Smart rename: {renamed} renamed" +
+                              (failed > 0 ? $", {failed} failed" : "");
+            if (failed == 0 && renamed > 0)
+                Close();
+            else
+                BtnRename.IsEnabled = true;
+        }
     }
 
     public class RenamePreviewItem
     {
+        public AudioFileInfo? File { get; set; }
         public string CurrentName { get; set; } = "";
         public string Arrow { get; set; } = "→";
         public string NewName { get; set; } = "";
+        public string TargetPath { get; set; } = "";
+        public string Confidence { get; set; } = "";
+        public string Reason { get; set; } = "";
     }
 }

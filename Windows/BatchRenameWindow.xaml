@@ -37,17 +37,56 @@
 
             <!-- Pattern input -->
             <StackPanel Grid.Row="1" Margin="16,12,16,0">
-                <TextBlock Text="Rename Pattern" FontWeight="SemiBold" FontSize="12"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
-                <TextBox x:Name="PatternBox" FontSize="13" FontFamily="Consolas"
-                         Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
-                         BorderBrush="{DynamicResource Border}" Padding="8,6"
-                         Text="{}{artist} - {title}"
-                         TextChanged="PatternBox_TextChanged"/>
-                <TextBlock Foreground="{DynamicResource TextMuted}" FontSize="11"
-                           FontFamily="Segoe UI" TextWrapping="Wrap" Margin="0,4,0,0">
-                    <Run Text="Tags: {artist} {title} {album} {year} {track} {genre} {bitrate} {codec} {samplerate}"/>
-                </TextBlock>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <RadioButton x:Name="RbManualRename" Content="Manual pattern" IsChecked="True"
+                                 Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                 Checked="Option_Changed" Margin="0,0,18,0"/>
+                    <RadioButton x:Name="RbSmartRename" Content="Smart rename"
+                                 Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                 Checked="Option_Changed"/>
+                </StackPanel>
+                <StackPanel x:Name="ManualPanel">
+                    <TextBlock Text="Rename Pattern" FontWeight="SemiBold" FontSize="12"
+                               FontFamily="Segoe UI" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="PatternBox" FontSize="13" FontFamily="Consolas"
+                             Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}"
+                             BorderBrush="{DynamicResource Border}" Padding="8,6"
+                             Text="{}{artist} - {title}"
+                             TextChanged="PatternBox_TextChanged"/>
+                    <TextBlock Foreground="{DynamicResource TextMuted}" FontSize="11"
+                               FontFamily="Segoe UI" TextWrapping="Wrap" Margin="0,4,0,0">
+                        <Run Text="Tags: {artist} {title} {album} {year} {track} {genre} {bitrate} {codec} {samplerate}"/>
+                    </TextBlock>
+                </StackPanel>
+                <Grid x:Name="SmartPanel" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Smart Style" FontWeight="SemiBold" FontSize="12"
+                                   Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+                        <ComboBox x:Name="CmbSmartStyle" SelectedIndex="0" SelectionChanged="Option_Changed"
+                                  Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}">
+                            <ComboBoxItem Content="Album-safe (recommended)"/>
+                            <ComboBoxItem Content="Artist - Title"/>
+                            <ComboBoxItem Content="Title - Artist"/>
+                            <ComboBoxItem Content="## - Artist - Title"/>
+                            <ComboBoxItem Content="Album - Artist - Title"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Folder Output" FontWeight="SemiBold" FontSize="12"
+                                   Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+                        <ComboBox x:Name="CmbSmartFolder" SelectedIndex="0" SelectionChanged="Option_Changed"
+                                  Background="{DynamicResource InputBg}" Foreground="{DynamicResource TextPrimary}">
+                            <ComboBoxItem Content="Keep current folder"/>
+                            <ComboBoxItem Content="Artist / Album"/>
+                            <ComboBoxItem Content="Album"/>
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
             </StackPanel>
 
             <!-- Options -->
@@ -55,6 +94,18 @@
                 <CheckBox x:Name="ChkOrganizeFolders" Content="Organize into folders: {artist}/{album}/"
                           Foreground="{DynamicResource TextSecondary}" FontSize="12" FontFamily="Segoe UI"
                           Cursor="Hand" Checked="Option_Changed" Unchecked="Option_Changed"/>
+                <CheckBox x:Name="ChkSmartIncludeTracks" Content="Include track numbers" IsChecked="True"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="12" FontFamily="Segoe UI"
+                          Cursor="Hand" Checked="Option_Changed" Unchecked="Option_Changed" Margin="16,0,0,0"
+                          Visibility="Collapsed"/>
+                <CheckBox x:Name="ChkSmartAppendNumbers" Content="Suffix duplicate targets"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="12" FontFamily="Segoe UI"
+                          Cursor="Hand" Checked="Option_Changed" Unchecked="Option_Changed" Margin="16,0,0,0"
+                          Visibility="Collapsed"/>
+                <CheckBox x:Name="ChkSmartRenameClean" Content="Rename already-clean files"
+                          Foreground="{DynamicResource TextSecondary}" FontSize="12" FontFamily="Segoe UI"
+                          Cursor="Hand" Checked="Option_Changed" Unchecked="Option_Changed" Margin="16,0,0,0"
+                          Visibility="Collapsed"/>
             </StackPanel>
 
             <!-- Preview list -->
@@ -71,6 +122,10 @@
                                             DisplayMemberBinding="{Binding Arrow}"/>
                             <GridViewColumn Header="New Name" Width="280"
                                             DisplayMemberBinding="{Binding NewName}"/>
+                            <GridViewColumn Header="Confidence" Width="80"
+                                            DisplayMemberBinding="{Binding Confidence}"/>
+                            <GridViewColumn Header="Reason" Width="260"
+                                            DisplayMemberBinding="{Binding Reason}"/>
                         </GridView>
                     </ListView.View>
                 </ListView>

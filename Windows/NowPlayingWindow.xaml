@@ -90,12 +90,19 @@
                         <TextBlock x:Name="NpTimeElapsed" Grid.Column="0" Text="0:00"
                                    Foreground="#88FFFFFF" FontSize="11" VerticalAlignment="Center"
                                    Margin="0,0,8,0" FontFamily="Consolas"/>
-                        <Slider x:Name="NpSeekSlider" Grid.Column="1"
-                                Minimum="0" Maximum="100"
-                                IsMoveToPointEnabled="True"
-                                ValueChanged="NpSeekSlider_ValueChanged"
-                                PreviewMouseLeftButtonDown="NpSeekSlider_MouseDown"
-                                PreviewMouseLeftButtonUp="NpSeekSlider_MouseUp"/>
+                        <Grid Grid.Column="1">
+                            <Slider x:Name="NpSeekSlider"
+                                    Minimum="0" Maximum="100"
+                                    IsMoveToPointEnabled="True"
+                                    ValueChanged="NpSeekSlider_ValueChanged"
+                                    PreviewMouseLeftButtonDown="NpSeekSlider_MouseDown"
+                                    PreviewMouseLeftButtonUp="NpSeekSlider_MouseUp"/>
+                            <Canvas x:Name="NpPlaybarAnimCanvas" Height="26"
+                                    IsHitTestVisible="False"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Stretch"
+                                    ClipToBounds="False"/>
+                        </Grid>
                         <TextBlock x:Name="NpTimeTotal" Grid.Column="2" Text="0:00"
                                    Foreground="#88FFFFFF" FontSize="11" VerticalAlignment="Center"
                                    Margin="8,0,0,0" FontFamily="Consolas"/>
@@ -117,6 +124,7 @@
                                        TextTrimming="CharacterEllipsis" MaxHeight="22"/>
                             <TextBlock x:Name="NpSongArtist" Text=""
                                        Foreground="#99FFFFFF" FontSize="12"
+                                       Margin="0,2,0,0"
                                        TextTrimming="CharacterEllipsis" MaxHeight="18"/>
                         </StackPanel>
 
@@ -157,7 +165,16 @@
                                     ValueChanged="NpVolumeSlider_ValueChanged"/>
                             <Button Style="{StaticResource NpButton}" Click="NpClose_Click"
                                     ToolTip="Back to main" Padding="8,6" Margin="8,0,0,0">
-                                <TextBlock Text="&#x2715;" FontSize="14" Foreground="#CCFFFFFF"/>
+                                <Viewbox Width="15" Height="15">
+                                    <Canvas Width="18" Height="18">
+                                        <Ellipse Canvas.Left="2.5" Canvas.Top="2.5"
+                                                 Width="9.5" Height="9.5"
+                                                 Stroke="#CCFFFFFF" StrokeThickness="2"/>
+                                        <Line X1="10.5" Y1="10.5" X2="16" Y2="16"
+                                              Stroke="#CCFFFFFF" StrokeThickness="2"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                                    </Canvas>
+                                </Viewbox>
                             </Button>
                         </StackPanel>
                     </Grid>
@@ -199,9 +216,17 @@
 
                     <!-- Lyrics header -->
                     <StackPanel Grid.Row="0" Margin="0,0,0,16">
-                        <TextBlock x:Name="NpLyricsTitle" Text="Lyrics"
-                                   Foreground="#BBFFFFFF" FontSize="14" FontWeight="SemiBold"
-                                   Margin="0,0,0,4"/>
+                        <DockPanel LastChildFill="False">
+                            <TextBlock x:Name="NpLyricsTitle" Text="Lyrics" DockPanel.Dock="Left"
+                                       Foreground="#BBFFFFFF" FontSize="14" FontWeight="SemiBold"
+                                       Margin="0,0,0,4"/>
+                            <Button x:Name="BtnWrongVersion" DockPanel.Dock="Right"
+                                    Content="Wrong version?" Click="BtnWrongVersion_Click"
+                                    Background="Transparent" BorderThickness="0"
+                                    Foreground="#88FFFFFF" FontSize="11" Cursor="Hand"
+                                    Padding="6,2" VerticalAlignment="Center"
+                                    ToolTip="Try the opposite explicit/clean variant"/>
+                        </DockPanel>
                         <TextBlock x:Name="NpLyricsSource" Text=""
                                    Foreground="#55FFFFFF" FontSize="11"/>
                     </StackPanel>

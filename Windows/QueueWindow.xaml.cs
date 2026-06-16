@@ -45,6 +45,46 @@ namespace AudioQualityChecker
             }
         }
 
+        public void ApplyColorMatch(Color primary, Color secondary, Color tertiary, Color background)
+        {
+            SetBrush("WindowBg", Color.FromArgb(245, background.R, background.G, background.B));
+            SetBrush("GlassFloatingBg", Color.FromArgb(235, background.R, background.G, background.B));
+            SetBrush("GlassBorderBrush", Color.FromArgb(120, primary.R, primary.G, primary.B));
+            SetBrush("GridBg", Color.FromArgb(120, background.R, background.G, background.B));
+            SetBrush("BorderColor", Color.FromArgb(90, primary.R, primary.G, primary.B));
+            SetBrush("ButtonBg", Color.FromArgb(46, primary.R, primary.G, primary.B));
+            SetBrush("ButtonHover", Color.FromArgb(72, primary.R, primary.G, primary.B));
+            SetBrush("ButtonPressed", Color.FromArgb(92, primary.R, primary.G, primary.B));
+            SetBrush("ButtonBorder", Color.FromArgb(100, primary.R, primary.G, primary.B));
+            SetBrush("SelectionBg", Color.FromArgb(78, primary.R, primary.G, primary.B));
+            SetBrush("RowHoverBg", Color.FromArgb(46, secondary.R, secondary.G, secondary.B));
+            SetBrush("AccentColor", primary);
+            SetBrush("PlaybarAccentColor", primary);
+            SetBrush("TextPrimary", Colors.White);
+            SetBrush("TextSecondary", Color.FromRgb(218, 224, 232));
+            SetBrush("TextMuted", Color.FromRgb(166, 176, 190));
+        }
+
+        public void ClearColorMatch()
+        {
+            foreach (var key in new[]
+            {
+                "WindowBg", "GlassFloatingBg", "GlassBorderBrush", "GridBg", "BorderColor",
+                "ButtonBg", "ButtonHover", "ButtonPressed", "ButtonBorder", "SelectionBg",
+                "RowHoverBg", "AccentColor", "PlaybarAccentColor", "TextPrimary", "TextSecondary", "TextMuted"
+            })
+            {
+                Resources.Remove(key);
+            }
+        }
+
+        private void SetBrush(string key, Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            Resources[key] = brush;
+        }
+
         private void UpdateCount()
         {
             QueueCount.Text = $"  ({Queue.Count} song{(Queue.Count == 1 ? "" : "s")})";

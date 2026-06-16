@@ -9,8 +9,8 @@
         Foreground="{DynamicResource TextPrimary}"
         AllowsTransparency="True">
 
-    <Border Background="{DynamicResource PanelBg}"
-            BorderBrush="{DynamicResource BorderColor}" BorderThickness="1" CornerRadius="6">
+    <Border Background="{DynamicResource GlassFloatingBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1" CornerRadius="6">
         <Grid Margin="16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>

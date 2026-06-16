@@ -30,83 +30,59 @@ namespace AudioQualityChecker
 
         private async void Scan_Click(object sender, RoutedEventArgs e)
         {
-            BtnScan.IsEnabled = false;
-            ResultTree.Items.Clear();
-            ProgressText.Text = "Scanning...";
-
-            var groups = await Task.Run(() => FindDuplicates());
-
-            ResultTree.Items.Clear();
-            int totalDupes = 0;
-
-            foreach (var group in groups)
+            try
             {
-                var groupItem = new TreeViewItem
-                {
-                    Header = $"Duplicate group ({group.Count()} files) — {group.Key}",
-                    IsExpanded = true,
-                    Foreground = System.Windows.Media.Brushes.White
-                };
+                BtnScan.IsEnabled = false;
+                ResultTree.Items.Clear();
+                ProgressText.Text = "Scanning...";
 
-                foreach (var file in group)
+                var groups = await Task.Run(() => FindDuplicates());
+
+                ResultTree.Items.Clear();
+                int totalDupes = 0;
+
+                foreach (var group in groups)
                 {
-                    var fileItem = new TreeViewItem
+                    var groupItem = new TreeViewItem
                     {
-                        Header = $"{file.FileName}  ({file.FileSize}, {file.Duration})",
-                        Tag = file,
-                        Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
-                        FontFamily = new System.Windows.Media.FontFamily("Segoe UI")
+                        Header = $"Duplicate group ({group.Count()} files) — {group.Key}",
+                        IsExpanded = true,
+                        Foreground = System.Windows.Media.Brushes.White
                     };
-                    groupItem.Items.Add(fileItem);
-                    totalDupes++;
+
+                    foreach (var file in group)
+                    {
+                        var fileItem = new TreeViewItem
+                        {
+                            Header = $"{file.FileName}  ({file.FileSize}, {file.Duration})",
+                            Tag = file,
+                            Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+                            FontFamily = new System.Windows.Media.FontFamily("Segoe UI")
+                        };
+                        groupItem.Items.Add(fileItem);
+                        totalDupes++;
+                    }
+
+                    ResultTree.Items.Add(groupItem);
                 }
 
-                ResultTree.Items.Add(groupItem);
+                int groupCount = groups.Count;
+                SummaryText.Text = groupCount > 0
+                    ? $"Found {groupCount} duplicate group{(groupCount != 1 ? "s" : "")} ({totalDupes} files total)"
+                    : "No duplicates found.";
+                ProgressText.Text = "";
+                BtnScan.IsEnabled = true;
             }
-
-            int groupCount = groups.Count;
-            SummaryText.Text = groupCount > 0
-                ? $"Found {groupCount} duplicate group{(groupCount != 1 ? "s" : "")} ({totalDupes} files total)"
-                : "No duplicates found.";
-            ProgressText.Text = "";
-            BtnScan.IsEnabled = true;
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Scan_Click] {ex}");
+                ProgressText.Text = "Scan failed.";
+                BtnScan.IsEnabled = true;
+            }
         }
 
+        // Matching logic lives in AudioAuditor.Core (DuplicateFinder) so the GUI and CLI share it.
         private List<IGrouping<string, AudioFileInfo>> FindDuplicates()
-        {
-            var groups = new List<IGrouping<string, AudioFileInfo>>();
-
-            // Strategy 1: Match by metadata (artist + title, case-insensitive)
-            var byMetadata = _files
-                .Where(f => !string.IsNullOrWhiteSpace(f.Artist) && !string.IsNullOrWhiteSpace(f.Title))
-                .GroupBy(f => $"{f.Artist.Trim()} – {f.Title.Trim()}", StringComparer.OrdinalIgnoreCase)
-                .Where(g => g.Count() > 1)
-                .ToList();
-
-            // Strategy 2: Match by exact file size + duration (for files without metadata)
-            var byFingerprint = _files
-                .Where(f => f.DurationSeconds > 0 && f.FileSizeBytes > 0)
-                .GroupBy(f => $"{Math.Round(f.DurationSeconds, 1)}s / {f.FileSizeBytes}b")
-                .Where(g => g.Count() > 1)
-                .ToList();
-
-            // Merge: use metadata matches first, add size/duration matches that aren't already found
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var g in byMetadata)
-            {
-                groups.Add(g);
-                foreach (var f in g)
-                    seen.Add(f.FilePath);
-            }
-
-            foreach (var g in byFingerprint)
-            {
-                // Only add if none of the files in this group were already identified
-                if (g.All(f => !seen.Contains(f.FilePath)))
-                    groups.Add(g);
-            }
-
-            return groups;
-        }
+            => Services.DuplicateFinder.FindDuplicates(_files);
     }
 }
