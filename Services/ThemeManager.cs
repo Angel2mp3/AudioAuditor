@@ -5,6 +5,8 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using AudioQualityChecker.Models;
+using AudioQualityChecker.Abstractions;
+using AudioQualityChecker.Theming;
 
 // NOTICE: Embedding malicious code in theme/settings files or their loading
 // routines is still malware distribution and a criminal offense.
@@ -14,13 +16,9 @@ namespace AudioQualityChecker.Services
 {
     public enum LoopMode { Off, All, One }
 
-    /// <summary>
-    /// Animation pattern for the Now Playing cover glow.
-    /// Swirl rotates the gradient endpoints around the cover (legacy behavior).
-    /// LinearLR / LinearRL sweep the gradient horizontally.
-    /// Random eases between hues sampled from the extracted palette.
-    /// </summary>
-    public enum GlowMotionMode { Swirl, LinearLR, LinearRL, Random, DiagonalSweep, Orbit, ColorDrift }
+    // GlowMotionMode, ColorMatchTarget and NpLyricDisplayMode moved to Core alongside the settings
+    // they describe (AudioAuditor.Core/Services/NowPlayingSettings.cs) — same namespace, so no call
+    // site changed.
 
     public enum PlaybarAnimationStyle
     {
@@ -115,8 +113,6 @@ namespace AudioQualityChecker.Services
                 "session.dat");
         }
 
-        public static IReadOnlyList<CustomThemeDefinition> GetCustomThemes() => CustomThemeStore.LoadThemes();
-
         public static CustomThemeDefinition? GetThemeDefinition(string themeName)
         {
             return CustomThemeStore.FindTheme(themeName);
@@ -127,7 +123,6 @@ namespace AudioQualityChecker.Services
         public static string[] CustomServiceIcons { get; } = new string[6] { "", "", "", "", "", "" };
 
         // Streaming service region settings
-        public static bool RegionAwareSearchEnabled { get; set; } = true;
         public static string StreamingRegion { get; set; } = "us";
 
         // Equalizer
@@ -145,8 +140,8 @@ namespace AudioQualityChecker.Services
         // Experimental AI Detection (spectral analysis — opt-in, higher false positives)
         public static bool ExperimentalAiDetection { get; set; }
 
-        // Rip/Encode Quality Check (experimental — opt-in)
-        public static bool RipQualityEnabled { get; set; }
+        // CD Rip Checker — scan-time cambia check of rip logs found next to files (opt-in)
+        public static bool RipLogCheckEnabled { get; set; }
 
         private const string CurrentScanPerformanceDefaultsVersion = "1.7.0-fast-scan-columns";
 
@@ -197,10 +192,28 @@ namespace AudioQualityChecker.Services
 
         // Crash logging — ON by default. The first-run/upgrade Welcome dialog lets the
         // user opt out; Settings has a toggle too. Logs are local-only and path-sanitized.
-        public static bool CrashLoggingEnabled { get; set; } = true;
+        private static bool _crashLoggingEnabled = true;
+        public static bool CrashLoggingEnabled
+        {
+            get => _crashLoggingEnabled;
+            set
+            {
+                _crashLoggingEnabled = value;
+                AudioQualityChecker.AudioAuditorSettings.CrashLoggingEnabled = value;
+            }
+        }
 
         // Local stats collection — OFF by default, user must explicitly opt in
-        public static bool StatsCollectionEnabled { get; set; }
+        private static bool _statsCollectionEnabled;
+        public static bool StatsCollectionEnabled
+        {
+            get => _statsCollectionEnabled;
+            set
+            {
+                _statsCollectionEnabled = value;
+                AudioQualityChecker.AudioAuditorSettings.StatsCollectionEnabled = value;
+            }
+        }
 
         // Always run full audio file pass even when all detectors are disabled
         public static bool AlwaysFullAnalysis { get; set; }
@@ -260,12 +273,22 @@ namespace AudioQualityChecker.Services
         public static bool SmartRenameIncludeTrackNumbers { get; set; } = true;
         public static bool SmartRenameAppendDuplicateNumbers { get; set; }
         public static bool SmartRenameRenameCleanFiles { get; set; }
+
+        // ─── Batch Editor: rename name transforms ───
+        public static int SmartRenameNameCaseIndex { get; set; }   // 0 None, 1 lower, 2 UPPER, 3 Title
+        public static int SmartRenameSpaceModeIndex { get; set; }  // 0 Keep, 1 Underscores, 2 Spaces
+        public static bool SmartRenameStripFeaturing { get; set; }
+
+        // ─── Batch Editor: streaming-link platform preference (0 Deezer, 1 Apple, 2 Spotify, 3 YouTube) ───
+        public static int StreamingLinkPlatformIndex { get; set; }
+
         public static string DefaultCopyFolder { get; set; } = "";
         public static string DefaultMoveFolder { get; set; } = "";
         public static string DefaultPlaylistFolder { get; set; } = "";
 
         // ─── Main window color match ───
         public static bool MainColorMatchEnabled { get; set; }
+        public static ColorMatchTarget MainColorMatchTargets { get; set; } = ColorMatchTarget.All;
 
         // ─── Offline / online mode ───
         private static bool _offlineModeEnabled;
@@ -306,7 +329,12 @@ namespace AudioQualityChecker.Services
                 using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RegistryKeyPath);
                 key?.SetValue(name, value ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // These flags survive reinstalls (DonationDismissed, FirstLaunchComplete, ...).
+                // A silent write failure makes a dismissed prompt reappear forever.
+                if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
         }
 
         /// <summary>Read a flag from the Windows registry.</summary>
@@ -328,17 +356,17 @@ namespace AudioQualityChecker.Services
             "★", "Status", "Title", "Artist", "Filename", "Path", "Sample Rate", "Bits", "Ch",
             "Duration", "Size", "Bitrate", "Actual BR", "Format", "Max Freq", "Clipping", "BPM",
             "Replay Gain", "DR", "MQA", "AI", "Fake Stereo", "Silence", "Date Modified",
-            "Date Created", "True Peak", "LUFS", "Rip Quality"
+            "Date Created", "True Peak", "LUFS", "Rip Log"
         };
 
         private static readonly string[] DefaultHiddenColumnHeaders =
         {
-            "★", "BPM", "DR", "Date Created", "True Peak", "LUFS", "Rip Quality", "Silence"
+            "★", "BPM", "DR", "Date Created", "True Peak", "LUFS", "Rip Log", "Silence"
         };
 
         private static readonly HashSet<string> AnalysisColumnHeaders = new(StringComparer.OrdinalIgnoreCase)
         {
-            "BPM", "DR", "True Peak", "LUFS", "Rip Quality", "Silence",
+            "BPM", "DR", "True Peak", "LUFS", "Rip Log", "Silence",
             "Clipping", "MQA", "AI", "Fake Stereo"
         };
 
@@ -454,9 +482,6 @@ namespace AudioQualityChecker.Services
             }
         }
 
-        public static bool IsAnalysisColumn(string header) =>
-            AnalysisColumnHeaders.Contains(NormalizeColumnHeader(header));
-
         public static bool IsAnalysisColumnEnabled(string header)
         {
             return NormalizeColumnHeader(header) switch
@@ -465,7 +490,7 @@ namespace AudioQualityChecker.Services
                 "DR" => DynamicRangeEnabled,
                 "True Peak" => TruePeakEnabled,
                 "LUFS" => LufsEnabled,
-                "Rip Quality" => RipQualityEnabled,
+                "Rip Log" => RipLogCheckEnabled,
                 "Silence" => SilenceDetectionEnabled,
                 "Clipping" => ClippingDetectionEnabled,
                 "MQA" => MqaDetectionEnabled,
@@ -495,9 +520,8 @@ namespace AudioQualityChecker.Services
                     LufsEnabled = enabled;
                     AudioAnalyzer.EnableLufs = enabled;
                     break;
-                case "Rip Quality":
-                    RipQualityEnabled = enabled;
-                    AudioAnalyzer.EnableRipQuality = enabled;
+                case "Rip Log":
+                    RipLogCheckEnabled = enabled;
                     break;
                 case "Silence":
                     SilenceDetectionEnabled = enabled;
@@ -683,7 +707,14 @@ namespace AudioQualityChecker.Services
             long now = Environment.TickCount64;
             if (now - _memoryCheckTick < MemoryCheckIntervalMs) return _memoryOk;
             _memoryCheckTick = now;
-            _memoryOk = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 < limitBytes;
+            // Disposed rather than left to the finalizer — this runs every 400 ms for the whole
+            // life of a scan and each Process object holds an OS handle. Deliberately NOT
+            // Environment.WorkingSet: the CLI and the Avalonia build both gate on
+            // Process.WorkingSet64, and a memory limit that means something different in the GUI
+            // than in the CLI is exactly the kind of drift that is invisible until a user reports
+            // it on one build only.
+            using var proc = System.Diagnostics.Process.GetCurrentProcess();
+            _memoryOk = proc.WorkingSet64 < limitBytes;
             return _memoryOk;
         }
 
@@ -705,6 +736,10 @@ namespace AudioQualityChecker.Services
             string saved = LoadSavedTheme();
             ApplyTheme(saved);
             LoadPlayOptions();
+
+            // Apply the persisted app-wide font (built-in name or a previously-copied custom font file).
+            try { ApplyFont(AppFontFamily); }
+            catch { /* fall back silently to the default resource value already in App.xaml */ }
 
             // Cross-install persistence: registry flags override options.txt
             if (GetRegistryFlag("DonationDismissed")) DonationDismissed = true;
@@ -732,14 +767,38 @@ namespace AudioQualityChecker.Services
                 string oldFile = Path.Combine(Path.GetTempPath(), "AudioAuditor_session.dat");
                 if (File.Exists(oldFile) && !File.Exists(SensitiveFile))
                 {
-                    var dir = Path.GetDirectoryName(SensitiveFile)!;
-                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                    File.Move(oldFile, SensitiveFile);
-                    // Reload after migration
+                    byte[] raw = File.ReadAllBytes(oldFile);
+                    string? content = null;
+                    try
+                    {
+                        var decrypted = System.Security.Cryptography.ProtectedData.Unprotect(
+                            raw, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                        content = System.Text.Encoding.UTF8.GetString(decrypted);
+                    }
+                    catch
+                    {
+                        string legacy = System.Text.Encoding.UTF8.GetString(raw);
+                        if (CredentialStore.LooksLikeLegacyPlaintext(legacy)) content = legacy;
+                    }
+
+                    if (content == null) return;
+                    var migrated = ParseKnownCredentials(content);
+                    if (migrated.Count == 0) return;
+                    CredentialStore.Save(migrated);
+                    var stored = CredentialStore.Load();
+                    if (migrated.Any(pair => !stored.TryGetValue(pair.Key, out var value) || value != pair.Value))
+                        return;
+
+                    File.Delete(oldFile);
                     LoadSensitiveData();
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Failing here strands the session file at its old path, so every credential in
+                // it looks lost on the next launch. Leave a trace instead of guessing later.
+                if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
         }
 
         private static void LoadSensitiveData()
@@ -761,6 +820,7 @@ namespace AudioQualityChecker.Services
                 {
                     // Fallback: legacy plaintext file
                     content = System.Text.Encoding.UTF8.GetString(rawBytes);
+                    if (!CredentialStore.LooksLikeLegacyPlaintext(content)) return;
                 }
 
                 foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -784,10 +844,25 @@ namespace AudioQualityChecker.Services
                         case "MalojaUsername": MalojaUsername = sp[1]; break;
                         case "DiscordRpcClientId": DiscordRpcClientId = sp[1]; break;
                         case "AcoustIdApiKey": AcoustIdApiKey = sp[1]; break;
+                        case "DiscogsToken": DiscogsToken = sp[1]; break;
+                        case "FanartTvApiKey": FanartTvApiKey = sp[1]; break;
+                        case "SpotifyClientId": SpotifyClientId = sp[1]; break;
+                        case "SpotifyClientSecret": SpotifyClientSecret = sp[1]; break;
+                        case "YouTubeApiKey": YouTubeApiKey = sp[1]; break;
+                        case "SHLabsCustomApiKey":
+                            SHLabsCustomApiKey = sp[1];
+                            SHLabsDetectionService.CustomApiKey = sp[1];
+                            break;
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Mirrors the save path's reasoning: this reads every scrobbler session key and
+                // API token, so one DPAPI or parse failure logs the user out of Last.fm,
+                // ListenBrainz, Discord, AcoustID, Discogs and Spotify at once with no trace.
+                if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
         }
 
         /// <summary>
@@ -805,16 +880,51 @@ namespace AudioQualityChecker.Services
                     return;
                 }
                 var lines = File.ReadAllLines(OptionsFile);
-                var cleanLines = lines.Where(l =>
-                    !l.StartsWith("LastFmApiKey=", StringComparison.Ordinal) &&
-                    !l.StartsWith("LastFmApiSecret=", StringComparison.Ordinal) &&
-                    !l.StartsWith("LastFmSessionKey=", StringComparison.Ordinal) &&
-                    !l.StartsWith("LastFmUsername=", StringComparison.Ordinal) &&
-                    !l.StartsWith("DiscordRpcClientId=", StringComparison.Ordinal)).ToArray();
-                if (cleanLines.Length < lines.Length)
-                    File.WriteAllLines(OptionsFile, cleanLines);
+                var migrated = new Dictionary<string, string>(StringComparer.Ordinal);
+                var storedBeforeMigration = CredentialStore.Load();
+                foreach (var line in lines)
+                {
+                    int separator = line.IndexOf('=');
+                    if (separator > 0 &&
+                        CredentialStore.Keys.Contains(line[..separator], StringComparer.Ordinal) &&
+                        !storedBeforeMigration.ContainsKey(line[..separator]))
+                        migrated[line[..separator]] = line[(separator + 1)..];
+                }
+
+                if (migrated.Count > 0)
+                {
+                    CredentialStore.Save(migrated);
+                    var stored = CredentialStore.Load();
+                    if (migrated.Any(pair => !stored.TryGetValue(pair.Key, out var value) || value != pair.Value))
+                        return;
+                }
+
+                var credentialKeys = CredentialStore.Keys.ToHashSet(StringComparer.Ordinal);
+                if (lines.Any(l =>
+                    l.IndexOf('=') is int separator && separator > 0 &&
+                    credentialKeys.Contains(l[..separator])))
+                {
+                    OptionsFileStore.Merge(OptionsFile, CredentialStore.Keys.Select(key =>
+                        new KeyValuePair<string, string?>(key, null)));
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Legacy credentials stay in the plaintext options.txt if this fails.
+                if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
+        }
+
+        private static Dictionary<string, string> ParseKnownCredentials(string content)
+        {
+            var values = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var pair = line.TrimEnd('\r').Split('=', 2);
+                if (pair.Length == 2 && CredentialStore.Keys.Contains(pair[0], StringComparer.Ordinal))
+                    values[pair[0]] = pair[1];
+            }
+            return values;
         }
 
         /// <summary>
@@ -823,6 +933,53 @@ namespace AudioQualityChecker.Services
         /// it can re-apply album-derived scoped colors that the global theme write just clobbered.
         /// </summary>
         public static event Action? ThemeChanged;
+
+        // ─── App-wide font ───
+        // Either a built-in family name (e.g. "Segoe UI") or an absolute path to a custom
+        // .ttf/.otf file the user added (copied into %APPDATA%\AudioAuditor\Fonts\ by ApplyFont).
+        public static string AppFontFamily { get; set; } = "Segoe UI";
+
+        // Stock Windows families only, so nothing has to be bundled — WPF resolves these from the
+        // user's installed fonts. Names not present on the machine are filtered out of the picker.
+        public static readonly string[] BuiltInFontFamilies =
+            { "Segoe UI", "Segoe UI Variable", "Calibri", "Arial", "Verdana", "Tahoma",
+              "Trebuchet MS", "Georgia", "Times New Roman", "Comic Sans MS", "Consolas", "Courier New" };
+
+        private static string CustomFontsFolder =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AudioAuditor", "Fonts");
+
+        /// <summary>Applies a built-in font by name, or a custom font file (copied into the app's
+        /// font folder so it survives the original file moving/being deleted), app-wide via the
+        /// "AppFontFamily" DynamicResource every window's FontFamily setters are bound to.</summary>
+        public static void ApplyFont(string fontNameOrPath)
+        {
+            FontFamily resolved;
+            string persistedValue;
+
+            if (!string.IsNullOrWhiteSpace(fontNameOrPath) && Path.IsPathRooted(fontNameOrPath) && File.Exists(fontNameOrPath))
+            {
+                Directory.CreateDirectory(CustomFontsFolder);
+                string destPath = Path.Combine(CustomFontsFolder, Path.GetFileName(fontNameOrPath));
+                if (!string.Equals(Path.GetFullPath(fontNameOrPath), Path.GetFullPath(destPath), StringComparison.OrdinalIgnoreCase))
+                    File.Copy(fontNameOrPath, destPath, overwrite: true);
+
+                var folderUri = new Uri(Path.GetDirectoryName(destPath) + Path.DirectorySeparatorChar, UriKind.Absolute);
+                var familyName = Fonts.GetFontFamilies(new Uri(destPath, UriKind.Absolute)).FirstOrDefault()?.Source
+                    ?? Path.GetFileNameWithoutExtension(destPath);
+                resolved = new FontFamily(folderUri, "./#" + familyName);
+                persistedValue = destPath;
+            }
+            else
+            {
+                string name = string.IsNullOrWhiteSpace(fontNameOrPath) ? "Segoe UI" : fontNameOrPath;
+                resolved = new FontFamily(name);
+                persistedValue = name;
+            }
+
+            Application.Current.Resources["AppFontFamily"] = resolved;
+            AppFontFamily = persistedValue;
+            SavePlayOptions();
+        }
 
         public static void ApplyTheme(string themeName)
         {
@@ -833,6 +990,7 @@ namespace AudioQualityChecker.Services
                 themeName = "Blurple";
 
             _currentTheme = themeName;
+            AudioQualityChecker.AudioAuditorSettings.CurrentThemeName = themeName;
             var customTheme = GetThemeDefinition(themeName);
             var colors = customTheme != null
                 ? GetThemeColors(customTheme)
@@ -868,21 +1026,10 @@ namespace AudioQualityChecker.Services
         }
 
         /// <summary>Maps the current color theme to its closest playbar theme when "Follow Theme" is selected.</summary>
-        private static string ResolveFollowPlaybarTheme()
-        {
-            return _currentTheme switch
-            {
-                "Light" => "Minimal",
-                "Amethyst" => "Purple Haze",
-                "Dreamsicle" => "Sunset Glow",
-                "Goldenrod" => "Golden Wave",
-                "Emerald" => "Emerald Wave",
-                "Blurple" => "Blurple Wave",
-                "Crimson" => "Crimson Wave",
-                "Brown" => "Brown Wave",
-                _ => "Blue Fire", // Dark, Ocean, fallback
-            };
-        }
+        private static string ResolveFollowPlaybarTheme() =>
+            PlaybarPalettes.ResolveFollowTheme(_currentTheme);
+
+        private static Color ToMediaColor(AppColor c) => Color.FromArgb(c.A, c.R, c.G, c.B);
 
         /// <summary>
         /// Updates the PlaybarAccentColor resource to match the current playbar theme's primary color.
@@ -929,151 +1076,20 @@ namespace AudioQualityChecker.Services
             }
 
             string resolved = followsTheme ? ResolveFollowPlaybarTheme() : _currentPlaybarTheme;
-            _cachedPlaybarColors = resolved switch
-            {
-                "Neon Pulse" => new PlaybarColors(
-                    Color.FromArgb(40, 0, 255, 128),
-                    new[] {
-                        Color.FromArgb(180, 0, 180, 80),
-                        Color.FromArgb(220, 0, 255, 128),
-                        Color.FromArgb(255, 80, 255, 180)
-                    }, 2.5),
-                "Sunset Glow" => new PlaybarColors(
-                    Color.FromArgb(40, 255, 140, 50),
-                    new[] {
-                        Color.FromArgb(180, 200, 60, 20),
-                        Color.FromArgb(220, 255, 140, 50),
-                        Color.FromArgb(255, 255, 200, 100)
-                    }, 1.8),
-                "Purple Haze" => new PlaybarColors(
-                    Color.FromArgb(40, 160, 80, 220),
-                    new[] {
-                        Color.FromArgb(180, 100, 30, 160),
-                        Color.FromArgb(220, 160, 80, 220),
-                        Color.FromArgb(255, 200, 140, 255)
-                    }, 2.0),
-                "Minimal" => new PlaybarColors(
-                    Color.FromArgb(25, 128, 128, 128),
-                    new[] {
-                        Color.FromArgb(140, 100, 100, 100),
-                        Color.FromArgb(180, 160, 160, 160),
-                        Color.FromArgb(200, 200, 200, 200)
-                    }, 1.0),
-                "Golden Wave" => new PlaybarColors(
-                    Color.FromArgb(40, 212, 160, 23),
-                    new[] {
-                        Color.FromArgb(180, 160, 120, 10),
-                        Color.FromArgb(220, 212, 160, 23),
-                        Color.FromArgb(255, 255, 210, 80)
-                    }, 1.6),
-                "Emerald Wave" => new PlaybarColors(
-                    Color.FromArgb(40, 46, 204, 113),
-                    new[] {
-                        Color.FromArgb(180, 20, 140, 60),
-                        Color.FromArgb(220, 46, 204, 113),
-                        Color.FromArgb(255, 100, 240, 160)
-                    }, 2.0),
-                "Blurple Wave" => new PlaybarColors(
-                    Color.FromArgb(40, 88, 101, 242),
-                    new[] {
-                        Color.FromArgb(180, 60, 70, 180),
-                        Color.FromArgb(220, 88, 101, 242),
-                        Color.FromArgb(255, 140, 150, 255)
-                    }, 2.2),
-                "Crimson Wave" => new PlaybarColors(
-                    Color.FromArgb(40, 220, 20, 60),
-                    new[] {
-                        Color.FromArgb(180, 160, 10, 30),
-                        Color.FromArgb(220, 220, 20, 60),
-                        Color.FromArgb(255, 255, 80, 100)
-                    }, 1.8),
-                "Brown Wave" => new PlaybarColors(
-                    Color.FromArgb(40, 160, 110, 60),
-                    new[] {
-                        Color.FromArgb(180, 110, 70, 30),
-                        Color.FromArgb(220, 160, 110, 60),
-                        Color.FromArgb(255, 210, 170, 110)
-                    }, 1.4),
-                "Rainbow Bars" => new PlaybarColors(
-                    Color.FromArgb(40, 128, 128, 128),
-                    new[] {
-                        Color.FromArgb(200, 255, 50, 50),
-                        Color.FromArgb(200, 50, 255, 50),
-                        Color.FromArgb(200, 50, 50, 255)
-                    }, 2.0),
-                _ => new PlaybarColors( // Blue Fire (default)
-                    Color.FromArgb(40, 77, 168, 218),
-                    new[] {
-                        Color.FromArgb(180, 30, 120, 180),
-                        Color.FromArgb(220, 77, 168, 218),
-                        Color.FromArgb(255, 120, 200, 240)
-                    }, 1.5),
-            };
+            // Gradient values live in PlaybarPalettes in the shared core so the Avalonia
+            // front-end draws the same playbar; they were WPF-only before.
+            var palette = PlaybarPalettes.Get(resolved);
+            _cachedPlaybarColors = new PlaybarColors(
+                ToMediaColor(palette.BackgroundColor),
+                palette.ProgressGradient.Select(ToMediaColor).ToArray(),
+                palette.AnimationSpeed);
             return _cachedPlaybarColors;
         }
 
-        public static string GetMusicServiceUrl(string serviceName, string query)
-        {
-            string encoded = Uri.EscapeDataString(query);
-            string region = StreamingRegion?.ToLowerInvariant() ?? "us";
-            bool aware = RegionAwareSearchEnabled;
-
-            return serviceName switch
-            {
-                "Spotify" => $"https://open.spotify.com/search/{encoded}",
-                "YouTube Music" => $"https://music.youtube.com/search?q={encoded}",
-                "Tidal" => $"https://listen.tidal.com/search?q={encoded}",
-                "Qobuz" => aware
-                    ? $"https://www.qobuz.com/{GetQobuzRegion(region)}/search/tracks/{encoded}"
-                    : $"https://www.qobuz.com/us-en/search/tracks/{encoded}",
-                "Amazon Music" => aware
-                    ? $"https://music.amazon.{GetAmazonTld(region)}/search/{encoded}"
-                    : $"https://music.amazon.com/search/{encoded}",
-                "Apple Music" => aware && region != "us"
-                    ? $"https://music.apple.com/{region}/search?term={encoded}"
-                    : $"https://music.apple.com/us/search?term={encoded}",
-                "Deezer" => $"https://www.deezer.com/search/{encoded}",
-                "SoundCloud" => $"https://soundcloud.com/search?q={encoded}",
-                "Bandcamp" => $"https://bandcamp.com/search?q={encoded}",
-                "Last.fm" => $"https://www.last.fm/search?q={encoded}",
-                _ => $"https://www.google.com/search?q={encoded}"
-            };
-        }
-
-        private static string GetAmazonTld(string region)
-        {
-            return region switch
-            {
-                "uk" => "co.uk",
-                "jp" => "co.jp",
-                "au" => "com.au",
-                "br" => "com.br",
-                "mx" => "com.mx",
-                "in" => "in",
-                "ca" => "ca",
-                "de" => "de",
-                "fr" => "fr",
-                _ => "com"
-            };
-        }
-
-        private static string GetQobuzRegion(string region)
-        {
-            return region switch
-            {
-                "us" => "us-en",
-                "uk" => "uk-en",
-                "ca" => "ca-en",
-                "au" => "au-en",
-                "de" => "de-de",
-                "fr" => "fr-fr",
-                "jp" => "jp-ja",
-                "br" => "br-pt",
-                "mx" => "mx-es",
-                "in" => "in-en",
-                _ => "us-en"
-            };
-        }
+        // Region-aware store URLs are always on: the opposite just points the user at the
+        // wrong storefront. StreamingRegion is the real control.
+        public static string GetMusicServiceUrl(string serviceName, string query) =>
+            MusicServiceUrls.Build(serviceName, query, StreamingRegion, regionAware: true);
 
         /// <summary>
         /// Returns COLORREF (0x00BBGGRR) for the current theme's title bar caption color.
@@ -1110,7 +1126,12 @@ namespace AudioQualityChecker.Services
                 if (File.Exists(ThemeFile))
                     return File.ReadAllText(ThemeFile).Trim();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Falling through silently reverts the user's chosen theme to the default, which
+                // reads as "the app reset my theme" with nothing to diagnose.
+                if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
             return "Blurple";
         }
 
@@ -1121,7 +1142,11 @@ namespace AudioQualityChecker.Services
                 EnsureDir();
                 File.WriteAllText(ThemeFile, theme);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Write side of LoadSavedTheme: the theme applies now but is gone next launch.
+                if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
         }
 
         private static void EnsureDir()

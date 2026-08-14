@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using AudioQualityChecker.Services;
+using Microsoft.Win32;
 
 namespace AudioQualityChecker
 {
@@ -102,6 +105,203 @@ namespace AudioQualityChecker
                     EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
                 });
             }
+        }
+
+        // ─── Export ───
+
+        private void WrappedExport_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button b && b.ContextMenu != null)
+            {
+                b.ContextMenu.PlacementTarget = b;
+                b.ContextMenu.IsOpen = true;
+            }
+        }
+
+        private void WrappedExportPng_Click(object sender, RoutedEventArgs e)
+            => ExportRender(".png", "PNG image (*.png)|*.png",
+                c => WrappedExportService.RenderPng(c));
+
+        private void WrappedExportJpeg_Click(object sender, RoutedEventArgs e)
+            => ExportRender(".jpg", "JPEG image (*.jpg)|*.jpg",
+                c => WrappedExportService.RenderJpeg(c));
+
+        private void WrappedExportPdf_Click(object sender, RoutedEventArgs e)
+            => ExportRender(".pdf", "PDF document (*.pdf)|*.pdf",
+                c => WrappedExportService.RenderPdf(c));
+
+        private void WrappedExportCsv_Click(object sender, RoutedEventArgs e)
+            => ExportText(".csv", "CSV (*.csv)|*.csv", BuildWrappedCsv);
+
+        private void WrappedExportJson_Click(object sender, RoutedEventArgs e)
+            => ExportText(".json", "JSON (*.json)|*.json", BuildWrappedJson);
+
+        /// <summary>Renders the dashboard to bytes (with the corner buttons hidden) and saves it.</summary>
+        private void ExportRender(string ext, string filter, Func<WrappedExportService.Composition, byte[]> render)
+        {
+            if (WrappedOverlay.Visibility != Visibility.Visible || _wrappedSummary == null) return;
+            var dlg = new SaveFileDialog { Filter = filter, FileName = "AudioAuditor-Wrapped" + ext };
+            if (dlg.ShowDialog() != true) return;
+
+            var corners = new[] { WrappedResetButton, WrappedExportButton, WrappedCloseButton };
+            foreach (var c in corners) c.Visibility = Visibility.Hidden;
+
+            // TransformToAncestor on the columns grid bakes in the current scroll translation, so capture
+            // from the top and put the user's scroll position back afterwards.
+            double scrollBack = WrappedScroller.VerticalOffset;
+            WrappedScroller.ScrollToTop();
+            try
+            {
+                WrappedDashboardHost.UpdateLayout();
+                System.IO.File.WriteAllBytes(dlg.FileName, render(BuildWrappedComposition()));
+                StatusText.Text = $"Exported Wrapped → {System.IO.Path.GetFileName(dlg.FileName)}";
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.ShowWarning("Export Wrapped", $"Export failed: {ex.Message}", this);
+            }
+            finally
+            {
+                foreach (var c in corners) c.Visibility = Visibility.Visible;
+                WrappedScroller.ScrollToVerticalOffset(scrollBack);
+            }
+        }
+
+        /// <summary>
+        /// Lays out the three exportable pieces of the dashboard at absolute rects. The columns grid is
+        /// drawn at its full <see cref="FrameworkElement.ActualHeight"/> — the ScrollViewer measures it
+        /// with infinite height, so it is already arranged full-size and only clipped on screen — and the
+        /// footer slides down by however much the columns overflow the viewport.
+        /// </summary>
+        private WrappedExportService.Composition BuildWrappedComposition()
+        {
+            var host = WrappedDashboardHost;
+            var (canvasHeight, footerShift) = WrappedExportService.ExpandForFullContent(
+                host.ActualHeight, WrappedScroller.ViewportHeight, WrappedColumnsGrid.ActualHeight);
+
+            Rect RectOf(FrameworkElement el, double extraY = 0)
+            {
+                Point p = el.TransformToAncestor(host).Transform(new Point(0, 0));
+                return new Rect(p.X, p.Y + extraY, el.ActualWidth, el.ActualHeight);
+            }
+
+            return new WrappedExportService.Composition
+            {
+                Canvas = new Size(host.ActualWidth, canvasHeight),
+                Background = FindResource("WindowBg") as Brush ?? Brushes.Black,
+                Pieces =
+                {
+                    (WrappedHeaderPanel, RectOf(WrappedHeaderPanel)),
+                    (WrappedColumnsGrid, RectOf(WrappedColumnsGrid)),
+                    (WrappedFooterText, RectOf(WrappedFooterText, footerShift)),
+                }
+            };
+        }
+
+        private void ExportText(string ext, string filter, Func<string> build)
+        {
+            if (_wrappedSummary == null) return;
+            var dlg = new SaveFileDialog { Filter = filter, FileName = "AudioAuditor-Wrapped" + ext };
+            if (dlg.ShowDialog() != true) return;
+            try
+            {
+                System.IO.File.WriteAllText(dlg.FileName, build(), new UTF8Encoding(false));
+                StatusText.Text = $"Exported Wrapped → {System.IO.Path.GetFileName(dlg.FileName)}";
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.ShowWarning("Export Wrapped", $"Export failed: {ex.Message}", this);
+            }
+        }
+
+        private string BuildWrappedCsv()
+        {
+            var w = _wrappedSummary!;
+            var sb = new StringBuilder();
+            sb.AppendLine("Metric,Value");
+            void Row(string k, string v) => sb.AppendLine($"{CsvCell(k)},{CsvCell(v)}");
+
+            Row("Range", WrappedSubtitleText.Text);
+            Row("Files scanned", w.FilesScanned.ToString("N0"));
+            Row("Listening hours", w.Hours.ToString("F1"));
+            Row("Scan sessions", w.Sessions.ToString("N0"));
+            Row("Library size (GB)", w.LibraryGb.ToString("F1"));
+            Row("Total plays", w.TotalPlays.ToString("N0"));
+            Row("Unique artists", w.UniqueArtists.ToString("N0"));
+            Row("Unique albums", w.UniqueAlbums.ToString("N0"));
+            Row("Unique tracks", w.UniqueTracks.ToString("N0"));
+            Row("Avg bitrate", w.AvgBitrate);
+            Row("Avg LUFS", w.AvgLufs);
+            Row("Avg DR", w.AvgDr);
+            Row("DR rating", w.DrRating);
+            Row("Clipping count", w.ClippingCount.ToString("N0"));
+            Row("Lossless %", w.HasLosslessData ? w.LosslessPct.ToString("F0") : "");
+            Row("MQA count", w.MqaCount.ToString("N0"));
+            Row("Avg file size", w.AvgFileSize);
+            Row("Avg plays per track", w.AvgPlaysPerTrack);
+            Row("Audiophile rating", w.AudiophileRating);
+
+            void List(string title, List<(string Label, int Count)> items)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"{CsvCell(title)},Count");
+                foreach (var (label, count) in items) sb.AppendLine($"{CsvCell(label)},{count}");
+            }
+            List("Top formats", w.TopFormats);
+            List("Top artists", w.TopArtists);
+            List("Top albums", w.TopAlbums);
+            List("Top tracks", w.TopTracks);
+            List("Top sample rates", w.TopSampleRates);
+            List("Top bit depths", w.TopBitDepths);
+            List("Channels", w.TopChannels);
+            return sb.ToString();
+        }
+
+        private static string CsvCell(string value)
+        {
+            value ??= "";
+            return value.Contains(',') || value.Contains('"') || value.Contains('\n')
+                ? "\"" + value.Replace("\"", "\"\"") + "\""
+                : value;
+        }
+
+        private string BuildWrappedJson()
+        {
+            var w = _wrappedSummary!;
+            static List<object> Pairs(List<(string Label, int Count)> items)
+                => items.Select(i => (object)new { label = i.Label, count = i.Count }).ToList();
+
+            var model = new
+            {
+                range = WrappedSubtitleText.Text,
+                exportedAt = DateTime.Now.ToString("o"),
+                filesScanned = w.FilesScanned,
+                listeningHours = Math.Round(w.Hours, 2),
+                scanSessions = w.Sessions,
+                libraryGb = Math.Round(w.LibraryGb, 2),
+                totalPlays = w.TotalPlays,
+                uniqueArtists = w.UniqueArtists,
+                uniqueAlbums = w.UniqueAlbums,
+                uniqueTracks = w.UniqueTracks,
+                avgBitrate = w.AvgBitrate,
+                avgLufs = w.AvgLufs,
+                avgDr = w.AvgDr,
+                drRating = w.DrRating,
+                clippingCount = w.ClippingCount,
+                losslessPct = w.HasLosslessData ? w.LosslessPct : (double?)null,
+                mqaCount = w.MqaCount,
+                avgFileSize = w.AvgFileSize,
+                avgPlaysPerTrack = w.AvgPlaysPerTrack,
+                audiophileRating = w.AudiophileRating,
+                topFormats = Pairs(w.TopFormats),
+                topArtists = Pairs(w.TopArtists),
+                topAlbums = Pairs(w.TopAlbums),
+                topTracks = Pairs(w.TopTracks),
+                topSampleRates = Pairs(w.TopSampleRates),
+                topBitDepths = Pairs(w.TopBitDepths),
+                channels = Pairs(w.TopChannels),
+            };
+            return JsonSerializer.Serialize(model, new JsonSerializerOptions { WriteIndented = true });
         }
 
         // ─── Reset stats (themed in-overlay confirmation) ───

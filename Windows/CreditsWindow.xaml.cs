@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,13 +9,13 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Navigation;
+using AudioQualityChecker.Models;
 
 namespace AudioQualityChecker
 {
     /// <summary>
     /// Read-only "Open-Source Credits &amp; Licenses" viewer reached from Settings → About.
-    /// Lists the third-party libraries the desktop app ships with. Keep this list in sync
-    /// with the "Credits &amp; Acknowledgments" table in README.md.
+    /// Lists the third-party libraries the desktop app ships with (see <see cref="OpenSourceCredit"/>).
     /// </summary>
     public partial class CreditsWindow : Window
     {
@@ -23,47 +24,7 @@ namespace AudioQualityChecker
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
         private const int DWMWA_CAPTION_COLOR = 35;
 
-        private readonly record struct Credit(string Name, string By, string License, string Usage, string Url, string Notice);
-
-        // Shipped desktop runtime libraries only — mirrors README.md. (Build/test tooling,
-        // the web build, and experimental cross-platform builds are intentionally excluded.)
-        // Notice = the bundled license file name in the Third.Party.Notices folder beside the exe.
-        private static readonly Credit[] Credits =
-        {
-            new("NAudio", "Mark Heath", "MIT",
-                "Audio playback, waveform reading, the sample-provider pipeline, FFT analysis, crossfade mixing, and all audio I/O.",
-                "https://github.com/naudio/NAudio", "NAudio-LICENSE.txt"),
-            new("NAudio.Vorbis", "Andrew Ward", "MIT",
-                "OGG Vorbis audio file decoding and playback support.",
-                "https://github.com/naudio/Vorbis", "NAudio.Vorbis-LICENSE.txt"),
-            new("NLayer", "Mark Heath & Andrew Ward", "MIT",
-                "Pure-managed MPEG/MP3 decoder — enables MP3 analysis on Linux/macOS (and as a Windows fallback) where Media Foundation isn't available.",
-                "https://github.com/naudio/NLayer", "NLayer-LICENSE.txt"),
-            new("Concentus & Concentus.OggFile", "Logan Stromberg", "MIT / BSD",
-                "Pure managed Opus audio decoding for .opus file support.",
-                "https://github.com/lostromb/concentus", "Concentus-LICENSE.txt"),
-            new("TagLib#", "Mono Project", "LGPL-2.1",
-                "Reading and writing audio metadata tags across all supported formats (ID3v2, Xiph Comment, APEv2, M4A atoms).",
-                "https://github.com/mono/taglib-sharp", "TagLibSharp-LICENSE.txt"),
-            new("ClosedXML", "ClosedXML Contributors", "MIT",
-                "Excel workbook generation with styled cells, headers, and auto-fit columns.",
-                "https://github.com/ClosedXML/ClosedXML", "ClosedXML-LICENSE.txt"),
-            new("discord-rpc-csharp", "Lachee", "MIT",
-                "Discord Rich Presence client for showing playback status.",
-                "https://github.com/Lachee/discord-rpc-csharp", "discord-rpc-csharp-LICENSE.txt"),
-            new("SharpCompress", "Adam Hathcock", "MIT",
-                "Archive extraction support (ZIP, RAR, 7Z, TAR).",
-                "https://github.com/adamhathcock/sharpcompress", "SharpCompress-LICENSE.txt"),
-            new("System.Security.Cryptography.ProtectedData", "Microsoft", "MIT",
-                "DPAPI wrapper used to encrypt stored scrobbler credentials. Shipped as a NuGet package (part of the .NET runtime).",
-                "https://www.nuget.org/packages/System.Security.Cryptography.ProtectedData", "dotnet-runtime-LICENSE.txt"),
-            new(".NET 8", "Microsoft", "MIT",
-                "Application runtime.",
-                "https://github.com/dotnet/runtime", "dotnet-runtime-LICENSE.txt"),
-            new("WPF", "Microsoft", "MIT",
-                "UI framework — all windows, controls, data binding, styling, and rendering.",
-                "https://github.com/dotnet/wpf", "dotnet-wpf-LICENSE.txt"),
-        };
+        private static readonly OpenSourceCredit[] Credits = OpenSourceCredit.All;
 
         public CreditsWindow()
         {
@@ -105,7 +66,7 @@ namespace AudioQualityChecker
                 CreditsList.Items.Add(BuildCard(credit));
         }
 
-        private FrameworkElement BuildCard(Credit credit)
+        private FrameworkElement BuildCard(OpenSourceCredit credit)
         {
             var card = new Border
             {
@@ -210,7 +171,7 @@ namespace AudioQualityChecker
             var licenseBtn = new Button
             {
                 Content = "View license",
-                Tag = credit.Notice,
+                Tag = credit.NoticeFile,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Margin = new Thickness(8, 0, 0, 0),
@@ -233,23 +194,28 @@ namespace AudioQualityChecker
                 return;
             try
             {
-                string path = System.IO.Path.Combine(AppContext.BaseDirectory, "Third.Party.Notices", fileName);
-                if (System.IO.File.Exists(path))
+                var resourceInfo = Application.GetResourceStream(
+                    new Uri("Third.Party.Notices/" + fileName, UriKind.Relative));
+                if (resourceInfo == null)
                 {
-                    Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                    ErrorDialog.ShowInfo("AudioAuditor",
+                        "The bundled license file couldn't be found:\n" + fileName, this);
+                    return;
                 }
-                else
-                {
-                    MessageBox.Show(this,
-                        "The bundled license file couldn't be found:\n" + fileName,
-                        "AudioAuditor", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
+
+                // Resources are embedded in the exe, so copy to a temp file to open with the
+                // user's default text viewer.
+                string tempPath = Path.Combine(Path.GetTempPath(), fileName);
+                using (resourceInfo.Stream)
+                using (var fileStream = File.Create(tempPath))
+                    resourceInfo.Stream.CopyTo(fileStream);
+
+                Process.Start(new ProcessStartInfo(tempPath) { UseShellExecute = true });
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this,
-                    "Couldn't open the license file.\n" + ex.Message,
-                    "AudioAuditor", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ErrorDialog.ShowWarning("AudioAuditor",
+                    "Couldn't open the license file.\n" + ex.Message, this);
             }
         }
 
@@ -266,7 +232,7 @@ namespace AudioQualityChecker
         private void Header_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Left)
-                DragMove();
+                this.SafeDragMove();
         }
 
         private void Close_Click(object sender, RoutedEventArgs e) => Close();

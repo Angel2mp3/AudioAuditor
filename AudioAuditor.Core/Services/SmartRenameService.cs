@@ -32,6 +32,23 @@ public enum SmartRenameConflictBehavior
     AppendNumber
 }
 
+/// <summary>Optional whole-name case transform applied after the name is built.</summary>
+public enum SmartRenameNameCase
+{
+    None,
+    Lower,
+    Upper,
+    Title
+}
+
+/// <summary>Optional space/underscore normalization applied to the built name.</summary>
+public enum SmartRenameSpaceMode
+{
+    Keep,
+    Underscores,
+    Spaces
+}
+
 public enum SmartRenameConfidence
 {
     High,
@@ -63,6 +80,22 @@ public sealed class SmartRenameOptions
     public bool PreserveVersionInfo { get; set; } = true;
     public bool RenameCleanFiles { get; set; }
 
+    /// <summary>Zero-pad width applied to the {track} token (and {track2}/{track3} overrides). Minimum 1.</summary>
+    public int TrackPadWidth { get; set; } = 2;
+
+    /// <summary>Optional literal text to find in the generated name (case-insensitive) and replace.</summary>
+    public string FindText { get; set; } = "";
+
+    /// <summary>Replacement for <see cref="FindText"/>. Ignored when FindText is empty.</summary>
+    public string ReplaceText { get; set; } = "";
+
+    // ─── Optional name transforms (applied to the built file name, not folders/extension) ───
+    public SmartRenameNameCase NameCase { get; set; } = SmartRenameNameCase.None;
+    public SmartRenameSpaceMode SpaceMode { get; set; } = SmartRenameSpaceMode.Keep;
+
+    /// <summary>Strip "(feat. …)" / "ft." / "featuring …" segments from the generated name.</summary>
+    public bool StripFeaturing { get; set; }
+
     public static SmartRenameOptions CreateDefault() => new();
 }
 
@@ -82,36 +115,51 @@ public sealed class SmartRenamePreviewItem
 
 public static class SmartRenameService
 {
-    private static readonly Regex LeadingTrackRegex = new(
-        @"^\s*(?:disc\s*\d+\s*)?(?:track\s*)?(?<track>\d{1,3})\s*(?:[-._)]\s*)?",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    /// <summary>
+    /// Tag values read from disk, kept across preview rebuilds. Building a preview is cheap except
+    /// for the TagLib open per file, and the Batch Editor rebuilds on every keystroke in the pattern
+    /// box — without this, typing one character reopened every selected file on the UI thread.
+    /// Hold one per editor session; the tags can't change while the dialog owns them.
+    /// </summary>
+    public sealed class TagCache
+    {
+        private readonly Dictionary<string, RenameValues> _byPath = new(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly Regex DomainRegex = new(
-        @"(?ix)\b(?:https?://)?(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+(?:/\S*)?\b",
-        RegexOptions.Compiled);
+        internal RenameValues Get(AudioFileInfo file)
+        {
+            string key = file.FilePath ?? "";
+            if (key.Length > 0 && _byPath.TryGetValue(key, out var cached)) return cached;
 
-    private static readonly Regex JunkBracketRegex = new(
-        @"(?ix)[\[\(]\s*(?:official\s+audio|audio\s+only|lyrics?|lyric\s+video|320\s*kbps|256\s*kbps|192\s*kbps|128\s*kbps|mp3|flac|wav|ytmp3|youtube|download|free\s+download)\s*[\]\)]",
-        RegexOptions.Compiled);
+            var values = RenameValues.FromFile(file);
+            if (key.Length > 0) _byPath[key] = values;
+            return values;
+        }
 
-    private static readonly Regex LooseJunkRegex = new(
-        @"(?ix)\b(?:official\s+audio|audio\s+only|lyrics?|lyric\s+video|ytmp3|youtube\s+music|youtube|download|free\s+download|soundcloud|spotify|deezer|tidal|qobuz|bandcamp|mp3\s*download)\b",
-        RegexOptions.Compiled);
+        /// <summary>Drops cached values for one file (call after its tags are rewritten).</summary>
+        public void Invalidate(string filePath)
+        {
+            if (!string.IsNullOrEmpty(filePath)) _byPath.Remove(filePath);
+        }
+
+        public void Clear() => _byPath.Clear();
+    }
 
     public static IReadOnlyList<SmartRenamePreviewItem> BuildPreview(
         IReadOnlyList<AudioFileInfo> files,
         SmartRenameOptions options,
-        Func<string, bool>? targetExists = null)
+        Func<string, bool>? targetExists = null,
+        TagCache? tagCache = null)
     {
         options ??= SmartRenameOptions.CreateDefault();
         targetExists ??= File.Exists;
+        tagCache ??= new TagCache();
         var contexts = BuildAlbumContexts(files);
         var usedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<SmartRenamePreviewItem>(files.Count);
 
         foreach (var file in files)
         {
-            var preview = BuildItem(file, files, contexts, options);
+            var preview = BuildItem(file, files, contexts, options, tagCache);
             ResolveTarget(preview, options, usedTargets, targetExists);
             result.Add(preview);
         }
@@ -123,7 +171,8 @@ public static class SmartRenameService
         AudioFileInfo file,
         IReadOnlyList<AudioFileInfo> files,
         Dictionary<string, AlbumContext> contexts,
-        SmartRenameOptions options)
+        SmartRenameOptions options,
+        TagCache tagCache)
     {
         var currentName = Path.GetFileName(file.FilePath);
         if (string.IsNullOrWhiteSpace(currentName))
@@ -147,7 +196,7 @@ public static class SmartRenameService
             return preview;
         }
 
-        var values = RenameValues.FromFile(file);
+        var values = tagCache.Get(file).Clone();
         var parsed = ParseFilenameFallback(currentName, options);
         if (string.IsNullOrWhiteSpace(values.Title) && !string.IsNullOrWhiteSpace(parsed.Title))
         {
@@ -220,7 +269,12 @@ public static class SmartRenameService
             : SmartRenameConfidence.High;
         preview.IsSelected = preview.Confidence == SmartRenameConfidence.High;
 
-        if (!options.RenameCleanFiles && string.Equals(currentName, relativeTarget, StringComparison.OrdinalIgnoreCase))
+        // Compare file name to file name. relativeTarget carries directory segments once a folder
+        // mode is on, so comparing it whole never matched and every already-clean file was proposed
+        // for a rename. A folder move is still a real change, so it has to keep its own check.
+        bool sameName = string.Equals(currentName, Path.GetFileName(relativeTarget), StringComparison.OrdinalIgnoreCase);
+        bool samePlace = string.Equals(preview.TargetPath, file.FilePath, StringComparison.OrdinalIgnoreCase);
+        if (!options.RenameCleanFiles && sameName && samePlace)
         {
             preview.Confidence = SmartRenameConfidence.Skip;
             preview.IsSelected = false;
@@ -283,19 +337,59 @@ public static class SmartRenameService
 
     private static string BuildBaseName(RenameValues values, AlbumContext context, SmartRenameOptions options)
     {
+        int pad = Math.Max(1, options.TrackPadWidth);
         string track = values.TrackNumber > 0
-            ? values.TrackNumber.ToString("D2", CultureInfo.InvariantCulture)
+            ? values.TrackNumber.ToString("D" + pad.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture)
             : "";
 
-        return options.Style switch
+        string baseName = options.Style switch
         {
             SmartRenameStyle.ArtistTitle => JoinParts(" - ", values.Artist, values.Title),
             SmartRenameStyle.TitleArtist => JoinParts(" - ", values.Title, values.Artist),
             SmartRenameStyle.TrackArtistTitle => JoinParts(" - ", track, values.Artist, values.Title),
             SmartRenameStyle.AlbumArtistTitle => JoinParts(" - ", values.Album, values.Artist, values.Title),
-            SmartRenameStyle.Custom => ApplyPattern(options.CustomPattern, values),
+            SmartRenameStyle.Custom => ApplyPattern(options.CustomPattern, values, options),
             _ => BuildAlbumSafeName(values, context, options, track)
         };
+
+        return ApplyTransforms(ApplyFindReplace(baseName, options), options);
+    }
+
+    private static string ApplyFindReplace(string value, SmartRenameOptions options)
+    {
+        if (string.IsNullOrEmpty(options.FindText))
+            return value;
+        return value.Replace(options.FindText, options.ReplaceText ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly Regex FeaturingRegex = new(
+        @"(?ix)\s*[\(\[]?\s*(feat\.?|ft\.?|featuring)\b[^)\]\-]*[\)\]]?",
+        RegexOptions.Compiled);
+
+    /// <summary>Applies the optional whole-name transforms (strip-feat, case, space mode).</summary>
+    private static string ApplyTransforms(string value, SmartRenameOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return value;
+
+        if (options.StripFeaturing)
+            value = FeaturingRegex.Replace(value, " ");
+
+        value = options.NameCase switch
+        {
+            SmartRenameNameCase.Lower => value.ToLowerInvariant(),
+            SmartRenameNameCase.Upper => value.ToUpperInvariant(),
+            SmartRenameNameCase.Title => CultureInfo.CurrentCulture.TextInfo.ToTitleCase(value.ToLowerInvariant()),
+            _ => value
+        };
+
+        value = options.SpaceMode switch
+        {
+            SmartRenameSpaceMode.Underscores => value.Replace(' ', '_'),
+            SmartRenameSpaceMode.Spaces => value.Replace('_', ' '),
+            _ => value
+        };
+
+        return value.Trim();
     }
 
     private static string BuildAlbumSafeName(RenameValues values, AlbumContext context, SmartRenameOptions options, string track)
@@ -318,7 +412,7 @@ public static class SmartRenameService
         {
             SmartRenameFolderMode.ArtistAlbum => Path.Combine(SanitizePathSegment(values.Artist, "Unknown Artist"), SanitizePathSegment(values.Album, "Unknown Album"), fileName),
             SmartRenameFolderMode.Album => Path.Combine(SanitizePathSegment(values.Album, "Unknown Album"), fileName),
-            SmartRenameFolderMode.Custom => Path.Combine(SanitizeRelativeFolder(ApplyPattern(options.CustomFolderPattern, values)), fileName),
+            SmartRenameFolderMode.Custom => Path.Combine(SanitizeRelativeFolder(ApplyPattern(options.CustomFolderPattern, values, options)), fileName),
             _ => fileName
         };
     }
@@ -337,64 +431,13 @@ public static class SmartRenameService
 
     private static ParsedFilename ParseFilenameFallback(string fileName, SmartRenameOptions options)
     {
-        string name = Path.GetFileNameWithoutExtension(fileName);
-        string original = name;
-        name = name.Replace('_', ' ')
-                   .Replace('|', '-')
-                   .Replace('–', '-')
-                   .Replace('—', '-');
-
-        int trackNumber = 0;
-        var trackMatch = LeadingTrackRegex.Match(name);
-        if (trackMatch.Success)
-        {
-            _ = int.TryParse(trackMatch.Groups["track"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out trackNumber);
-            name = name[trackMatch.Length..];
-        }
-
-        name = DomainRegex.Replace(name, " ");
-        name = JunkBracketRegex.Replace(name, " ");
-        name = LooseJunkRegex.Replace(name, " ");
-        name = Regex.Replace(name, @"\b\d{2,4}\s*kbps\b", " ", RegexOptions.IgnoreCase);
-        name = Regex.Replace(name, @"\s+", " ").Trim(' ', '-', '.', '_');
-        if (trackNumber <= 0)
-        {
-            trackMatch = LeadingTrackRegex.Match(name);
-            if (trackMatch.Success)
-            {
-                _ = int.TryParse(trackMatch.Groups["track"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out trackNumber);
-                name = name[trackMatch.Length..].Trim(' ', '-', '.', '_');
-            }
-        }
-
-        var parts = name.Split('-', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        string artist = "";
-        string title = "";
-
-        if (parts.Length >= 3)
-        {
-            artist = parts[^2];
-            title = parts[^1];
-        }
-        else if (parts.Length == 2)
-        {
-            artist = parts[0];
-            title = parts[1];
-        }
-        else if (parts.Length == 1)
-        {
-            title = parts[0];
-        }
-
-        artist = CleanRepeatedWhitespace(artist);
-        title = CleanRepeatedWhitespace(title);
-
+        var parsed = FilenameMetadataParser.Parse(fileName);
         return new ParsedFilename
         {
-            Artist = artist,
-            Title = title,
-            TrackNumber = trackNumber,
-            JunkRemoved = !string.Equals(original, name, StringComparison.Ordinal)
+            Artist = parsed.Artist,
+            Title = parsed.Title,
+            TrackNumber = parsed.TrackNumber,
+            JunkRemoved = parsed.JunkRemoved
         };
     }
 
@@ -421,16 +464,62 @@ public static class SmartRenameService
                || (options.Style == SmartRenameStyle.AlbumSafe && !context.IsAlbumGroup);
     }
 
-    private static string ApplyPattern(string pattern, RenameValues values)
+    private static readonly Regex TokenRegex = new(
+        @"\{(?<name>[a-zA-Z][a-zA-Z0-9]*)(?::(?<mod>[a-zA-Z0-9]+))?\}",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Expands tokens in a rename pattern. Supports {artist} {title} {album} {albumartist}
+    /// {year} {track} {track2}/{track3}/... (zero-pad width) {disc} {genre}, plus a case modifier
+    /// suffix: {title:upper}, {title:lower}, {title:title}.
+    /// </summary>
+    private static string ApplyPattern(string pattern, RenameValues values, SmartRenameOptions options)
     {
-        return (pattern ?? "")
-            .Replace("{artist}", values.Artist, StringComparison.OrdinalIgnoreCase)
-            .Replace("{title}", values.Title, StringComparison.OrdinalIgnoreCase)
-            .Replace("{album}", values.Album, StringComparison.OrdinalIgnoreCase)
-            .Replace("{albumArtist}", values.AlbumArtist, StringComparison.OrdinalIgnoreCase)
-            .Replace("{year}", values.Year > 0 ? values.Year.ToString(CultureInfo.InvariantCulture) : "", StringComparison.OrdinalIgnoreCase)
-            .Replace("{track}", values.TrackNumber > 0 ? values.TrackNumber.ToString("D2", CultureInfo.InvariantCulture) : "", StringComparison.OrdinalIgnoreCase)
-            .Replace("{disc}", values.DiscNumber > 0 ? values.DiscNumber.ToString(CultureInfo.InvariantCulture) : "", StringComparison.OrdinalIgnoreCase);
+        int defaultPad = Math.Max(1, options.TrackPadWidth);
+
+        return TokenRegex.Replace(pattern ?? "", match =>
+        {
+            string name = match.Groups["name"].Value.ToLowerInvariant();
+            string mod = match.Groups["mod"].Success ? match.Groups["mod"].Value.ToLowerInvariant() : "";
+
+            // {track2}, {track3} => explicit pad width; {track} => default pad width.
+            if (name.StartsWith("track", StringComparison.Ordinal))
+            {
+                int pad = defaultPad;
+                string suffix = name["track".Length..];
+                if (suffix.Length > 0 && int.TryParse(suffix, NumberStyles.Integer, CultureInfo.InvariantCulture, out var w) && w > 0)
+                    pad = w;
+                return values.TrackNumber > 0
+                    ? values.TrackNumber.ToString("D" + pad.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture)
+                    : "";
+            }
+
+            string value = name switch
+            {
+                "artist" => values.Artist,
+                "title" => values.Title,
+                "album" => values.Album,
+                "albumartist" => values.AlbumArtist,
+                "year" => values.Year > 0 ? values.Year.ToString(CultureInfo.InvariantCulture) : "",
+                "disc" => values.DiscNumber > 0 ? values.DiscNumber.ToString(CultureInfo.InvariantCulture) : "",
+                "genre" => values.Genre,
+                _ => match.Value // unknown token: leave as-is
+            };
+
+            return ApplyCaseModifier(value, mod);
+        });
+    }
+
+    private static string ApplyCaseModifier(string value, string mod)
+    {
+        if (string.IsNullOrEmpty(value) || string.IsNullOrEmpty(mod)) return value;
+        return mod switch
+        {
+            "upper" => value.ToUpperInvariant(),
+            "lower" => value.ToLowerInvariant(),
+            "title" => CultureInfo.CurrentCulture.TextInfo.ToTitleCase(value.ToLowerInvariant()),
+            _ => value
+        };
     }
 
     private static string JoinParts(string separator, params string[] parts)
@@ -463,26 +552,28 @@ public static class SmartRenameService
         return Path.Combine(parts.ToArray());
     }
 
-    private static string CleanRepeatedWhitespace(string value)
-    {
-        return Regex.Replace(value ?? "", @"\s+", " ").Trim();
-    }
-
     private static string Normalize(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "";
         return new string(value.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
     }
 
-    private sealed class RenameValues
+    internal sealed class RenameValues
     {
         public string Title { get; set; } = "";
         public string Artist { get; set; } = "";
         public string Album { get; set; } = "";
         public string AlbumArtist { get; set; } = "";
+        public string Genre { get; set; } = "";
         public int TrackNumber { get; set; }
         public int DiscNumber { get; set; }
         public int Year { get; set; }
+
+        /// <summary>
+        /// Per-file working copy. BuildItem fills blanks in from the filename, and the cached
+        /// instance has to stay as it was read from disk.
+        /// </summary>
+        public RenameValues Clone() => (RenameValues)MemberwiseClone();
 
         public static RenameValues FromFile(AudioFileInfo file)
         {
@@ -503,6 +594,7 @@ public static class SmartRenameService
                     values.Artist = First(values.Artist, string.Join("; ", tagFile.Tag.Performers));
                     values.Album = First(values.Album, tagFile.Tag.Album);
                     values.AlbumArtist = string.Join("; ", tagFile.Tag.AlbumArtists);
+                    values.Genre = tagFile.Tag.FirstGenre ?? "";
                     values.TrackNumber = values.TrackNumber > 0 ? values.TrackNumber : (int)tagFile.Tag.Track;
                     values.DiscNumber = (int)tagFile.Tag.Disc;
                     values.Year = (int)tagFile.Tag.Year;

@@ -331,7 +331,7 @@ public static class LyricService
     private static readonly HttpClient Http = new()
     {
         Timeout = TimeSpan.FromSeconds(8),
-        DefaultRequestHeaders = { { "User-Agent", "AudioAuditor/1.5 (https://github.com)" } }
+        DefaultRequestHeaders = { { "User-Agent", AppVersion.UserAgent("lyrics") } }
     };
 
     /// <summary>Synchronous lyrics fetch (local sources only).</summary>

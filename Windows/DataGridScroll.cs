@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -18,6 +19,11 @@ namespace AudioQualityChecker
         private bool _fileGridRestoringHorizontalScrollAnchor;
 
         private DispatcherTimer? _columnLayoutSaveTimer;
+
+        // DependencyPropertyDescriptor.AddValueChanged registers in a process-wide static table and
+        // is never released automatically — it roots every column and, through the handler closure,
+        // this window. Kept so UnhookColumnLayoutPersistence can undo it on close.
+        private EventHandler? _columnLayoutChangedHandler;
 
         /// <summary>
         /// Persists column order/width whenever the user reorders or resizes a column.
@@ -42,16 +48,36 @@ namespace AudioQualityChecker
 
             // DataGridColumn does NOT implement INotifyPropertyChanged, so observe the
             // Width and DisplayIndex dependency properties via descriptors instead.
-            var widthDesc = System.ComponentModel.DependencyPropertyDescriptor
-                .FromProperty(DataGridColumn.WidthProperty, typeof(DataGridColumn));
-            var indexDesc = System.ComponentModel.DependencyPropertyDescriptor
-                .FromProperty(DataGridColumn.DisplayIndexProperty, typeof(DataGridColumn));
-            EventHandler onChanged = (_, _) => QueueColumnLayoutSave();
+            _columnLayoutChangedHandler = (_, _) => QueueColumnLayoutSave();
             foreach (var col in FileGrid.Columns)
             {
-                widthDesc?.AddValueChanged(col, onChanged);
-                indexDesc?.AddValueChanged(col, onChanged);
+                ColumnWidthDescriptor?.AddValueChanged(col, _columnLayoutChangedHandler);
+                ColumnIndexDescriptor?.AddValueChanged(col, _columnLayoutChangedHandler);
             }
+        }
+
+        private static System.ComponentModel.DependencyPropertyDescriptor? ColumnWidthDescriptor =>
+            System.ComponentModel.DependencyPropertyDescriptor
+                .FromProperty(DataGridColumn.WidthProperty, typeof(DataGridColumn));
+
+        private static System.ComponentModel.DependencyPropertyDescriptor? ColumnIndexDescriptor =>
+            System.ComponentModel.DependencyPropertyDescriptor
+                .FromProperty(DataGridColumn.DisplayIndexProperty, typeof(DataGridColumn));
+
+        /// <summary>
+        /// Releases the descriptor subscriptions taken in <see cref="HookColumnLayoutPersistence"/>.
+        /// Without this the static descriptor table keeps the columns — and this window — alive for
+        /// the life of the process.
+        /// </summary>
+        private void UnhookColumnLayoutPersistence()
+        {
+            if (_columnLayoutChangedHandler == null) return;
+            foreach (var col in FileGrid.Columns)
+            {
+                ColumnWidthDescriptor?.RemoveValueChanged(col, _columnLayoutChangedHandler);
+                ColumnIndexDescriptor?.RemoveValueChanged(col, _columnLayoutChangedHandler);
+            }
+            _columnLayoutChangedHandler = null;
         }
 
         private void QueueColumnLayoutSave()
@@ -65,15 +91,9 @@ namespace AudioQualityChecker
         {
             try
             {
-                var parts = new List<string>();
-                foreach (var col in FileGrid.Columns)
-                {
-                    string header = col.Header?.ToString() ?? "";
-                    int displayIndex = col.DisplayIndex;
-                    double width = col.ActualWidth;
-                    parts.Add($"{header}:{displayIndex}:{width:F0}");
-                }
-                ThemeManager.ColumnLayout = string.Join("|", parts);
+                ThemeManager.ColumnLayout = FormatColumnLayout(
+                    FileGrid.Columns.Select(col =>
+                        (col.Header?.ToString() ?? "", col.DisplayIndex, col.ActualWidth)));
                 ThemeManager.SavePlayOptions();
             }
             catch (Exception ex)
@@ -84,26 +104,57 @@ namespace AudioQualityChecker
             }
         }
 
+        /// <summary>
+        /// Parses the persisted ColumnLayout string into header → (display index, width).
+        /// Split out from <see cref="RestoreColumnLayout"/> so the format — which round-trips
+        /// through options.txt and has already been broken once by a field-shift bug — is
+        /// covered by unit tests without needing a live DataGrid.
+        /// </summary>
+        internal static Dictionary<string, (int DisplayIndex, double Width)> ParseColumnLayout(string? layout)
+        {
+            var layoutMap = new Dictionary<string, (int DisplayIndex, double Width)>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(layout)) return layoutMap;
+
+            foreach (var entry in layout.Split('|', StringSplitOptions.RemoveEmptyEntries))
+            {
+                // Split from the RIGHT: the last two fields are displayIndex and width, so a
+                // header containing ':' stays intact. Splitting left-to-right on fixed indices
+                // shifted the fields and silently dropped that column's saved layout — and the
+                // user's chosen widths/order must never be lost to a parse quirk.
+                int widthSep = entry.LastIndexOf(':');
+                if (widthSep <= 0) continue;
+                int indexSep = entry.LastIndexOf(':', widthSep - 1);
+                if (indexSep <= 0) continue;
+
+                string header = entry[..indexSep];
+                if (int.TryParse(entry[(indexSep + 1)..widthSep], NumberStyles.Integer, CultureInfo.InvariantCulture, out int di) &&
+                    double.TryParse(entry[(widthSep + 1)..], NumberStyles.Float, CultureInfo.InvariantCulture, out double w))
+                {
+                    layoutMap[header] = (di, w);
+                }
+            }
+            return layoutMap;
+        }
+
+        /// <summary>Builds the persisted ColumnLayout string. Inverse of <see cref="ParseColumnLayout"/>.</summary>
+        internal static string FormatColumnLayout(IEnumerable<(string Header, int DisplayIndex, double Width)> columns)
+        {
+            var parts = new List<string>();
+            foreach (var (header, displayIndex, width) in columns)
+            {
+                // Invariant on BOTH sides — this string lands in options.txt, where every other
+                // numeric value is invariant. F0 emits no separator today, so the asymmetry was
+                // latent rather than broken; it stops being latent the moment the format changes.
+                parts.Add(string.Format(CultureInfo.InvariantCulture, "{0}:{1}:{2:F0}", header, displayIndex, width));
+            }
+            return string.Join("|", parts);
+        }
+
         private void RestoreColumnLayout()
         {
             try
             {
-                string layout = ThemeManager.ColumnLayout;
-                if (string.IsNullOrEmpty(layout)) return;
-
-                var entries = layout.Split('|', StringSplitOptions.RemoveEmptyEntries);
-                var layoutMap = new Dictionary<string, (int DisplayIndex, double Width)>(StringComparer.OrdinalIgnoreCase);
-                foreach (var entry in entries)
-                {
-                    var parts = entry.Split(':');
-                    if (parts.Length >= 3 &&
-                        int.TryParse(parts[1], out int di) &&
-                        double.TryParse(parts[2], out double w))
-                    {
-                        layoutMap[parts[0]] = (di, w);
-                    }
-                }
-
+                var layoutMap = ParseColumnLayout(ThemeManager.ColumnLayout);
                 if (layoutMap.Count == 0) return;
 
                 foreach (var col in FileGrid.Columns)
@@ -141,12 +192,13 @@ namespace AudioQualityChecker
                 return !string.IsNullOrWhiteSpace(header) && !hidden.Contains(header);
             });
 
+            // Too few columns left to use the grid: drop the session-only hides and fall back to
+            // the persisted set. GetHiddenColumnSet() already applies the same "unusable → back to
+            // defaults" rule on its own copy, so the fallback happens without touching
+            // ThemeManager.HiddenColumns — a transient bad state must never be written to disk.
             if (visibleCount < 4)
             {
                 _sessionHiddenColumns.Clear();
-                ThemeManager.HiddenColumns = "";
-                ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
-                ThemeManager.SavePlayOptions();
                 hidden = ThemeManager.GetHiddenColumnSet();
             }
 

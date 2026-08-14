@@ -15,7 +15,28 @@ namespace AudioQualityChecker.Services
     {
         private SystemMediaTransportControls? _smtc;
         private bool _disposed;
+        private bool _enabled = true;
         private static readonly Guid _sessionGuid = Guid.NewGuid();
+
+        /// <summary>
+        /// When false, the SMTC session is switched off (IsEnabled=false) so AudioAuditor
+        /// disappears from the OS media session — and from Pano Scrobbler. All publish calls
+        /// no-op while disabled. Toggling back on re-enables the session; the next track update
+        /// re-populates it.
+        /// </summary>
+        public bool Enabled
+        {
+            get => _enabled;
+            set
+            {
+                _enabled = value;
+                if (_smtc != null)
+                {
+                    _smtc.IsEnabled = value;
+                    if (!value) _smtc.PlaybackStatus = MediaPlaybackStatus.Closed;
+                }
+            }
+        }
 
         public event EventHandler? PlayRequested;
         public event EventHandler? PauseRequested;
@@ -36,7 +57,7 @@ namespace AudioQualityChecker.Services
                 GetSmtcForWindow(hwnd, ref guid, out object result);
                 _smtc = (SystemMediaTransportControls)result;
 
-                _smtc.IsEnabled = true;
+                _smtc.IsEnabled = _enabled;
                 _smtc.IsPlayEnabled = true;
                 _smtc.IsPauseEnabled = true;
                 _smtc.IsNextEnabled = true;
@@ -75,7 +96,7 @@ namespace AudioQualityChecker.Services
 
         public void UpdatePlaybackState(bool isPlaying, bool isPaused)
         {
-            if (_smtc == null) return;
+            if (_smtc == null || !_enabled) return;
             if (isPlaying)
                 _smtc.PlaybackStatus = MediaPlaybackStatus.Playing;
             else if (isPaused)
@@ -84,9 +105,35 @@ namespace AudioQualityChecker.Services
                 _smtc.PlaybackStatus = MediaPlaybackStatus.Stopped;
         }
 
+        /// <summary>
+        /// Publishes the current playback timeline (length + position) to SMTC. Pano Scrobbler
+        /// desktop and other consumers need this to compute scrobble thresholds and draw a moving
+        /// seek bar — without it the session looks "static" and never scrobbles. Cheap; safe to
+        /// call ~once a second from the playback tick. Durations are clamped to non-negative.
+        /// </summary>
+        public void UpdateTimeline(double positionSec, double durationSec)
+        {
+            if (_smtc == null || !_enabled) return;
+            if (durationSec <= 0) return;
+
+            double pos = Math.Clamp(positionSec, 0, durationSec);
+            try
+            {
+                _smtc.UpdateTimelineProperties(new SystemMediaTransportControlsTimelineProperties
+                {
+                    StartTime = TimeSpan.Zero,
+                    MinSeekTime = TimeSpan.Zero,
+                    Position = TimeSpan.FromSeconds(pos),
+                    MaxSeekTime = TimeSpan.FromSeconds(durationSec),
+                    EndTime = TimeSpan.FromSeconds(durationSec)
+                });
+            }
+            catch { /* timeline is best-effort */ }
+        }
+
         public async Task UpdateNowPlaying(string? artist, string? title, string? albumCoverPath)
         {
-            if (_smtc == null) return;
+            if (_smtc == null || !_enabled) return;
 
             var updater = _smtc.DisplayUpdater;
             updater.Type = MediaPlaybackType.Music;
@@ -113,7 +160,7 @@ namespace AudioQualityChecker.Services
 
         public void UpdateNowPlayingFromTags(string filePath)
         {
-            if (_smtc == null) return;
+            if (_smtc == null || !_enabled) return;
 
             // Tag parsing + extracting/writing the (often multi-MB) embedded cover art is real
             // disk I/O. It used to run on the UI thread at the exact moment of a track transition,

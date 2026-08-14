@@ -177,11 +177,12 @@ namespace AudioQualityChecker
             var selected = ThemeCombo.SelectedItem as string ?? CustomThemeNameBox.Text;
             if (ThemeManager.AvailableThemes.Contains(selected))
             {
-                MessageBox.Show("Built-in themes cannot be deleted.", "Custom Themes", MessageBoxButton.OK, MessageBoxImage.Information);
+                ErrorDialog.ShowInfo("Custom Themes", "Built-in themes cannot be deleted.", this);
                 return;
             }
 
-            if (MessageBox.Show($"Delete custom theme \"{selected}\"?", "Custom Themes", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            if (!ErrorDialog.Confirm("Custom Themes", $"Delete custom theme \"{selected}\"?", this,
+                    confirmLabel: "Delete", severity: AlertSeverity.Warning))
                 return;
 
             CustomThemeStore.DeleteTheme(selected);
@@ -215,7 +216,7 @@ namespace AudioQualityChecker
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not import theme: {ex.Message}", "Custom Themes", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ErrorDialog.ShowWarning("Custom Themes", $"Could not import theme: {ex.Message}", this);
             }
         }
 
@@ -236,7 +237,7 @@ namespace AudioQualityChecker
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not export theme: {ex.Message}", "Custom Themes", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ErrorDialog.ShowWarning("Custom Themes", $"Could not export theme: {ex.Message}", this);
             }
         }
     }

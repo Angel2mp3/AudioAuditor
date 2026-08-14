@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Net.Http;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
@@ -13,11 +12,67 @@ namespace AudioQualityChecker.Services
     {
         private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
         private const string LatestReleaseUrl = "https://api.github.com/repos/Angel2mp3/AudioAuditor/releases/latest";
+        private const long MaxUpdateBytes = 512L * 1024 * 1024;
 
         public static string? LatestVersion { get; private set; }
         public static string? ReleaseUrl { get; private set; }
         public static string? LatestDownloadUrl { get; private set; }
         public static string? LatestSha256Url { get; private set; }
+
+        private const string RepoPrefix = "https://github.com/Angel2mp3/AudioAuditor/";
+
+        /// <summary>
+        /// Release assets must come from GitHub over HTTPS. The API response is untrusted input,
+        /// so an attacker who can influence it must not be able to point the downloader — or the
+        /// hash it is checked against — at a host of their choosing.
+        /// </summary>
+        internal static bool IsTrustedAssetUrl(string? url) =>
+            Uri.TryCreate(url, UriKind.Absolute, out var u)
+            && u.Scheme == Uri.UriSchemeHttps
+            && (u.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+             || u.Host.Equals("objects.githubusercontent.com", StringComparison.OrdinalIgnoreCase)
+             || u.Host.Equals("release-assets.githubusercontent.com", StringComparison.OrdinalIgnoreCase));
+
+        internal static bool IsTrustedReleaseAssetUrl(string? url) =>
+            Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps
+            && uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+            && uri.AbsolutePath.StartsWith(
+                "/Angel2mp3/AudioAuditor/releases/download/", StringComparison.OrdinalIgnoreCase);
+
+        internal static bool TryParseSha256(string? content, out string hash)
+        {
+            hash = "";
+            if (string.IsNullOrWhiteSpace(content)) return false;
+
+            var parts = content.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length is < 1 or > 2 || parts[0].Length != 64) return false;
+            if (parts[0].Any(c => !Uri.IsHexDigit(c))) return false;
+            if (parts.Length == 2 && !parts[1].Equals("AudioAuditor.exe", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            hash = parts[0].ToUpperInvariant();
+            return true;
+        }
+
+        /// <summary>
+        /// Reads a response body but abandons it past <paramref name="maxBytes"/>, so a hostile or
+        /// broken endpoint cannot stream an unbounded amount into memory.
+        /// </summary>
+        private static async Task<string?> ReadCappedAsync(HttpContent content, int maxBytes, CancellationToken ct)
+        {
+            using var stream = await content.ReadAsStreamAsync(ct);
+            var buffer = new byte[maxBytes + 1];
+            int total = 0;
+            while (total < buffer.Length)
+            {
+                int read = await stream.ReadAsync(buffer.AsMemory(total, buffer.Length - total), ct);
+                if (read == 0) break;
+                total += read;
+            }
+            if (total > maxBytes) return null; // over the cap — treat as untrustworthy
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, total);
+        }
 
         /// <summary>
         /// Silently checks GitHub for the latest release. Returns true if a newer version is available.
@@ -33,7 +88,9 @@ namespace AudioQualityChecker.Services
                 using var response = await _http.SendAsync(request);
                 if (!response.IsSuccessStatusCode) return false;
 
-                var json = await response.Content.ReadAsStringAsync();
+                // The release JSON is a few KB; anything far past that is not a release listing.
+                var json = await ReadCappedAsync(response.Content, 512 * 1024, CancellationToken.None);
+                if (json == null) return false;
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
@@ -44,12 +101,11 @@ namespace AudioQualityChecker.Services
 
                 LatestVersion = latest;
 
-                // Validate response origin and session context before applying update info
+                // The release page link is opened in the user's browser, so it must actually point
+                // at this repository rather than wherever the response says.
                 string resolvedUrl = root.TryGetProperty("html_url", out var urlEl) ? urlEl.GetString() ?? "" : "";
-                if (!ValidateResponseContext(resolvedUrl))
-                {
-                    resolvedUrl = "https://github.com/Angel2mp3/AudioAuditor/releases";
-                }
+                if (!resolvedUrl.StartsWith(RepoPrefix, StringComparison.OrdinalIgnoreCase))
+                    resolvedUrl = RepoPrefix + "releases";
                 ReleaseUrl = resolvedUrl;
 
                 // Find asset download URLs
@@ -73,6 +129,17 @@ namespace AudioQualityChecker.Services
                     }
                 }
 
+                // Both the binary and the hash it is checked against arrive in this same response,
+                // so the hash alone proves nothing about origin. Requiring both to be GitHub-hosted
+                // is what keeps the pair anchored. If either fails, drop both and fall back to
+                // sending the user to the release page instead of downloading anything.
+                if (!IsTrustedReleaseAssetUrl(LatestDownloadUrl) ||
+                    !IsTrustedReleaseAssetUrl(LatestSha256Url))
+                {
+                    LatestDownloadUrl = null;
+                    LatestSha256Url = null;
+                }
+
                 return IsNewer(latest, currentVersion);
             }
             catch
@@ -82,58 +149,33 @@ namespace AudioQualityChecker.Services
         }
 
         /// <summary>
-        /// Validates that the API response context is consistent with the expected
-        /// release channel. Prevents stale cache or redirect issues.
-        /// </summary>
-        private static bool ValidateResponseContext(string responseUrl)
-        {
-            try
-            {
-                // Quick session context check — ensures update channel hasn't been redirected
-                var asm = typeof(UpdateChecker).Assembly;
-                var asmName = asm.GetName().Name ?? "";
-
-                // Only validate for official release channel builds
-                char[] channelId = { 'A','u','d','i','o','A','u','d','i','t','o','r' };
-                if (asmName.IndexOf(new string(channelId), StringComparison.OrdinalIgnoreCase) < 0)
-                    return true; // non-official channel — skip validation
-
-                // Verify release channel modules are present
-                string svcNs = new string(new[] { 'A','u','d','i','o','Q','u','a','l','i','t','y',
-                    'C','h','e','c','k','e','r' }) + "." + new string(new[] { 'S','e','r','v','i','c','e','s' });
-                var verifier = asm.GetType(svcNs + "." + new string(new[] {
-                    'I','n','t','e','g','r','i','t','y','V','e','r','i','f','i','e','r' }));
-                var diag = asm.GetType(svcNs + "." + new string(new[] {
-                    'D','i','a','g','n','o','s','t','i','c','C','o','n','t','e','x','t' }));
-
-                return verifier != null && diag != null;
-            }
-            catch
-            {
-                return false; // fail closed — redirect to official page on any validation error
-            }
-        }
-
-        /// <summary>
         /// Downloads the update .exe to the specified path, reporting progress (0.0–1.0).
         /// </summary>
         public static async Task<bool> DownloadAssetAsync(string destPath, IProgress<double>? progress, CancellationToken ct = default)
         {
-            if (string.IsNullOrEmpty(LatestDownloadUrl)) return false;
+            if (!IsTrustedReleaseAssetUrl(LatestDownloadUrl)) return false;
             try
             {
                 using var response = await _http.GetAsync(LatestDownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
                 if (!response.IsSuccessStatusCode) return false;
 
+                // GitHub redirects release assets to its CDN, and redirects are followed
+                // automatically — so the host that actually served this has to be checked too,
+                // not just the one that was requested.
+                if (!IsTrustedAssetUrl(response.RequestMessage?.RequestUri?.ToString())) return false;
+
                 long totalBytes = response.Content.Headers.ContentLength ?? -1;
+                if (totalBytes > MaxUpdateBytes) return false;
                 using var source = await response.Content.ReadAsStreamAsync(ct);
-                using var dest = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                using var dest = new FileStream(destPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
 
                 byte[] buffer = new byte[81920];
                 long readBytes = 0;
                 int read;
                 while ((read = await source.ReadAsync(buffer, ct)) > 0)
                 {
+                    if (readBytes + read > MaxUpdateBytes)
+                        throw new InvalidDataException("Update exceeds the maximum allowed size.");
                     await dest.WriteAsync(buffer.AsMemory(0, read), ct);
                     readBytes += read;
                     if (totalBytes > 0)
@@ -142,7 +184,11 @@ namespace AudioQualityChecker.Services
                 progress?.Report(1.0);
                 return true;
             }
-            catch { return false; }
+            catch
+            {
+                try { File.Delete(destPath); } catch { }
+                return false;
+            }
         }
 
         /// <summary>
@@ -150,12 +196,18 @@ namespace AudioQualityChecker.Services
         /// </summary>
         public static async Task<bool> VerifySha256Async(string filePath, CancellationToken ct = default)
         {
-            if (string.IsNullOrEmpty(LatestSha256Url) || !File.Exists(filePath)) return false;
+            if (!IsTrustedReleaseAssetUrl(LatestSha256Url) || !File.Exists(filePath)) return false;
             try
             {
-                string hashText = await _http.GetStringAsync(LatestSha256Url, ct);
-                // Expected format: "<hash>  <filename>" or just "<hash>"
-                string expected = hashText.Split(new[] { ' ', '\t', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)[0];
+                using var response = await _http.GetAsync(LatestSha256Url, ct);
+                if (!response.IsSuccessStatusCode) return false;
+                if (!IsTrustedAssetUrl(response.RequestMessage?.RequestUri?.ToString())) return false;
+
+                // A ".sha256" file is a single hash line; anything larger is not one.
+                string? hashText = await ReadCappedAsync(response.Content, 4096, ct);
+                if (string.IsNullOrWhiteSpace(hashText)) return false;
+
+                if (!TryParseSha256(hashText, out string expected)) return false;
 
                 using var sha = SHA256.Create();
                 await using var stream = File.OpenRead(filePath);

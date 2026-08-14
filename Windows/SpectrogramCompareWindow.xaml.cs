@@ -62,6 +62,8 @@ namespace AudioQualityChecker
                     ThemeManager.SpectrogramHiFiMode,
                     ThemeManager.SpectrogramMagmaColormap));
 
+                if (!IsLoaded) return;   // window closed while generating
+
                 if (bmpA != null)
                 {
                     _imgA = bmpA;
@@ -79,14 +81,14 @@ namespace AudioQualityChecker
                     StackedImageB.Source = bmpB;
                 }
 
-                ComputeDiffBitmap();
+                await ComputeDiffBitmapAsync();
+                if (!IsLoaded) return;   // closed while the diff was computing
                 UpdateViewMode();
                 UpdateStats();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to generate spectrograms:\n{ex.Message}", "Error",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                ErrorDialog.Show("Error", $"Failed to generate spectrograms:\n{ex.Message}", this);
             }
         }
 
@@ -156,7 +158,12 @@ namespace AudioQualityChecker
             }
         }
 
-        private void ComputeDiffBitmap()
+        /// <summary>
+        /// Builds the red "difference" overlay. Two 1200x400 CopyPixels plus a ~480k-iteration
+        /// nested loop used to run inline on the dispatcher, freezing the window right after the
+        /// spectrograms appeared. Only the WriteableBitmap itself needs the UI thread.
+        /// </summary>
+        private async Task ComputeDiffBitmapAsync()
         {
             if (_imgA == null || _imgB == null) return;
 
@@ -170,30 +177,35 @@ namespace AudioQualityChecker
             int strideD = w * 3;
             var pixelsA = new byte[strideA * _imgAPixelHeight];
             var pixelsB = new byte[strideB * _imgBPixelHeight];
-            var pixelsD = new byte[strideD * h];
 
+            // CopyPixels is safe here: both sources are frozen BitmapSources from the generator.
             _imgA.CopyPixels(pixelsA, strideA, 0);
             _imgB.CopyPixels(pixelsB, strideB, 0);
 
-            for (int y = 0; y < h; y++)
+            var pixelsD = await Task.Run(() =>
             {
-                for (int x = 0; x < w; x++)
+                var buffer = new byte[strideD * h];
+                for (int y = 0; y < h; y++)
                 {
-                    int iA = y * strideA + x * 3;
-                    int iB = y * strideB + x * 3;
-                    int iD = y * strideD + x * 3;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int iA = y * strideA + x * 3;
+                        int iB = y * strideB + x * 3;
+                        int iD = y * strideD + x * 3;
 
-                    int dr = Math.Abs(pixelsA[iA] - pixelsB[iB]);
-                    int dg = Math.Abs(pixelsA[iA + 1] - pixelsB[iB + 1]);
-                    int db = Math.Abs(pixelsA[iA + 2] - pixelsB[iB + 2]);
+                        int dr = Math.Abs(pixelsA[iA] - pixelsB[iB]);
+                        int dg = Math.Abs(pixelsA[iA + 1] - pixelsB[iB + 1]);
+                        int db = Math.Abs(pixelsA[iA + 2] - pixelsB[iB + 2]);
 
-                    // Map average diff to red intensity; boost contrast
-                    int avgDiff = Math.Min(255, (dr + dg + db) / 3 * 3);
-                    pixelsD[iD] = (byte)avgDiff;      // R
-                    pixelsD[iD + 1] = 0;              // G
-                    pixelsD[iD + 2] = 0;              // B
+                        // Map average diff to red intensity; boost contrast
+                        int avgDiff = Math.Min(255, (dr + dg + db) / 3 * 3);
+                        buffer[iD] = (byte)avgDiff;      // R
+                        buffer[iD + 1] = 0;              // G
+                        buffer[iD + 2] = 0;              // B
+                    }
                 }
-            }
+                return buffer;
+            }).ConfigureAwait(true);
 
             _diffBitmap = new WriteableBitmap(w, h, 96, 96, PixelFormats.Rgb24, null);
             _diffBitmap.WritePixels(new Int32Rect(0, 0, w, h), pixelsD, strideD, 0);
@@ -378,7 +390,7 @@ namespace AudioQualityChecker
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Left)
-                DragMove();
+                this.SafeDragMove();
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)

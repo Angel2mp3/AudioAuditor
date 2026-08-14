@@ -310,7 +310,21 @@ namespace AudioQualityChecker
 
             _npColorPickerActive = !_npColorPickerActive;
             if (_npColorPickerActive)
+            {
                 _npColorPickerSessionPicks = 0;
+                // Cache the converted bitmap once so MouseMove sampling is cheap
+                if (NpCoverImage.Source is System.Windows.Media.Imaging.BitmapSource raw)
+                    _npPickerCachedSource = new System.Windows.Media.Imaging.FormatConvertedBitmap(
+                        raw, System.Windows.Media.PixelFormats.Bgra32, null, 0);
+                if (NpPickerMagnifierCanvas != null)
+                    NpPickerMagnifierCanvas.Visibility = System.Windows.Visibility.Visible;
+            }
+            else
+            {
+                _npPickerCachedSource = null;
+                if (NpPickerMagnifierCanvas != null)
+                    NpPickerMagnifierCanvas.Visibility = System.Windows.Visibility.Collapsed;
+            }
             NpCoverImage.Cursor = _npColorPickerActive
                 ? System.Windows.Input.Cursors.Cross
                 : System.Windows.Input.Cursors.Arrow;
@@ -330,6 +344,8 @@ namespace AudioQualityChecker
             _npColorPickerNextSlot = 0;
             _npColorPickerSessionPicks = 0;
             _npColorPickerActive = false;
+            _npPickerCachedSource = null;
+            if (NpPickerMagnifierCanvas != null) NpPickerMagnifierCanvas.Visibility = System.Windows.Visibility.Collapsed;
             _npColorPickerOwnerPath = resetPath;
             NpPersistColorPickerOverrides(resetPath);
             NpCoverImage.Cursor = System.Windows.Input.Cursors.Arrow;
@@ -433,6 +449,36 @@ namespace AudioQualityChecker
             }
         }
 
+        private void NpCoverImage_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (!_npColorPickerActive || _npPickerCachedSource == null
+                || NpPickerMagnifier == null || NpPickerMagnifierCanvas == null)
+                return;
+
+            var imgPos = e.GetPosition(NpCoverImage);
+            if (!NpTryMapCoverClickToPixel(_npPickerCachedSource, imgPos, out int px, out int py))
+            {
+                NpPickerMagnifier.Visibility = System.Windows.Visibility.Collapsed;
+                return;
+            }
+
+            var color = NpSampleCoverColor(_npPickerCachedSource, px, py);
+            NpPickerMagnifier.Background = new System.Windows.Media.SolidColorBrush(color);
+
+            var canvasPos = e.GetPosition(NpPickerMagnifierCanvas);
+            double left = canvasPos.X + 10;
+            double top  = canvasPos.Y - 54;  // 46px circle + 8px gap above cursor
+            System.Windows.Controls.Canvas.SetLeft(NpPickerMagnifier, left);
+            System.Windows.Controls.Canvas.SetTop(NpPickerMagnifier, top);
+            NpPickerMagnifier.Visibility = System.Windows.Visibility.Visible;
+        }
+
+        private void NpCoverImage_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+        {
+            if (NpPickerMagnifier != null)
+                NpPickerMagnifier.Visibility = System.Windows.Visibility.Collapsed;
+        }
+
         private bool NpTryMapCoverClickToPixel(BitmapSource src, System.Windows.Point clickPoint, out int px, out int py)
         {
             px = py = 0;
@@ -520,31 +566,115 @@ namespace AudioQualityChecker
             _npColorPickerNextSlot = 0;
             _npColorPickerSessionPicks = 0;
             _npColorPickerOwnerPath = filePath;
+            _npCurrentCoverKey = null;
+            _npPickerCachedSource = null;
+            if (NpPickerMagnifierCanvas != null) NpPickerMagnifierCanvas.Visibility = System.Windows.Visibility.Collapsed;
             if (NpCoverImage != null)
                 NpCoverImage.Cursor = System.Windows.Input.Cursors.Arrow;
 
-            List<System.Windows.Media.Color>? persisted = null;
-            if (ThemeManager.NpRememberManualColorPicks && !string.IsNullOrWhiteSpace(filePath))
-            {
-                persisted = _npColorThemeService.GetManualPicksForFilePath(filePath);
-            }
-
-            if (persisted != null)
-            {
-                int maxColors = ThemeManager.NpColorPickerMaxColors;
-                _npColorPickerOverrides.AddRange(persisted.Take(maxColors));
-                _npColorPickerNextSlot = _npColorPickerOverrides.Count >= maxColors ? 0 : _npColorPickerOverrides.Count;
-            }
+            // Picks are keyed by album-cover identity. If the cover bytes are already cached we can
+            // resolve the cover key now; otherwise we load the per-file picks provisionally and the
+            // async cover load (NpApplyDeferredCoverPicks) upgrades them to the album-shared set
+            // once the cover bytes — and therefore the cover identity — are known.
+            _npCurrentCoverKey = NpTryGetCachedCoverKey(filePath);
+            NpApplyPersistedPicksToOverrides(NpLoadPersistedPicks(filePath, _npCurrentCoverKey));
 
             UpdateColorPickerIconBrush();
         }
 
-        private void NpPersistColorPickerOverrides(string? filePath)
+        /// <summary>
+        /// Once the current track's cover bytes are available the cover identity is known; adopt
+        /// the album-shared picks for that cover, migrating any legacy per-file picks. Guarded so a
+        /// fast track change or an in-progress picking session can't be clobbered.
+        /// </summary>
+        private void NpApplyDeferredCoverPicks(string? filePath, string coverKey)
         {
-            if (!ThemeManager.NpRememberManualColorPicks || string.IsNullOrWhiteSpace(filePath))
+            if (_npColorPickerActive) return;
+            if (!string.Equals(_npColorPickerOwnerPath, filePath, StringComparison.OrdinalIgnoreCase)) return;
+
+            // Already resolved for this exact cover — nothing to do.
+            if (string.Equals(_npCurrentCoverKey, coverKey, StringComparison.OrdinalIgnoreCase)
+                && _npColorPickerOverrides.Count > 0)
                 return;
 
-            _npColorThemeService.SetManualPicksForFilePath(filePath, _npColorPickerOverrides);
+            _npCurrentCoverKey = coverKey;
+
+            var picks = NpLoadPersistedPicks(filePath, coverKey);
+            // Only replace the provisional picks when the cover key actually yields some, so we
+            // never wipe out per-file picks for a cover that has no shared scheme.
+            if (picks == null || picks.Count == 0) return;
+
+            NpApplyPersistedPicksToOverrides(picks);
+            UpdateColorPickerIconBrush();
+            NpResetColorMatchCaches();
+            NpApplyColorMatchMode();
+        }
+
+        /// <summary>Cover-content hash for a track when its cover bytes are already cached, else null.</summary>
+        private string? NpTryGetCachedCoverKey(string? filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath)) return null;
+            byte[]? bytes = null;
+            lock (_coverBytesCacheLock)
+                _coverBytesCache.TryGetValue(HashPath(filePath), out bytes);
+            return bytes != null ? ColorThemeService.HashBytes(bytes) : null;
+        }
+
+        /// <summary>
+        /// Loads persisted manual picks, preferring the cover-content key and falling back to the
+        /// legacy per-file key (re-saving those under the cover key so the album inherits them).
+        /// When no cover key is available (art-less track) it uses the per-file key directly.
+        /// </summary>
+        private List<System.Windows.Media.Color>? NpLoadPersistedPicks(string? filePath, string? coverKey)
+        {
+            if (!ThemeManager.NpRememberManualColorPicks) return null;
+
+            if (!string.IsNullOrEmpty(coverKey))
+            {
+                var byCover = _npColorThemeService.GetManualPicksByKey(coverKey);
+                if (byCover != null) return byCover;
+
+                var legacy = string.IsNullOrWhiteSpace(filePath)
+                    ? null : _npColorThemeService.GetManualPicksForFilePath(filePath);
+                if (legacy != null && legacy.Count > 0)
+                {
+                    _npColorThemeService.SetManualPicksByKey(coverKey, legacy);
+                    SaveNpColorCacheToDisk();
+                    return legacy;
+                }
+                return null;
+            }
+
+            return string.IsNullOrWhiteSpace(filePath)
+                ? null : _npColorThemeService.GetManualPicksForFilePath(filePath);
+        }
+
+        private void NpApplyPersistedPicksToOverrides(List<System.Windows.Media.Color>? persisted)
+        {
+            _npColorPickerOverrides.Clear();
+            _npColorPickerNextSlot = 0;
+            if (persisted == null || persisted.Count == 0) return;
+
+            int maxColors = ThemeManager.NpColorPickerMaxColors;
+            _npColorPickerOverrides.AddRange(persisted.Take(maxColors));
+            _npColorPickerNextSlot = _npColorPickerOverrides.Count >= maxColors ? 0 : _npColorPickerOverrides.Count;
+        }
+
+        private void NpPersistColorPickerOverrides(string? filePath)
+        {
+            if (!ThemeManager.NpRememberManualColorPicks)
+                return;
+
+            // Persist under the cover-content key so all tracks with this exact cover share the
+            // picks; fall back to the per-file key for art-less tracks that have no cover key.
+            string? key = _npCurrentCoverKey ?? NpTryGetCachedCoverKey(filePath);
+            if (key == null)
+            {
+                if (string.IsNullOrWhiteSpace(filePath)) return;
+                key = HashPath(filePath);
+            }
+
+            _npColorThemeService.SetManualPicksByKey(key, _npColorPickerOverrides);
             SaveNpColorCacheToDisk();
         }
 
@@ -737,6 +867,13 @@ namespace AudioQualityChecker
             }, DispatcherPriority.Render);
         }
 
+        /// <summary>Called from Settings when ColorMatch scope/target checkboxes change, so the
+        /// visible Now Playing screen repaints immediately instead of waiting for the next track.</summary>
+        internal void NpRefreshColorMatchFromSettings()
+        {
+            if (_npVisible && _npColorMatchEnabled) NpApplyColorMatchMode();
+        }
+
         private void NpApplyColorMatchMode()
         {
             // User-picked color overrides (eyedropper) replace the auto-extracted album palette
@@ -783,71 +920,20 @@ namespace AudioQualityChecker
             {
                 // ColorMatch ON. Paint from the effective palette (real album colors when
                 // available, otherwise a theme-independent neutral palette). No theme tokens.
+                // Each block below is gated by NpColorMatchTargets so users can restrict which
+                // surface categories (backgrounds/buttons&icons/text) get recolored.
+                var npTargets = ThemeManager.NpColorMatchTargets;
+                bool npBg = npTargets.HasFlag(ColorMatchTarget.Backgrounds);
+                bool npIcons = npTargets.HasFlag(ColorMatchTarget.ButtonsAndIcons);
+                bool npText = npTargets.HasFlag(ColorMatchTarget.Text);
                 NpApplyScopedColorResources(cmPrimary, cmSecondary, cmTertiary, cmBackground);
 
-                // Base panel fill. NowPlayingPanel.Background is `{DynamicResource WindowBg}` in
-                // XAML, which auto-updates when the theme dictionary changes — and because the
-                // gradient/backdrop above it aren't fully opaque, that theme color bleeds through
-                // on a theme switch. Pin it to a fixed dark album-derived color so ColorMatch is
-                // truly theme-independent. Reset to the theme token in the OFF branch below.
-                NpPanelBaseBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(
-                    (byte)Math.Max(6, cmBackground.R / 4),
-                    (byte)Math.Max(6, cmBackground.G / 4),
-                    (byte)Math.Max(8, cmBackground.B / 4)));
-                NpPanelBaseBrush.Freeze();
-                NowPlayingPanel.Background = NpPanelBaseBrush;
-
-                // Background: stronger gradient; the dark overlay's strength is driven by the
-                // user's background-brightness setting (lighter ↔ darker), used for BOTH the static
-                // colormatch background and Color Drift so drift never looks darker than static.
-                NpBgGradient.Opacity = 1.0;
-                NpDarkOverlay.Background = new SolidColorBrush(
-                    System.Windows.Media.Color.FromArgb(NpColorMatchOverlayAlpha(), 0, 0, 0));
-
-                // Bottom bar: deeply tinted
-                NpBottomBar.Background = NpBottomBar.Resources["GlassToolbarBg"] as Brush
-                    ?? new SolidColorBrush(System.Windows.Media.Color.FromArgb(226,
-                        (byte)Math.Max(16, cmPrimary.R / 4),
-                        (byte)Math.Max(16, cmPrimary.G / 4),
-                        (byte)Math.Max(20, cmPrimary.B / 4)));
-                NpBottomBar.BorderBrush = NpBottomBar.Resources["GlassBorderBrush"] as Brush
-                    ?? new SolidColorBrush(System.Windows.Media.Color.FromArgb(120,
-                        cmPrimary.R, cmPrimary.G, cmPrimary.B));
-
-                // Title highlight with brightened primary
+                // Title highlight with brightened primary (computed unconditionally — reused by
+                // several blocks below regardless of which categories are enabled).
                 var bright = System.Windows.Media.Color.FromRgb(
                     (byte)Math.Min(255, cmPrimary.R + 100),
                     (byte)Math.Min(255, cmPrimary.G + 100),
                     (byte)Math.Min(255, cmPrimary.B + 100));
-                NpSongTitle.Foreground = new SolidColorBrush(bright);
-                NpBigTitle.Foreground = new SolidColorBrush(bright);
-
-                // Artist text with lighter secondary
-                NpSongArtist.Foreground = new SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(
-                        (byte)Math.Min(255, cmSecondary.R + 80),
-                        (byte)Math.Min(255, cmSecondary.G + 80),
-                        (byte)Math.Min(255, cmSecondary.B + 80)));
-
-                // Specs text brighter
-                NpSongSpecs.Foreground = new SolidColorBrush(
-                    System.Windows.Media.Color.FromArgb(200,
-                        (byte)Math.Min(255, cmPrimary.R + 60),
-                        (byte)Math.Min(255, cmPrimary.G + 60),
-                        (byte)Math.Min(255, cmPrimary.B + 60)));
-
-                // Tint Queue badge to match album colors
-                NpNextTrackBorder.Background = new SolidColorBrush(
-                    System.Windows.Media.Color.FromArgb(50,
-                        cmPrimary.R, cmPrimary.G, cmPrimary.B));
-                NpNextTrackLabel.Foreground = new SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(
-                        (byte)Math.Min(255, cmSecondary.R + 80),
-                        (byte)Math.Min(255, cmSecondary.G + 80),
-                        (byte)Math.Min(255, cmSecondary.B + 80)));
-                NpNextTrackText.Foreground = new SolidColorBrush(bright);
-
-                // Tint all icon paths in the bottom bar with album colors
                 var iconTint = new SolidColorBrush(
                     System.Windows.Media.Color.FromRgb(
                         (byte)Math.Min(255, cmPrimary.R + 80),
@@ -859,65 +945,130 @@ namespace AudioQualityChecker
                         (byte)Math.Min(255, cmSecondary.G + 100),
                         (byte)Math.Min(255, cmSecondary.B + 100)));
 
-                // Playback control fills
-                NpPlayPath.Fill = controlTint;
-                NpPausePath.Fill = controlTint;
+                if (npBg)
+                {
+                    // Base panel fill. NowPlayingPanel.Background is `{DynamicResource WindowBg}` in
+                    // XAML, which auto-updates when the theme dictionary changes — and because the
+                    // gradient/backdrop above it aren't fully opaque, that theme color bleeds through
+                    // on a theme switch. Pin it to a fixed dark album-derived color so ColorMatch is
+                    // truly theme-independent. Reset to the theme token in the OFF branch below.
+                    NpPanelBaseBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(
+                        (byte)Math.Max(6, cmBackground.R / 4),
+                        (byte)Math.Max(6, cmBackground.G / 4),
+                        (byte)Math.Max(8, cmBackground.B / 4)));
+                    NpPanelBaseBrush.Freeze();
+                    NowPlayingPanel.Background = NpPanelBaseBrush;
 
-                // Prev/Next icons
-                NpPrevLine.Stroke = controlTint;
-                NpPrevFill.Fill = controlTint;
-                NpNextFill.Fill = controlTint;
-                NpNextLine.Stroke = controlTint;
+                    // Background: stronger gradient; the dark overlay's strength is driven by the
+                    // user's background-brightness setting (lighter ↔ darker), used for BOTH the static
+                    // colormatch background and Color Drift so drift never looks darker than static.
+                    NpBgGradient.Opacity = 1.0;
+                    NpDarkOverlay.Background = new SolidColorBrush(
+                        System.Windows.Media.Color.FromArgb(NpColorMatchOverlayAlpha(), 0, 0, 0));
 
-                // Volume icon
-                NpVolumeIconPath.Fill = iconTint;
-                NpVolumeIconPath.Stroke = iconTint;
+                    // Bottom bar: deeply tinted
+                    NpBottomBar.Background = NpBottomBar.Resources["GlassToolbarBg"] as Brush
+                        ?? new SolidColorBrush(System.Windows.Media.Color.FromArgb(226,
+                            (byte)Math.Max(16, cmPrimary.R / 4),
+                            (byte)Math.Max(16, cmPrimary.G / 4),
+                            (byte)Math.Max(20, cmPrimary.B / 4)));
+                    NpBottomBar.BorderBrush = NpBottomBar.Resources["GlassBorderBrush"] as Brush
+                        ?? new SolidColorBrush(System.Windows.Media.Color.FromArgb(120,
+                            cmPrimary.R, cmPrimary.G, cmPrimary.B));
 
-                // Time labels
-                NpTimeElapsed.Foreground = iconTint;
-                NpTimeTotal.Foreground = iconTint;
+                    // Tint Queue badge background to match album colors
+                    NpNextTrackBorder.Background = new SolidColorBrush(
+                        System.Windows.Media.Color.FromArgb(50,
+                            cmPrimary.R, cmPrimary.G, cmPrimary.B));
+                }
 
-                // Tint all option button icons in the bottom bar
-                // (use individual update methods so active/inactive state is respected)
-                NpUpdateShuffleIcon();
-                NpUpdateLoopIcon();
-                NpUpdateAutoPlayIcon();
-                NpUpdateVisualizerIcon();
-                NpUpdateVizPlacementIcon();
-                NpUpdateLyricsOffIcon();
-                NpUpdateTranslateIcon();
-                NpUpdateFocusedLyricsIcon();
-                NpUpdateKaraokeIcon();
-                NpUpdateColorMatchIcon();
-                NpUpdateCrossfadeIcon();
+                if (npText)
+                {
+                    NpSongTitle.Foreground = new SolidColorBrush(bright);
+                    NpBigTitle.Foreground = new SolidColorBrush(bright);
 
-                // Tint remaining static icons that don't have toggle states
-                NpVizStyleIcon.Stroke = iconTint;
-                NpProviderCircle.Stroke = iconTint;
-                NpProviderArc.Stroke = new SolidColorBrush(bright);
-                NpSearchIcon.Foreground = iconTint;
-                NpSaveLyricsIcon.Stroke = iconTint;
-                NpSettingsGear.Stroke = iconTint;
-                NpSettingsCenter.Stroke = iconTint;
-                NpTranslateSettingsIcon.Stroke = iconTint;
-                NpLayoutIcon.Stroke = iconTint;
-                NpQueueIcon.Foreground = iconTint;
-                NpEqIcon.Stroke = iconTint;
-                NpEqKnob1.Fill = iconTint;
-                NpEqKnob2.Fill = iconTint;
-                NpEqKnob3.Fill = iconTint;
+                    // Artist text with lighter secondary
+                    NpSongArtist.Foreground = new SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            (byte)Math.Min(255, cmSecondary.R + 80),
+                            (byte)Math.Min(255, cmSecondary.G + 80),
+                            (byte)Math.Min(255, cmSecondary.B + 80)));
 
-                // Store colors for visualizer tinting (used by render methods)
+                    // (Song-info row items carry their own per-item brushes set at build time.)
+
+                    NpNextTrackLabel.Foreground = new SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            (byte)Math.Min(255, cmSecondary.R + 80),
+                            (byte)Math.Min(255, cmSecondary.G + 80),
+                            (byte)Math.Min(255, cmSecondary.B + 80)));
+                    NpNextTrackText.Foreground = new SolidColorBrush(bright);
+
+                    // Time labels double as text here (elapsed/total readouts)
+                    NpTimeElapsed.Foreground = iconTint;
+                    NpTimeTotal.Foreground = iconTint;
+                }
+
+                if (npIcons)
+                {
+                    // Playback control fills
+                    NpPlayPath.Fill = controlTint;
+                    NpPausePath.Fill = controlTint;
+
+                    // Prev/Next icons
+                    NpPrevLine.Stroke = controlTint;
+                    NpPrevFill.Fill = controlTint;
+                    NpNextFill.Fill = controlTint;
+                    NpNextLine.Stroke = controlTint;
+
+                    // Volume icon
+                    NpVolumeIconPath.Fill = iconTint;
+                    NpVolumeIconPath.Stroke = iconTint;
+
+                    // Tint all option button icons in the bottom bar
+                    // (use individual update methods so active/inactive state is respected)
+                    NpUpdateShuffleIcon();
+                    NpUpdateLoopIcon();
+                    NpUpdateAutoPlayIcon();
+                    NpUpdateVisualizerIcon();
+                    NpUpdateVizPlacementIcon();
+                    NpUpdateLyricsOffIcon();
+                    NpUpdateTranslateIcon();
+                    NpUpdateFocusedLyricsIcon();
+                    NpUpdateKaraokeIcon();
+                    NpUpdateColorMatchIcon();
+                    NpUpdateCrossfadeIcon();
+
+                    // Tint remaining static icons that don't have toggle states
+                    NpVizStyleIcon.Stroke = iconTint;
+                    NpProviderCircle.Stroke = iconTint;
+                    NpProviderArc.Stroke = new SolidColorBrush(bright);
+                    NpSearchIcon.Foreground = iconTint;
+                    NpSaveLyricsIcon.Stroke = iconTint;
+                    NpSettingsGear.Stroke = iconTint;
+                    NpSettingsCenter.Stroke = iconTint;
+                    NpTranslateSettingsIcon.Stroke = iconTint;
+                    NpLayoutIcon.Stroke = iconTint;
+                    NpQueueIcon.Foreground = iconTint;
+                    NpEqIcon.Stroke = iconTint;
+                    NpEqKnob1.Fill = iconTint;
+                    NpEqKnob2.Fill = iconTint;
+                    NpEqKnob3.Fill = iconTint;
+
+                    _eqSliderTemplateCache = null;
+                    if (EqPanel.Visibility == Visibility.Visible)
+                    {
+                        ApplyEqualizerPanelTheme();
+                        InitializeEqualizerSliders();
+                    }
+                }
+
+                // Store colors for visualizer tinting (used by render methods) — kept unconditional
+                // since the visualizer canvas isn't one of the toggleable categories.
                 // Boost to minimum luminance so bars are clearly visible
                 _npVizColorPrimary = EnsureMinLuminance(cmPrimary, 120);
                 _npVizColorSecondary = EnsureMinLuminance(cmSecondary, 120);
-                _eqSliderTemplateCache = null;
-                if (EqPanel.Visibility == Visibility.Visible)
-                {
-                    ApplyEqualizerPanelTheme();
-                    InitializeEqualizerSliders();
-                }
-                ApplyThemeTitleBar();
+
+                if (npBg) ApplyThemeTitleBar();
             }
             else
             {
@@ -934,7 +1085,6 @@ namespace AudioQualityChecker
                 NpSongTitle.Foreground = (Brush)FindResource("TextPrimary");
                 NpBigTitle.Foreground = (Brush)FindResource("TextPrimary");
                 NpSongArtist.Foreground = (Brush)FindResource("TextSecondary");
-                NpSongSpecs.Foreground = (Brush)FindResource("TextSecondary");
 
                 // Restore Queue badge to defaults
                 NpNextTrackBorder.Background = (Brush)FindResource("ButtonBg");
@@ -1004,10 +1154,18 @@ namespace AudioQualityChecker
 
             // Fast-path: if colors are already cached, apply instantly so the main
             // window doesn't flash the default theme while TagLib + image decode runs.
-            string cacheKey = HashPath(filePath);
-            if (TryGetNpColorFromCache(cacheKey, out var cachedColors))
+            // Colors are keyed by cover content, so this needs the cover bytes — only available
+            // synchronously when already cached; otherwise we fall through to the extract below.
+            // The four dispatcher posts in this method are InvokeAsync rather than Invoke: nothing
+            // here consumes a return value, and blocking a thread-pool thread until the UI thread
+            // drains — while that same UI thread is mid track-change doing the theme pass — is the
+            // one thing guaranteed to make the handoff slower. Relative order is still guaranteed:
+            // posts at equal priority run in the order they were queued, and every body re-checks
+            // `gen` on arrival, so a superseded track's callback is already a no-op.
+            string? coverKey = NpTryGetCachedCoverKey(filePath);
+            if (coverKey != null && TryGetNpColorFromCache(coverKey, out var cachedColors))
             {
-                Dispatcher.Invoke(() =>
+                _ = Dispatcher.InvokeAsync(() =>
                 {
                     if (gen != _npColorGeneration) return;
                     _mainAlbumPrimary = System.Windows.Media.Color.FromRgb(cachedColors.Primary.R, cachedColors.Primary.G, cachedColors.Primary.B);
@@ -1023,7 +1181,7 @@ namespace AudioQualityChecker
                 var imageData = await Task.Run(() => NpReadCoverImageData(filePath));
                 if (imageData == null)
                 {
-                    Dispatcher.Invoke(() =>
+                    _ = Dispatcher.InvokeAsync(() =>
                     {
                         if (gen != _npColorGeneration) return;
                         if (!ThemeManager.MainColorMatchEnabled)
@@ -1047,13 +1205,18 @@ namespace AudioQualityChecker
                 {
                     var bmp = NpDecodeCoverBitmap(imageData);
                     var converted = new FormatConvertedBitmap(bmp, PixelFormats.Bgra32, null, 0);
+                    // Freeze before use: BitmapSource is a DispatcherObject, so an unfrozen one
+                    // created here binds itself to whichever thread-pool thread ran this lambda —
+                    // and Dispatcher.CurrentDispatcher creates (and permanently registers) a
+                    // Dispatcher for that thread. Frozen Freezables are thread-agnostic and skip it.
+                    converted.Freeze();
                     int stride = converted.PixelWidth * 4;
                     var pixels = new byte[stride * converted.PixelHeight];
                     converted.CopyPixels(pixels, stride, 0);
                     return AlbumColorExtractor.Extract(pixels, converted.PixelWidth, converted.PixelHeight, stride);
                 });
 
-                Dispatcher.Invoke(() =>
+                _ = Dispatcher.InvokeAsync(() =>
                 {
                     if (gen != _npColorGeneration) return;
                     _mainAlbumPrimary = System.Windows.Media.Color.FromRgb(colors.Primary.R, colors.Primary.G, colors.Primary.B);
@@ -1076,13 +1239,14 @@ namespace AudioQualityChecker
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[LoadMainCoverColors] {ex}");
-                Dispatcher.Invoke(() =>
+                _ = Dispatcher.InvokeAsync(() =>
                 {
                     if (gen != _npColorGeneration) return;
                     if (!ThemeManager.MainColorMatchEnabled)
                     {
                         _mainAlbumPrimary = default;
                         _mainAlbumSecondary = default;
+                        _mainAlbumTertiary = default; // was left stale here, unlike the no-artwork path above
                         RestoreMainColorMatch();
                     }
                     else if (_mainAlbumPrimary != default)
@@ -1091,6 +1255,14 @@ namespace AudioQualityChecker
                     }
                 });
             }
+        }
+
+        /// <summary>Called from Settings when ColorMatch scope/target checkboxes change, so the
+        /// visible window repaints immediately instead of waiting for the next track change.</summary>
+        internal void MainRefreshColorMatchFromSettings()
+        {
+            if (ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default)
+                ApplyMainColorMatch();
         }
 
         private void ApplyMainColorMatch()
@@ -1124,16 +1296,26 @@ namespace AudioQualityChecker
                 (byte)Math.Max(18, _mainAlbumPrimary.G / 4),
                 (byte)Math.Max(18, _mainAlbumPrimary.B / 4)));
 
-            Application.Current.Resources["AccentColor"] = accentBrush;
-            Application.Current.Resources["BorderColor"] = borderBrush;
-            Application.Current.Resources["ButtonHover"] = hoverBrush;
-            Application.Current.Resources["SelectionBg"] = selectionBrush;
-            Application.Current.Resources["PlaybarAccentColor"] = accentBrush;
-            Application.Current.Resources["PlaybarSecondaryColor"] = secondaryBrush;
-            Application.Current.Resources["PlaybarTertiaryColor"] = tertiaryBrush;
-            Application.Current.Resources["ToolbarBg"] = toolbarBrush;
-            ThemeManager.ApplyColorMatchSurfaceResources(brightPrimary, brightSecondary, _mainAlbumPrimary);
-            ApplyThemeTitleBar();
+            // Gate each surface category so users can restrict which parts of the Main Window
+            // get recolored (see ThemeManager.MainColorMatchTargets).
+            var mainTargets = ThemeManager.MainColorMatchTargets;
+            bool mainBg = mainTargets.HasFlag(ColorMatchTarget.Backgrounds);
+            bool mainIcons = mainTargets.HasFlag(ColorMatchTarget.ButtonsAndIcons);
+            bool mainText = mainTargets.HasFlag(ColorMatchTarget.Text);
+
+            if (mainBg)
+            {
+                Application.Current.Resources["AccentColor"] = accentBrush;
+                Application.Current.Resources["BorderColor"] = borderBrush;
+                Application.Current.Resources["ButtonHover"] = hoverBrush;
+                Application.Current.Resources["SelectionBg"] = selectionBrush;
+                Application.Current.Resources["PlaybarAccentColor"] = accentBrush;
+                Application.Current.Resources["PlaybarSecondaryColor"] = secondaryBrush;
+                Application.Current.Resources["PlaybarTertiaryColor"] = tertiaryBrush;
+                Application.Current.Resources["ToolbarBg"] = toolbarBrush;
+                ThemeManager.ApplyColorMatchSurfaceResources(brightPrimary, brightSecondary, _mainAlbumPrimary);
+                ApplyThemeTitleBar();
+            }
 
             // Sync mini player only if it wants ColorMatch — it owns its own ColorMatch choice,
             // so the main window must not force it on (or off) on every track change.
@@ -1143,19 +1325,25 @@ namespace AudioQualityChecker
                 _miniPlayerWindow?.RefreshThemeResources();
             }
 
-            // Tint main playback icons
-            PlayIcon.Fill = accentBrush;
-            PauseIcon.Fill = accentBrush;
+            if (mainIcons)
+            {
+                // Tint main playback icons
+                PlayIcon.Fill = accentBrush;
+                PauseIcon.Fill = accentBrush;
 
-            // Tint shuffle / loop / EQ / volume icons
-            ShuffleIcon.Stroke = secondaryBrush;
-            LoopIcon.Stroke = secondaryBrush;
-            if (EqIcon != null) EqIcon.Stroke = secondaryBrush;
-            VolumeIconPath.Fill = secondaryBrush;
-            VolumeIconPath.Stroke = secondaryBrush;
+                // Tint shuffle / loop / EQ / volume icons
+                ShuffleIcon.Stroke = secondaryBrush;
+                LoopIcon.Stroke = secondaryBrush;
+                if (EqIcon != null) EqIcon.Stroke = secondaryBrush;
+                VolumeIconPath.Fill = secondaryBrush;
+                VolumeIconPath.Stroke = secondaryBrush;
+            }
 
-            // Tint spectrogram title
-            SpectrogramTitle.Foreground = accentBrush;
+            if (mainText)
+            {
+                // Tint spectrogram title
+                SpectrogramTitle.Foreground = accentBrush;
+            }
 
             NpUpdateSaveLyricsButton();
         }

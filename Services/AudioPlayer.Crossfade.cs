@@ -22,6 +22,15 @@ namespace AudioQualityChecker.Services
                 return;
             }
 
+            // Adopt the pre-opened (warm) decoder if it's for this track, exactly as Play() does.
+            // Without this the crossfade path re-opened the decoder from cold on the UI thread —
+            // and for FLAC that means a FULL file decode (see AudioDecoderFactory step 3b), so every
+            // crossfaded transition froze the window. The adopt happens BEFORE the fade-out handoff
+            // below so a prediction miss drops the stale prepare instead of leaking its handle.
+            bool adoptedWarmDecoder = TryTakePreopenedDecoder(filePath, out var decoded);
+            if (!adoptedWarmDecoder)
+                DisposePreparedDecoder();
+
             // Clean up any gapless preparation before crossfade takes over
             _gaplessNext?.Dispose();
             _gaplessNext = null;
@@ -57,7 +66,8 @@ namespace AudioQualityChecker.Services
                 _currentFile = filePath;
                 _normalizationGain = 1f;
 
-                if (!AudioDecoderFactory.TryOpen(filePath, out var decoded))
+                // Cold open only when no warm decoder was ready.
+                if (!adoptedWarmDecoder && !AudioDecoderFactory.TryOpen(filePath, out decoded))
                     return;
 
                 _reader = decoded.Reader;
@@ -123,8 +133,15 @@ namespace AudioQualityChecker.Services
             float fadeOutStartVol = GetFadeOutVolume();
             var curve = CrossfadeCurve;
 
-            _fadeTimer = new System.Threading.Timer(_ =>
+            System.Threading.Timer? self = null;
+            self = new System.Threading.Timer(_ =>
             {
+                // Timer.Dispose() does NOT wait for an in-flight callback, so a tick from a
+                // previous crossfade can land after Stop()/CleanupFadeOut() has torn this one down
+                // and a new crossfade has started. Without this guard that stale tick calls
+                // CleanupFadeOut() on the NEW fade-out device, cutting the outgoing track short.
+                if (!ReferenceEquals(System.Threading.Volatile.Read(ref _fadeTimer), self)) return;
+
                 // If the fade-out device hit EOF early, clean up immediately to avoid hanging
                 if (_fadeOutDevice != null && _fadeOutDevice.PlaybackState == PlaybackState.Stopped)
                 {
@@ -155,7 +172,11 @@ namespace AudioQualityChecker.Services
                     CleanupFadeOut();
                     ApplyVolume();
                 }
-            }, null, FadeStepMs, FadeStepMs);
+            }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+            // Publish the field before arming, so the first tick can never beat the assignment
+            // and see a stale (or null) _fadeTimer through the guard above.
+            _fadeTimer = self;
+            self.Change(FadeStepMs, FadeStepMs);
         }
 
         private float GetFadeOutVolume()

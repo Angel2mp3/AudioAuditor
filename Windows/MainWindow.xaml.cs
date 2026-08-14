@@ -62,8 +62,9 @@ namespace AudioQualityChecker
         private bool _isSeeking;
         private bool _npIsSeeking;  // drag guard for NP seek slider
 
-        // SMTC (media session for FluentFlyout/Windows media overlay)
+        // SMTC (media session for FluentFlyout/Windows media overlay, and Pano Scrobbler visibility)
         private SmtcService? _smtc;
+        private DateTime _lastSmtcTimelinePush = DateTime.MinValue;
 
         // System tray icon fields (_trayIcon, _forceClose) live in MainWindow.Tray.cs.
 
@@ -175,6 +176,12 @@ namespace AudioQualityChecker
         private int _npColorPickerNextSlot;
         private int _npColorPickerSessionPicks;
         private string? _npColorPickerOwnerPath;
+        // Cover-content hash of the current track's album art. Manual picks are persisted under
+        // this key so every track sharing the EXACT same cover inherits them. Null until the
+        // cover bytes are read (or when a track has no embedded cover — then picks fall back to
+        // the per-file key).
+        private string? _npCurrentCoverKey;
+        private System.Windows.Media.Imaging.BitmapSource? _npPickerCachedSource;
         private double _npVizBarHeight = 100; // default visualizer bar height
         private bool _npVizResizing;          // drag-resize in progress
         private double _npVizResizeStartY;    // mouse Y at drag start
@@ -236,6 +243,16 @@ namespace AudioQualityChecker
         private DispatcherTimer? _npFishTimer;         // sporadic underwater fish spawner
         private readonly List<Canvas> _npShootingStarPool = new();
         private System.Windows.Shapes.Rectangle? _npLightningOverlay;
+
+        // Ambient-motion freeze state. Particle Forever-animations are applied via retained clocks
+        // (NpBeginParticleAnim) so they can be paused/resumed in place — no rebuild/jump. Frozen when
+        // playback is paused or while the NP view is actively being resized.
+        private readonly List<System.Windows.Media.Animation.AnimationClock> _npParticleClocks = new();
+        private bool _npMotionFrozen;
+        private bool? _npAmbientMotionPlaying; // last seen playing state, for edge detection
+        private bool _npResizeActive;
+        private bool _npTransitionFreeze;      // brief freeze while a track transition settles
+        private System.Windows.Threading.DispatcherTimer? _npTransitionPauseTimer;
         // _feedbackUsageTimer and other overlay state live in MainWindow.Overlays.cs.
 
         // Active visualizer canvas (NP or main)
@@ -277,25 +294,9 @@ namespace AudioQualityChecker
             return blur;
         }
 
-        private static void ObserveUiTask(Task task, string operation)
-        {
-            if (task.IsCompletedSuccessfully)
-                return;
-
-            _ = ObserveUiTaskAsync(task, operation);
-        }
-
-        private static async Task ObserveUiTaskAsync(Task task, string operation)
-        {
-            try
-            {
-                await task.ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"{operation} failed: {ex}");
-            }
-        }
+        // Kept as a shorthand for the many call sites in the MainWindow partials; the
+        // implementation lives in WindowExtensions so every window shares one copy.
+        private static void ObserveUiTask(Task task, string operation) => task.Observe(operation);
 
         // Playback history for back-button navigation
         private readonly List<AudioFileInfo> _playHistory = new();
@@ -357,6 +358,38 @@ namespace AudioQualityChecker
             ".m3u", ".m3u8", ".pls"
         };
 
+        /// <summary>True for anything a folder scan should pick up. Takes the extension once —
+        /// the inline predicates this replaces called GetExtension up to three times per file.</summary>
+        private static bool IsScannableFile(string path)
+        {
+            string ext = IOPath.GetExtension(path);
+            return SupportedExtensions.Contains(ext)
+                || ArchiveExtensions.Contains(ext)
+                || ext.Equals(".cue", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Recursively collects scannable files. Always call from a background thread —
+        /// on a large or network library this walk takes long enough to freeze the window.</summary>
+        private static List<string> EnumerateScannableFiles(IEnumerable<string> folders)
+        {
+            var found = new List<string>();
+            foreach (var folder in folders)
+            {
+                try
+                {
+                    found.AddRange(Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories)
+                                            .Where(IsScannableFile));
+                }
+                catch (Exception ex)
+                {
+                    // A permission-denied or offline network folder is dropped from the scan with
+                    // no partial-failure notice, so the user just sees fewer files than they added.
+                    if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+                }
+            }
+            return found;
+        }
+
         public MainWindow()
         {
             InitializeComponent();
@@ -379,11 +412,8 @@ namespace AudioQualityChecker
                 {
                     Dispatcher.InvokeAsync(() =>
                     {
-                        MessageBox.Show(
-                            IntegrityVerifier.GetWarningMessage(),
-                            "AudioAuditor — Security Warning",
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Warning);
+                        ErrorDialog.ShowWarning("AudioAuditor — Security Warning",
+                            IntegrityVerifier.GetWarningMessage(), this);
                     }, DispatcherPriority.Loaded);
                 }
             }
@@ -411,7 +441,7 @@ namespace AudioQualityChecker
                         dlg.ChkMqa.IsChecked = ThemeManager.MqaDetectionEnabled;
                         dlg.ChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
                         dlg.ChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
-                        dlg.ChkRipQuality.IsChecked = ThemeManager.RipQualityEnabled;
+                        dlg.ChkRipLog.IsChecked = ThemeManager.RipLogCheckEnabled;
                         dlg.ChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
                         if (dlg.ShowDialog() == true)
                         {
@@ -446,8 +476,7 @@ namespace AudioQualityChecker
                             AudioAnalyzer.EnableDefaultAiDetection = dlg.EnableDefaultAiDetection;
                             ThemeManager.ExperimentalAiDetection = dlg.EnableExperimentalAi;
                             AudioAnalyzer.EnableExperimentalAi = dlg.EnableExperimentalAi;
-                            ThemeManager.RipQualityEnabled = dlg.EnableRipQuality;
-                            AudioAnalyzer.EnableRipQuality = dlg.EnableRipQuality;
+                            ThemeManager.RipLogCheckEnabled = dlg.EnableRipLogCheck;
                             ThemeManager.SHLabsAiDetection = dlg.EnableSHLabs;
 
                             ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
@@ -466,6 +495,11 @@ namespace AudioQualityChecker
                     catch { /* never block startup */ }
                 }, DispatcherPriority.Loaded);
             }
+
+            // Build the Settings window ahead of the first click, at idle priority so it costs the
+            // user nothing — startup work and the first paint both outrank it.
+            Dispatcher.InvokeAsync(PrewarmSettingsWindow,
+                System.Windows.Threading.DispatcherPriority.ApplicationIdle);
 
             // Record usage day and check for 30-day donation popup
             RecordUsageDay();
@@ -600,7 +634,6 @@ namespace AudioQualityChecker
             AudioAnalyzer.EnableMqaDetection = ThemeManager.MqaDetectionEnabled;
             AudioAnalyzer.EnableDefaultAiDetection = ThemeManager.DefaultAiDetectionEnabled;
             AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
-            AudioAnalyzer.EnableRipQuality = ThemeManager.RipQualityEnabled;
 
             // Feature config overlay is still available via Settings but no longer shown automatically.
             // WelcomeDialog (above) now handles first-run and version-update feature configuration.
@@ -624,6 +657,22 @@ namespace AudioQualityChecker
                             {
                                 UpdateLatestText.Text = $"AudioAuditor v{UpdateChecker.LatestVersion} is available!";
                                 UpdateCurrentText.Text = $"You're currently on v{currentVersion}";
+
+                                // UpdateChecker drops the download and hash URLs together when the
+                                // release does not carry a verifiable AudioAuditor.exe +
+                                // AudioAuditor.exe.sha256 pair, so the in-app installer genuinely
+                                // cannot run. Hide it and say why — the button used to stay on
+                                // screen and return immediately on click, which just looked broken.
+                                bool canInstallInApp = UpdateChecker.LatestDownloadUrl != null;
+                                BtnUpdateDownloadInstall.Visibility =
+                                    canInstallInApp ? Visibility.Visible : Visibility.Collapsed;
+                                if (!canInstallInApp)
+                                {
+                                    UpdateProgressText.Text =
+                                        "This release has no verified download — update from the release page.";
+                                    UpdateProgressText.Visibility = Visibility.Visible;
+                                }
+
                                 UpdateOverlay.Visibility = Visibility.Visible;
                             });
                         }
@@ -651,14 +700,17 @@ namespace AudioQualityChecker
                 catch (Exception ex)
                 {
                     // If tray icon initialization fails, show error and fall through to normal close.
-                    MessageBox.Show(
-                        $"Could not minimize to system tray:\n{ex.Message}\n\nThe app will close normally.",
-                        "System Tray Error",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
+                    ErrorDialog.ShowWarning("System Tray Error",
+                        $"Could not minimize to system tray:\n{ex.Message}\n\nThe app will close normally.", this);
                     e.Cancel = false;
                 }
             }
+
+            // Flush any debounced settings write before the window goes away (see
+            // ThemeManager.SavePlayOptionsDebounced) — closing right after a slider drag must not
+            // lose the value the user just set.
+            try { ThemeManager.FlushPendingPlayOptions(); }
+            catch (Exception ex) { if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex); }
 
             _trayIcon?.Dispose();
             base.OnClosing(e);
@@ -676,7 +728,7 @@ namespace AudioQualityChecker
 
             // Initialize SMTC for media overlay integration (FluentFlyout, etc.)
             if (_smtc != null) return;
-            _smtc = new SmtcService();
+            _smtc = new SmtcService { Enabled = ThemeManager.SystemMediaControlsEnabled };
             _smtc.Initialize(hwnd);
             _smtc.PlayRequested += (_, _) => Dispatcher.InvokeAsync(() => { if (_player.IsPaused) _player.Resume(); });
             _smtc.PauseRequested += (_, _) => Dispatcher.InvokeAsync(() => { if (_player.IsPlaying) _player.Pause(); });
@@ -704,6 +756,23 @@ namespace AudioQualityChecker
         }
 
         // MaybeShowCrashRecoveryNotice lives in MainWindow.Overlays.cs.
+
+        /// <summary>
+        /// Applies the "expose to system media controls / Pano Scrobbler" toggle to the live SMTC
+        /// session without a restart. When re-enabled mid-playback, re-publishes the current track
+        /// so the session isn't blank until the next track change.
+        /// </summary>
+        public void ApplySystemMediaControlsEnabled(bool enabled)
+        {
+            if (_smtc == null) return;
+            _smtc.Enabled = enabled;
+            if (enabled && !string.IsNullOrEmpty(_player.CurrentFile))
+            {
+                _smtc.UpdateNowPlayingFromTags(_player.CurrentFile);
+                _smtc.UpdatePlaybackState(_player.IsPlaying, _player.IsPaused);
+                _lastSmtcTimelinePush = DateTime.MinValue; // force a timeline push on the next tick
+            }
+        }
 
         private const int WM_MOUSEHWHEEL = 0x020E;
         private const int WM_COPYDATA = 0x004A;
@@ -737,10 +806,18 @@ namespace AudioQualityChecker
                 try
                 {
                     var cds = Marshal.PtrToStructure<CopyDataStruct>(hParam);
-                    if (cds.dwData.ToInt32() == OpenPathsCopyDataId && cds.cbData > 0 && cds.lpData != IntPtr.Zero)
+                    if (cds.dwData.ToInt32() == OpenPathsCopyDataId &&
+                        CopyDataPayload.IsValidByteCount(cds.cbData) &&
+                        cds.lpData != IntPtr.Zero)
                     {
-                        string payload = Marshal.PtrToStringUni(cds.lpData, cds.cbData / 2) ?? "";
-                        var paths = payload.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                        // CharCountFor excludes the NUL terminator the sender counted in cbData —
+                        // PtrToStringUni copies exactly the requested chars and does not stop at it,
+                        // so asking for cbData/2 embedded a '\0' in the last path and File.Exists
+                        // then rejected it, silently dropping the file.
+                        string payload = Marshal.PtrToStringUni(
+                            cds.lpData, CopyDataPayload.CharCountFor(cds.cbData)) ?? "";
+                        var paths = CopyDataPayload.Unpack(payload);
+                        if (paths.Length == 0) return IntPtr.Zero;
                         Dispatcher.InvokeAsync(() =>
                         {
                             if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
@@ -757,7 +834,19 @@ namespace AudioQualityChecker
 
         protected override void OnClosed(EventArgs e)
         {
+            // Set before anything else: it stops a queued pre-warm from constructing a Settings
+            // window after this point, which (ShutdownMode.OnLastWindowClose) would leave the
+            // process running with no visible window.
+            _mainWindowClosed = true;
+            if (_pendingSettingsWindow != null)
+            {
+                try { _pendingSettingsWindow.Close(); } catch { }
+                _pendingSettingsWindow = null;
+            }
+
             SaveColumnLayout();
+            UnhookColumnLayoutPersistence();
+            _searchDebounceTimer?.Stop();
             // Final session snapshot for restore-on-next-launch (no-op unless enabled).
             SaveSessionState(cleanExit: true);
             StopWaveformAnimation();
@@ -784,6 +873,22 @@ namespace AudioQualityChecker
             NpLayoutPopup.Closed -= NpLayoutPopup_Closed;
 
             _miniPlayerWindow?.Close();
+
+            // Cancel every outstanding token source, but dispose only the ones whose tokens never
+            // reach CancellationTokenSource.CreateLinkedTokenSource. _analysisCts (Analysis.cs),
+            // _refreshCts (Refresh.cs) and _npLyricsCts (via LyricLookupPolicy) all do, and
+            // creating a linked source from a disposed parent throws ObjectDisposedException on
+            // the background thread. Cancelling is enough — an undisposed CTS with no timer and
+            // no WaitHandle holds nothing but managed memory.
+            _analysisCts?.Cancel();
+            _refreshCts?.Cancel();
+            _spectrogramCts?.Cancel();
+            _spectrogramCts?.Dispose();
+            _spectrogramCts = null;
+            _npPreloadCts?.Cancel();
+            _npPreloadCts?.Dispose();
+            _npPreloadCts = null;
+
             _analysisSemaphore?.Dispose();
             _shLabsSemaphore?.Dispose();
             _analysisPauseEvent?.Dispose();
@@ -799,28 +904,40 @@ namespace AudioQualityChecker
         //  Search / Filter
         // ═══════════════════════════════════════════
 
-        private bool SearchFilter(object obj)
-        {
-            if (obj is not AudioFileInfo f) return false;
+        private bool SearchFilter(object obj) =>
+            obj is AudioFileInfo f && Matches(f, _searchText, _statusFilter, _mismatchedBitrateFilter);
 
+        /// <summary>
+        /// The grid's filter predicate, free of window state so it can be unit tested. Runs once
+        /// per row on every refresh, so it stays allocation-free on the common paths.
+        /// </summary>
+        internal static bool Matches(AudioFileInfo f, string? searchText, AudioStatus? statusFilter, bool mismatchedBitrateOnly)
+        {
             // Status filter
-            if (_statusFilter.HasValue && f.Status != _statusFilter.Value)
+            if (statusFilter.HasValue && f.Status != statusFilter.Value)
                 return false;
 
             // Mismatched bitrate filter
-            if (_mismatchedBitrateFilter)
+            if (mismatchedBitrateOnly)
             {
-                if (f.ReportedBitrate <= 0 || f.ActualBitrate <= 0)
+                if (f.ReportedBitrate <= 0)
                     return false;
-                double ratio = (double)f.ActualBitrate / f.ReportedBitrate;
-                if (ratio >= 0.80) // matching is >= 80%
+                // For lossy files the analyzer normalises ActualBitrate back to
+                // ReportedBitrate when the evidence is ambiguous, hiding real mismatches.
+                // EstimatedSourceBitrate holds the raw spectral estimate before that
+                // normalisation, so prefer it when available (set for lossy only).
+                int compareBitrate = f.EstimatedSourceBitrate > 0 ? f.EstimatedSourceBitrate : f.ActualBitrate;
+                if (compareBitrate <= 0)
+                    return false;
+                double ratio = (double)compareBitrate / f.ReportedBitrate;
+                if (ratio >= 0.80)
                     return false;
             }
 
             // Text search
-            if (string.IsNullOrWhiteSpace(_searchText)) return true;
+            if (string.IsNullOrWhiteSpace(searchText)) return true;
 
-            var q = _searchText;
+            var q = searchText;
             return f.FileName.Contains(q, StringComparison.OrdinalIgnoreCase)
                 || f.Artist.Contains(q, StringComparison.OrdinalIgnoreCase)
                 || f.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
@@ -829,13 +946,32 @@ namespace AudioQualityChecker
                 || f.Status.ToString().Contains(q, StringComparison.OrdinalIgnoreCase);
         }
 
+        // Refresh() re-filters, re-groups and re-sorts the entire library and regenerates every
+        // container — far too expensive to run per keystroke. The placeholder still updates
+        // instantly; only the (invisible-until-done) list rebuild is coalesced.
+        private DispatcherTimer? _searchDebounceTimer;
+
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             _searchText = SearchBox.Text;
             SearchPlaceholder.Visibility = string.IsNullOrEmpty(_searchText)
                 ? Visibility.Visible : Visibility.Collapsed;
-            _filteredView?.Refresh();
-            ScrollToPlayingTrack();
+
+            if (_searchDebounceTimer == null)
+            {
+                _searchDebounceTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(250)
+                };
+                _searchDebounceTimer.Tick += (_, _) =>
+                {
+                    _searchDebounceTimer!.Stop();
+                    _filteredView?.Refresh();
+                    ScrollToPlayingTrack();
+                };
+            }
+            _searchDebounceTimer.Stop();
+            _searchDebounceTimer.Start();
         }
 
         private void StatusFilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -898,11 +1034,11 @@ namespace AudioQualityChecker
                 var expanded = ExpandPlaylists(allPaths);
                 var files = ExtractAudioFromArchives(expanded);
                 if (files.Count > 0)
-                    _ = AnalyzeAndAddFiles(files.ToArray());
+                    ObserveUiTask(AnalyzeAndAddFiles(files.ToArray()), "Add files");
             }
         }
 
-        private void AddFolder_Click(object sender, RoutedEventArgs e)
+        private async void AddFolder_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new OpenFolderDialog
             {
@@ -910,28 +1046,22 @@ namespace AudioQualityChecker
                 Multiselect = true
             };
 
-            if (dialog.ShowDialog() == true)
+            if (dialog.ShowDialog() != true) return;
+
+            var folders = dialog.FolderNames;
+            // The recursive walk and the archive extraction both run off the UI thread — a large or
+            // network library used to hang the window here until the whole tree was materialized.
+            var allFiles = await Task.Run(() => EnumerateScannableFiles(folders));
+
+            if (allFiles.Count == 0)
             {
-                var allFiles = new List<string>();
-                foreach (var folder in dialog.FolderNames)
-                {
-                    allFiles.AddRange(
-                        Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories)
-                            .Where(f => SupportedExtensions.Contains(IOPath.GetExtension(f))
-                                     || ArchiveExtensions.Contains(IOPath.GetExtension(f))
-                                     || IOPath.GetExtension(f).Equals(".cue", StringComparison.OrdinalIgnoreCase)));
-                }
-
-                if (allFiles.Count == 0)
-                {
-                    ErrorDialog.Show("No Files Found", "No supported audio files found in the selected folder(s).", this);
-                    return;
-                }
-
-                var expanded = ExtractAudioFromArchives(allFiles);
-                if (expanded.Count > 0)
-                    _ = AnalyzeAndAddFiles(expanded.ToArray());
+                ErrorDialog.Show("No Files Found", "No supported audio files found in the selected folder(s).", this);
+                return;
             }
+
+            var expanded = await Task.Run(() => ExtractAudioFromArchives(allFiles));
+            if (expanded.Count > 0)
+                ObserveUiTask(AnalyzeAndAddFiles(expanded.ToArray()), "Add folder");
         }
 
         private void ClearAll_Click(object sender, RoutedEventArgs e)
@@ -970,9 +1100,11 @@ namespace AudioQualityChecker
             _waveformBaseData = Array.Empty<double>();
             UpdatePlayerUI();
 
-            // Force a GC to release spectrogram bitmaps and audio data from memory
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
+            // Nudge the GC to release spectrogram bitmaps and audio data. A blocking gen-2
+            // collect plus WaitForPendingFinalizers froze the UI for hundreds of milliseconds on
+            // a large library; this matches the non-blocking policy ThemeManager already uses
+            // (see ThemeManager.WaitForMemoryAsync).
+            GC.Collect(0, GCCollectionMode.Optimized, blocking: false);
         }
 
         private void AnalysisPause_Click(object sender, RoutedEventArgs e)
@@ -1026,9 +1158,19 @@ namespace AudioQualityChecker
 
         private async void UpdateDownloadInstall_Click(object sender, RoutedEventArgs e)
         {
+            string? updateTempDir = null;
+            bool updaterStarted = false;
             try
             {
-                if (UpdateChecker.LatestDownloadUrl == null) return;
+                // Belt and braces: the overlay already hides this button when there is nothing
+                // verifiable to download. Returning silently here would be a dead click.
+                if (UpdateChecker.LatestDownloadUrl == null)
+                {
+                    UpdateProgressText.Text =
+                        "This release has no verified download — update from the release page.";
+                    UpdateProgressText.Visibility = Visibility.Visible;
+                    return;
+                }
 
                 BtnUpdateDownloadInstall.IsEnabled = false;
                 BtnUpdateOpenBrowser.IsEnabled = false;
@@ -1036,7 +1178,10 @@ namespace AudioQualityChecker
                 UpdateProgressText.Visibility = Visibility.Visible;
                 UpdateProgressText.Text = "Downloading update…";
 
-                string tempExe = Path.Combine(Path.GetTempPath(), "AudioAuditor_Update.exe");
+                updateTempDir = Path.Combine(
+                    Path.GetTempPath(), "AudioAuditor_Update_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(updateTempDir);
+                string tempExe = Path.Combine(updateTempDir, "AudioAuditor.exe");
                 var progress = new Progress<double>(p =>
                 {
                     Dispatcher.Invoke(() =>
@@ -1059,22 +1204,15 @@ namespace AudioQualityChecker
                 bool verified = await UpdateChecker.VerifySha256Async(tempExe);
                 if (!verified)
                 {
-                    // SHA256 verification failed — warn but still allow install
-                    var result = MessageBox.Show(
-                        "The downloaded file could not be verified against the published SHA256 hash.\n\n" +
-                        "This may happen if the release was just published. You can still install, but it's safer to download from GitHub directly.\n\n" +
-                        "Install anyway?",
-                        "AudioAuditor — Verification Warning",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Warning);
-                    if (result != MessageBoxResult.Yes)
-                    {
-                        UpdateProgressPanel.Visibility = Visibility.Collapsed;
-                        UpdateProgressText.Visibility = Visibility.Collapsed;
-                        BtnUpdateDownloadInstall.IsEnabled = true;
-                        BtnUpdateOpenBrowser.IsEnabled = true;
-                        return;
-                    }
+                    try { Directory.Delete(updateTempDir, recursive: true); } catch { }
+                    ErrorDialog.Show("AudioAuditor — Verification Failed",
+                        "The downloaded update did not match its published SHA256 hash and will not be installed. Open the GitHub release page to update manually.",
+                        this);
+                    UpdateProgressPanel.Visibility = Visibility.Collapsed;
+                    UpdateProgressText.Visibility = Visibility.Collapsed;
+                    BtnUpdateDownloadInstall.IsEnabled = true;
+                    BtnUpdateOpenBrowser.IsEnabled = true;
+                    return;
                 }
 
                 UpdateProgressText.Text = "Preparing to restart…";
@@ -1082,23 +1220,30 @@ namespace AudioQualityChecker
                 string currentExe = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "";
                 if (string.IsNullOrEmpty(currentExe))
                 {
-                    MessageBox.Show("Could not determine the current executable path. Please update manually.",
-                        "AudioAuditor — Update Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    ErrorDialog.Show("AudioAuditor — Update Error",
+                        "Could not determine the current executable path. Please update manually.", this);
                     UpdateOverlay.Visibility = Visibility.Collapsed;
                     return;
                 }
 
                 // Write a tiny batch script that waits for this process to exit,
                 // copies the new exe over the old one, then restarts.
-                string updaterBat = Path.Combine(Path.GetTempPath(), "AudioAuditor_Updater.bat");
-                string quotedCurrent = "\"" + currentExe.Replace("\"", "\\\"") + "\"";
-                string quotedTemp = "\"" + tempExe.Replace("\"", "\\\"") + "\"";
+                string updaterBat = Path.Combine(updateTempDir, "update.cmd");
+                string quotedCurrent = QuoteBatchPath(currentExe);
+                string quotedTemp = QuoteBatchPath(tempExe);
+                string quotedUpdateDir = QuoteBatchPath(updateTempDir);
+                string quotedSystemTemp = QuoteBatchPath(Path.GetTempPath());
+                // Wait on this process's PID, not on a name substring: "AudioAuditor" also matches
+                // AudioAuditorCLI.exe, so a running CLI used to keep the updater looping forever
+                // and the update never installed.
+                int currentPid = Environment.ProcessId;
                 string batch = $@"@echo off
 chcp 65001 >nul
 title AudioAuditor Updater
+set updateExit=0
 echo Waiting for AudioAuditor to close...
 :waitloop
-tasklist | findstr /I /C:""AudioAuditor"" >nul
+tasklist /FI ""PID eq {currentPid}"" /NH | findstr /I /C:""AudioAuditor"" >nul
 if %errorlevel% == 0 (
     timeout /t 1 /nobreak >nul
     goto waitloop
@@ -1108,11 +1253,16 @@ copy /Y {quotedTemp} {quotedCurrent}
 if %errorlevel% neq 0 (
     echo Update failed. Please download manually from GitHub.
     pause
-    exit /b 1
+    set updateExit=1
+    goto cleanup
 )
 echo Starting AudioAuditor...
-start "" {quotedCurrent}
-exit
+start """" {quotedCurrent}
+:cleanup
+del {quotedTemp} >nul 2>&1
+cd /d {quotedSystemTemp}
+rmdir /S /Q {quotedUpdateDir}
+exit /b %updateExit%
 ";
                 File.WriteAllText(updaterBat, batch);
 
@@ -1123,6 +1273,7 @@ exit
                     CreateNoWindow = false,
                     WindowStyle = ProcessWindowStyle.Hidden
                 });
+                updaterStarted = true;
 
                 Application.Current.Shutdown();
             }
@@ -1133,7 +1284,15 @@ exit
                 BtnUpdateDownloadInstall.IsEnabled = true;
                 BtnUpdateOpenBrowser.IsEnabled = true;
             }
+            finally
+            {
+                if (!updaterStarted && updateTempDir != null)
+                    try { Directory.Delete(updateTempDir, recursive: true); } catch { }
+            }
         }
+
+        internal static string QuoteBatchPath(string path) =>
+            "\"" + path.Replace("%", "%%") + "\"";
 
         // Feature-config, SH Labs privacy + scan-limit, and footer-support overlays live in
         // MainWindow.Overlays.cs.
@@ -1152,7 +1311,9 @@ exit
             int corrupt = _files.Count(f => f.Status == AudioStatus.Corrupt);
             int optimized = _files.Count(f => f.Status == AudioStatus.Optimized);
             int mqa = _files.Count(f => f.IsMqa);
-            int ai = _files.Count(f => f.IsAiGenerated);
+            // Match the grid's AI column, which shows the combined verdict — counting
+            // IsAiGenerated alone would only tally watermark hits and undercount the visible total.
+            int ai = _files.Count(f => f.IsAiPossibleOrYes);
             string optimizedPart = optimized > 0 ? $", {optimized} optimized" : "";
             string mqaPart = mqa > 0 ? $", {mqa} MQA" : "";
             string aiPart = ai > 0 ? $", {ai} AI" : "";
@@ -1200,7 +1361,12 @@ exit
         public void LoadPathsFromExternal(IEnumerable<string> paths)
         {
             if (paths == null) return;
-            var audioFiles = new List<string>();
+
+            // Split the roots on the UI thread (cheap, and _sessionRootPaths is UI-owned state),
+            // then do the recursive walk and archive extraction on a background thread — this is
+            // the drag-drop / file-association entry point and used to freeze on a dropped folder.
+            var folders = new List<string>();
+            var directFiles = new List<string>();
             foreach (var path in paths)
             {
                 if (string.IsNullOrWhiteSpace(path)) continue;
@@ -1208,34 +1374,38 @@ exit
                 if ((Directory.Exists(path) || File.Exists(path)) &&
                     !_sessionRootPaths.Contains(path, StringComparer.OrdinalIgnoreCase))
                     _sessionRootPaths.Add(path);
+
                 if (Directory.Exists(path))
                 {
-                    try
-                    {
-                        audioFiles.AddRange(
-                            Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories)
-                                     .Where(f => SupportedExtensions.Contains(IOPath.GetExtension(f))
-                                              || ArchiveExtensions.Contains(IOPath.GetExtension(f))
-                                              || IOPath.GetExtension(f).Equals(".cue", StringComparison.OrdinalIgnoreCase)));
-                    }
-                    catch { }
+                    folders.Add(path);
                 }
-                else if (File.Exists(path) && (SupportedExtensions.Contains(IOPath.GetExtension(path))
-                                            || ArchiveExtensions.Contains(IOPath.GetExtension(path))
-                                            || PlaylistExtensions.Contains(IOPath.GetExtension(path))
-                                            || IOPath.GetExtension(path).Equals(".cue", StringComparison.OrdinalIgnoreCase)))
+                else if (File.Exists(path))
                 {
-                    audioFiles.Add(path);
+                    string ext = IOPath.GetExtension(path);
+                    if (SupportedExtensions.Contains(ext)
+                        || ArchiveExtensions.Contains(ext)
+                        || PlaylistExtensions.Contains(ext)
+                        || ext.Equals(".cue", StringComparison.OrdinalIgnoreCase))
+                        directFiles.Add(path);
                 }
             }
 
-            if (audioFiles.Count > 0)
+            if (folders.Count == 0 && directFiles.Count == 0) return;
+
+            ObserveUiTask(ExpandAndAnalyzeAsync(folders, directFiles), "Load external paths");
+        }
+
+        private async Task ExpandAndAnalyzeAsync(List<string> folders, List<string> directFiles)
+        {
+            var expanded = await Task.Run(() =>
             {
-                var playlistExpanded = ExpandPlaylists(audioFiles);
-                var expanded = ExtractAudioFromArchives(playlistExpanded);
-                if (expanded.Count > 0)
-                    _ = AnalyzeAndAddFiles(expanded.ToArray());
-            }
+                var audioFiles = EnumerateScannableFiles(folders);
+                audioFiles.AddRange(directFiles);
+                return ExtractAudioFromArchives(ExpandPlaylists(audioFiles));
+            });
+
+            if (expanded.Count > 0)
+                await AnalyzeAndAddFiles(expanded.ToArray());
         }
 
         /// <summary>
@@ -1254,7 +1424,12 @@ exit
                     .Select(f => f.FilePath);
                 SessionRestoreService.Save(_sessionRootPaths, files, cleanExit, crashSnapshot);
             }
-            catch { /* never let session saving break the app */ }
+            catch (Exception ex)
+            {
+                // Never let session saving break the app — but a silent failure here means
+                // "restore last session" quietly offers stale data, or nothing at all, next launch.
+                if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
         }
 
         // ═══════════════════════════════════════════
@@ -1344,17 +1519,37 @@ exit
             }
         }
 
+        private void CdRipChecker_Click(object sender, RoutedEventArgs e)
+        {
+            // If a row is selected, pre-check the log in that file's folder; otherwise open empty.
+            string? initial = FileGrid.SelectedItem is AudioFileInfo file ? file.FolderPath : null;
+            new CdRipCheckerWindow(this, initial).Show();
+        }
+
         private void BatchMetadata_Click(object sender, RoutedEventArgs e)
+            => OpenBatchEditor(BatchEditorTab.AutoTag);
+
+        private void BatchEditTags_Click(object sender, RoutedEventArgs e)
+            => OpenBatchEditor(BatchEditorTab.ManualEdit);
+
+        private void OpenBatchEditor(BatchEditorTab tab)
         {
             var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
             if (selected.Count == 0 && FileGrid.SelectedItem is AudioFileInfo current)
                 selected.Add(current);
             if (selected.Count == 0) return;
 
-            var batch = new BatchMetadataWindow(selected, this);
-            batch.ShowDialog();
+            var editor = new BatchEditorWindow(selected, this, (file, newPath) =>
+            {
+                file.FilePath = newPath;
+                file.FileName = IOPath.GetFileName(newPath);
+                // Smart Rename's folder modes move the file into Artist/Album subfolders, so the
+                // folder has to move with it — rip-log mapping and the CD Rip Checker both read it.
+                file.FolderPath = IOPath.GetDirectoryName(newPath) ?? file.FolderPath;
+            }, tab);
+            editor.ShowDialog();
 
-            if (batch.MetadataChanged)
+            if (editor.MetadataChanged)
                 _filteredView?.Refresh();
         }
 
@@ -1370,19 +1565,88 @@ exit
                 _filteredView?.Refresh();
         }
 
+        private void RestoreBackup_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0) return;
+
+            var restorer = new RestoreBackupWindow(selected, this);
+            restorer.ShowDialog();
+
+            // The bytes on disk changed, so the cached tags on the rows are stale — a plain view
+            // refresh would keep showing the post-edit values.
+            if (restorer.MetadataChanged)
+                RefreshMetadataFromDisk(selected);
+        }
+
+        /// <summary>
+        /// Re-reads the grid's metadata columns from disk for the given rows. Used after a restore,
+        /// where the file's bytes changed underneath a row that still holds the post-edit values.
+        /// Only the metadata columns the grid shows — the analysis figures are unaffected by a tag
+        /// write, so there is nothing here worth a full re-scan.
+        /// </summary>
+        private void RefreshMetadataFromDisk(List<AudioFileInfo> files)
+        {
+            foreach (var file in files)
+            {
+                try
+                {
+                    var tags = Services.MetadataEditService.Read(file.FilePath);
+                    file.Title = string.IsNullOrWhiteSpace(tags.Title)
+                        ? Path.GetFileNameWithoutExtension(file.FilePath)
+                        : tags.Title.Trim();
+                    file.Artist = tags.Artist.Trim();
+                    file.Album = tags.Album.Trim();
+                    file.HasAlbumCover = Services.MetadataEditService.ReadCover(file.FilePath) != null;
+                }
+                catch
+                {
+                    // An unreadable file keeps whatever the row already showed; the restore result
+                    // itself was already reported in the dialog.
+                }
+            }
+
+            _filteredView?.Refresh();
+        }
+
+        private void WriteAnalysis_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0 && FileGrid.SelectedItem is AudioFileInfo current)
+                selected.Add(current);
+            if (selected.Count == 0) return;
+
+            new WriteAnalysisWindow(selected, this).ShowDialog();
+        }
+
+        private void TransferFromFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
+            if (selected.Count == 0 && FileGrid.SelectedItem is AudioFileInfo current)
+                selected.Add(current);
+            if (selected.Count == 0) return;
+
+            var dialog = new PasteMetadataWindow(selected, this);
+            dialog.SelectFolderMode();
+            dialog.ShowDialog();
+            if (dialog.MetadataChanged)
+                _filteredView?.Refresh();
+        }
+
         private void BatchRename_Click(object sender, RoutedEventArgs e)
         {
             var selected = FileGrid.SelectedItems.Cast<AudioFileInfo>().ToList();
             if (selected.Count == 0) return;
 
-            var renamer = new BatchRenameWindow(selected, (file, newPath) =>
+            var editor = new BatchEditorWindow(selected, this, (file, newPath) =>
             {
                 file.FilePath = newPath;
                 file.FileName = IOPath.GetFileName(newPath);
-            });
-            renamer.Owner = this;
-            renamer.ShowDialog();
-            _filteredView?.Refresh();
+                file.FolderPath = IOPath.GetDirectoryName(newPath) ?? file.FolderPath;
+            }, BatchEditorTab.Rename);
+            editor.ShowDialog();
+            if (editor.MetadataChanged)
+                _filteredView?.Refresh();
         }
 
         private void CompareWaveforms_Click(object sender, RoutedEventArgs e)
@@ -1491,8 +1755,8 @@ exit
                 msg += $"\nConfidence: {best.Score:P0}";
                 msg += "\n\nWrite this metadata to the file?";
 
-                var write = MessageBox.Show(msg, "AcoustID Result", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (write == MessageBoxResult.Yes && !file.IsCueVirtualTrack)
+                bool write = ErrorDialog.Confirm("AcoustID Result", msg, this);
+                if (write && !file.IsCueVirtualTrack)
                 {
                     try
                     {
@@ -1561,12 +1825,12 @@ exit
 
                 string msg = $"Replay Gain written to {written} file{(written != 1 ? "s" : "")}";
                 if (failed > 0) msg += $" ({failed} failed)";
-                MessageBox.Show(msg, "Replay Gain", MessageBoxButton.OK, MessageBoxImage.Information);
+                ErrorDialog.ShowInfo("Replay Gain", msg, this);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[WriteReplayGain_Click] {ex}");
-                MessageBox.Show($"Replay Gain failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                ErrorDialog.Show("Error", $"Replay Gain failed: {ex.Message}", this);
             }
         }
 
@@ -1814,15 +2078,74 @@ exit
         //  Settings
         // ═══════════════════════════════════════════
 
+        // SettingsWindow.xaml is ~2,900 lines across seven tabs, and InitializeComponent builds all
+        // of them even though the TabControl only ever renders one — so constructing it on the click
+        // is a visible stall. We hold the next instance ready instead.
+        //
+        // Deliberately NOT a Hide()/Show() reuse: SettingsWindow's constructor is where every
+        // control is populated from ThemeManager, and settings also change from outside that window
+        // (the feature-config overlay, the welcome dialog, Now Playing). Re-showing one instance
+        // would show stale values. Handing out a freshly constructed window each time keeps the
+        // existing "constructor loads current state" contract exactly as it is.
+        private SettingsWindow? _pendingSettingsWindow;
+        private int _pendingSettingsRevision;
+        private bool _mainWindowClosed;
+
+        private void PrewarmSettingsWindow()
+        {
+            if (_pendingSettingsWindow != null || _mainWindowClosed) return;
+            Dispatcher.InvokeAsync(() =>
+            {
+                // WPF registers a Window with Application.Windows in its constructor, and the
+                // default ShutdownMode is OnLastWindowClose — so a pre-warmed window built after
+                // the main window has gone would keep the process alive with nothing on screen.
+                if (_mainWindowClosed || _pendingSettingsWindow != null) return;
+                try
+                {
+                    int revision = ThemeManager.SettingsRevision;
+                    _pendingSettingsWindow = new SettingsWindow();
+                    _pendingSettingsRevision = revision;
+                }
+                catch (Exception ex) { if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex); }
+            }, System.Windows.Threading.DispatcherPriority.Background);
+        }
+
+        /// <summary>
+        /// Hands back a SettingsWindow whose controls reflect the *current* settings. The pre-built
+        /// instance is only reusable while nothing has changed since it was constructed — the whole
+        /// control state is loaded in its constructor, so a setting toggled from Now Playing or the
+        /// feature-config overlay in the meantime would otherwise show the old value.
+        /// </summary>
+        private SettingsWindow TakeSettingsWindow()
+        {
+            var pending = _pendingSettingsWindow;
+            _pendingSettingsWindow = null;
+
+            if (pending != null && _pendingSettingsRevision == ThemeManager.SettingsRevision)
+                return pending;
+
+            // Stale (or nothing warmed yet) — throw it away and build against today's values.
+            if (pending != null)
+            {
+                try { pending.Close(); } catch { }
+            }
+            return new SettingsWindow();
+        }
+
         private void Settings_Click(object sender, RoutedEventArgs e)
         {
-            var settingsWindow = new SettingsWindow { Owner = this };
-            // If the NP screen is showing with ColorMatch on, tint Settings to match it.
-            if (NpTryGetSettingsColorMatchBrushes(out var cmBrushes))
+            var settingsWindow = TakeSettingsWindow();
+            settingsWindow.Owner = this;
+            // If the NP screen is showing with ColorMatch on, tint Settings to match it —
+            // unless the user has independently turned Settings ColorMatch off.
+            if (ThemeManager.SettingsColorMatchEnabled && NpTryGetSettingsColorMatchBrushes(out var cmBrushes))
                 settingsWindow.ApplyColorMatchTint(cmBrushes);
             settingsWindow.ShowDialog();
 
             bool showPrivacy = settingsWindow.RequestPrivacyOnClose;
+
+            // Build the next one while the user is looking at the refreshed main window.
+            PrewarmSettingsWindow();
 
             // Refresh all UI state after settings change — wrap entirely to prevent crash
             try
@@ -1895,7 +2218,7 @@ exit
         private void Queue_Click(object sender, RoutedEventArgs e)
         {
             var queueWindow = new QueueWindow(_queue) { Owner = this, UpNext = GetUpNextTracks() };
-            if (ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default)
+            if (ThemeManager.QueueColorMatchEnabled && ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default)
             {
                 var tertiary = _mainAlbumTertiary == default ? _mainAlbumSecondary : _mainAlbumTertiary;
                 var background = Color.FromRgb(18, 22, 30);
@@ -1989,55 +2312,38 @@ exit
         private void QuickRename_Click(object sender, RoutedEventArgs e)
         {
             var selected = FileGrid.SelectedItems.OfType<AudioFileInfo>().ToList();
-            int count = 0;
+            // Counted like RunAutoRename/CopyToFolder: a locked or permission-denied file used to
+            // be swallowed entirely, so renaming 5 files with 2 failures reported "Renamed 3" —
+            // and 0 successes reported nothing at all, making the click look like a no-op.
+            int count = 0, skipped = 0, failed = 0;
             foreach (var file in selected)
             {
-                if (file.IsCueVirtualTrack) continue;
+                if (file.IsCueVirtualTrack) { skipped++; continue; }
+
+                // Naming lives in Core (RenameNaming) so the Avalonia menu produces the same
+                // names; null means this file lacks the bitrate the pattern needs.
+                string? newName = RenameNaming.QuickRenameFileName(file, ThemeManager.RenamePatternIndex);
+                if (newName == null) { skipped++; continue; }
+
                 string dir = IOPath.GetDirectoryName(file.FilePath) ?? "";
-                string name = IOPath.GetFileNameWithoutExtension(file.FilePath);
-                string ext = IOPath.GetExtension(file.FilePath);
-                string suffix;
-
-                string statusText = file.Status switch
-                {
-                    AudioStatus.Valid => "REAL",
-                    AudioStatus.Fake => "FAKE",
-                    AudioStatus.Corrupt => "CORRUPT",
-                    AudioStatus.Optimized => "OPTIMIZED",
-                    _ => "UNKNOWN"
-                };
-
-                switch (ThemeManager.RenamePatternIndex)
-                {
-                    case 0:
-                        if (file.ReportedBitrate <= 0) continue;
-                        suffix = $"[FAKE {file.ReportedBitrate}kbps]";
-                        break;
-                    case 1:
-                        if (file.ActualBitrate <= 0) continue;
-                        suffix = $"[{statusText} {file.ActualBitrate}kbps]";
-                        break;
-                    case 2:
-                        if (file.ReportedBitrate <= 0 || file.ActualBitrate <= 0) continue;
-                        suffix = $"[{statusText} {file.ReportedBitrate}kbps {file.ActualBitrate}kbps]";
-                        break;
-                    default:
-                        continue;
-                }
-
-                string newName = $"{name} {suffix}{ext}";
                 string newPath = IOPath.Combine(dir, newName);
-                if (File.Exists(newPath)) continue;
                 try
                 {
-                    File.Move(file.FilePath, newPath);
+                    if (FileRenamer.Rename(file.FilePath, newPath) != RenameOutcome.Renamed) { skipped++; continue; }
                     file.FilePath = newPath;
                     file.FileName = newName;
                     count++;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    failed++;
+                    if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+                }
             }
-            if (count > 0) StatusText.Text = $"Renamed {count} file(s).";
+            if (selected.Count > 0)
+                StatusText.Text = failed > 0
+                    ? $"Renamed {count} file(s), {skipped} skipped, {failed} failed."
+                    : $"Renamed {count} file(s), {skipped} skipped.";
         }
 
         private void AutoRenameArtistTitle_Click(object sender, RoutedEventArgs e)
@@ -2060,47 +2366,21 @@ exit
             foreach (var f in selected)
             {
                 if (f.IsCueVirtualTrack) { skipped++; continue; }
-                string artist = (f.Artist ?? "").Trim();
-                string title = (f.Title ?? "").Trim();
-                if (string.IsNullOrEmpty(artist) || string.IsNullOrEmpty(title))
-                {
-                    skipped++; continue;
-                }
+
+                // Naming lives in Core (RenameNaming); null means missing tags or already
+                // in the target form, both of which are skips.
+                string? desiredFull = RenameNaming.AutoRenameFileName(f, artistFirst);
+                if (desiredFull == null) { skipped++; continue; }
 
                 string dir = IOPath.GetDirectoryName(f.FilePath) ?? "";
-                string ext = IOPath.GetExtension(f.FilePath);
-                string nameNoExt = IOPath.GetFileNameWithoutExtension(f.FilePath);
-
-                // Preserve leading track-number prefix like "01 - ", "01. ", "1) ".
-                string trackPrefix = "";
-                var prefixMatch = System.Text.RegularExpressions.Regex.Match(
-                    nameNoExt, @"^\s*\d{1,3}\s*[-.\)]\s+");
-                if (prefixMatch.Success)
-                    trackPrefix = prefixMatch.Value;
-
-                string body = SanitizeForFilename(artistFirst
-                    ? $"{artist} - {title}"
-                    : $"{title} - {artist}");
-                string desiredFull = $"{trackPrefix}{body}{ext}";
-                string currentFile = IOPath.GetFileName(f.FilePath);
-
-                if (string.Equals(currentFile, desiredFull, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Already in target form — leave it alone.
-                    skipped++; continue;
-                }
-
                 string newPath = IOPath.Combine(dir, desiredFull);
-                if (File.Exists(newPath) &&
-                    !string.Equals(newPath, f.FilePath, StringComparison.OrdinalIgnoreCase))
-                {
-                    // A different file already owns that name — don't overwrite.
-                    skipped++; continue;
-                }
-
                 try
                 {
-                    File.Move(f.FilePath, newPath);
+                    // A different file already owning that name comes back as TargetExists.
+                    if (FileRenamer.Rename(f.FilePath, newPath) != RenameOutcome.Renamed)
+                    {
+                        skipped++; continue;
+                    }
                     f.FilePath = newPath;
                     f.FileName = desiredFull;
                     renamed++;
@@ -2114,14 +2394,7 @@ exit
                 : $"Auto rename ({note}): {renamed} renamed, {skipped} skipped.";
         }
 
-        private static string SanitizeForFilename(string s)
-        {
-            foreach (char c in IOPath.GetInvalidFileNameChars())
-                s = s.Replace(c, '_');
-            // Collapse repeated spaces that may result from sanitization
-            s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
-            return s;
-        }
+        private static string SanitizeForFilename(string s) => RenameNaming.SanitizeForFilename(s);
 
         private void CopyToFolder_Click(object sender, RoutedEventArgs e)
         {
@@ -2135,23 +2408,24 @@ exit
             };
             if (dlg.ShowDialog() != true) return;
             string dest = dlg.FolderName;
-            int count = 0, failed = 0;
+            int count = 0, failed = 0, skipped = 0;
             foreach (var file in selected)
             {
                 try
                 {
                     string target = IOPath.Combine(dest, IOPath.GetFileName(file.FilePath));
-                    if (!File.Exists(target))
-                    {
-                        File.Copy(file.FilePath, target);
-                        count++;
-                    }
+                    // An existing target is skipped, never overwritten — but it has to be counted,
+                    // otherwise copying onto a folder that already has the files reported a bare
+                    // "Copied 0 file(s)" and looked like a silent failure.
+                    if (File.Exists(target)) { skipped++; continue; }
+                    File.Copy(file.FilePath, target);
+                    count++;
                 }
                 catch { failed++; }
             }
-            StatusText.Text = failed > 0
-                ? $"Copied {count} file(s) to {dest} ({failed} failed / already exists)"
-                : $"Copied {count} file(s) to {dest}";
+            StatusText.Text = $"Copied {count} file(s) to {dest}"
+                + (skipped > 0 ? $" ({skipped} already there)" : "")
+                + (failed > 0 ? $" ({failed} failed)" : "");
         }
 
         private void MoveToFolder_Click(object sender, RoutedEventArgs e)
@@ -2166,24 +2440,24 @@ exit
             };
             if (dlg.ShowDialog() != true) return;
             string dest = dlg.FolderName;
-            int count = 0, failed = 0;
+            int count = 0, failed = 0, skipped = 0;
             foreach (var file in selected)
             {
                 try
                 {
                     string target = IOPath.Combine(dest, IOPath.GetFileName(file.FilePath));
-                    if (!File.Exists(target))
-                    {
-                        File.Move(file.FilePath, target);
-                        count++;
-                        _files.Remove(file);
-                    }
+                    // Same as Copy: a name conflict is a skip, and it has to be reported rather
+                    // than vanishing into a "Moved 0 file(s)" with no reason given.
+                    if (File.Exists(target)) { skipped++; continue; }
+                    File.Move(file.FilePath, target);
+                    count++;
+                    _files.Remove(file);
                 }
                 catch { failed++; }
             }
-            StatusText.Text = failed > 0
-                ? $"Moved {count} file(s) to {dest} ({failed} failed / conflict)"
-                : $"Moved {count} file(s) to {dest}";
+            StatusText.Text = $"Moved {count} file(s) to {dest}"
+                + (skipped > 0 ? $" ({skipped} skipped — name already exists there)" : "")
+                + (failed > 0 ? $" ({failed} failed)" : "");
             UpdateStatusSummary();
         }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -23,6 +24,9 @@ namespace AudioQualityChecker
         private int _waveformDataWidth;
         private double[] _waveformBaseData = Array.Empty<double>();
         private bool _playbarAnimRendering;
+        // Last colours pushed into the app resource dictionary by the Rainbow Bars cycle.
+        private Color _lastRainbowAccent;
+        private Color _lastRainbowSecondary;
 
         /// <summary>
         /// Generates a set of pre-computed waveform amplitudes for the background visualization.
@@ -139,14 +143,27 @@ namespace AudioQualityChecker
                 double hueBase = (elapsed * 30.0) % 360.0; // 30 degrees/sec cycle
                 var accentColor = HsvToColor(hueBase, 0.85, 0.95);
                 accentColor.A = 255;
-                var accentBrush = new SolidColorBrush(accentColor);
-                accentBrush.Freeze();
-                Application.Current.Resources["PlaybarAccentColor"] = accentBrush;
                 var secondaryColor = HsvToColor((hueBase + 120) % 360, 0.85, 0.95);
                 secondaryColor.A = 255;
-                var secondaryBrush = new SolidColorBrush(secondaryColor);
-                secondaryBrush.Freeze();
-                Application.Current.Resources["PlaybarSecondaryColor"] = secondaryBrush;
+
+                // Only write when the colour actually changed. Assigning into
+                // Application.Current.Resources invalidates every DynamicResource binding on that
+                // key across the whole app, and at 30 Hz the hue often lands on the same byte
+                // triple twice in a row — those writes were pure invalidation for no visual change.
+                if (accentColor != _lastRainbowAccent)
+                {
+                    var accentBrush = new SolidColorBrush(accentColor);
+                    accentBrush.Freeze();
+                    Application.Current.Resources["PlaybarAccentColor"] = accentBrush;
+                    _lastRainbowAccent = accentColor;
+                }
+                if (secondaryColor != _lastRainbowSecondary)
+                {
+                    var secondaryBrush = new SolidColorBrush(secondaryColor);
+                    secondaryBrush.Freeze();
+                    Application.Current.Resources["PlaybarSecondaryColor"] = secondaryBrush;
+                    _lastRainbowSecondary = secondaryColor;
+                }
             }
 
             // Wave is accent-driven: the progress fill uses the live accent→secondary at full
@@ -204,13 +221,41 @@ namespace AudioQualityChecker
             RenderPlaybarAnim();
         }
 
+        /// <summary>
+        /// Pooled visuals for one waveform canvas. The geometry genuinely has to be rebuilt each
+        /// frame (the wave is animated — _waveformData changes every tick), but the Path/Ellipse
+        /// elements, the two solid brushes and the gradient do not. Rebuilding them per frame meant
+        /// ~9 Freezables plus a Children.Clear()/Add() measure-arrange pass per canvas at 30 Hz,
+        /// and every Freeze() call was wasted because the object was new anyway.
+        /// </summary>
+        private sealed class WaveformVisuals
+        {
+            public System.Windows.Shapes.Path? BgPath;
+            public SolidColorBrush? BgBrush;
+            public System.Windows.Shapes.Path? ProgressPath;
+            public LinearGradientBrush? Gradient;
+            public System.Windows.Shapes.Ellipse? Cap;
+            public SolidColorBrush? CapBrush;
+            public Color GradientC0, GradientC1, GradientC2;
+        }
+
+        private readonly Dictionary<Canvas, WaveformVisuals> _waveformVisuals = new();
+
         private void RenderWaveformCanvas(Canvas canvas, double canvasWidth, double canvasHeight, int points,
             Color bgColor, Color[] gradientColors, double progress)
         {
-            canvas.Children.Clear();
             double mid = canvasHeight / 2;
             double fadeRegion = 0.03;
             double amplitudeScale = mid * 0.85;
+
+            // Other code clears these canvases to blank the waveform; rebuild the pool if so.
+            if (canvas.Children.Count == 0)
+                _waveformVisuals.Remove(canvas);
+            if (!_waveformVisuals.TryGetValue(canvas, out var v))
+            {
+                v = new WaveformVisuals();
+                _waveformVisuals[canvas] = v;
+            }
 
             // Background wave
             var bgGeometry = new StreamGeometry();
@@ -234,75 +279,113 @@ namespace AudioQualityChecker
             }
             bgGeometry.Freeze();
 
-            var bgBrush = new SolidColorBrush(bgColor);
-            bgBrush.Freeze();
-            canvas.Children.Add(new System.Windows.Shapes.Path
+            if (v.BgPath == null)
             {
-                Data = bgGeometry,
-                Fill = bgBrush,
-                IsHitTestVisible = false
-            });
+                v.BgBrush = new SolidColorBrush(bgColor);
+                v.BgPath = new System.Windows.Shapes.Path
+                {
+                    Fill = v.BgBrush,
+                    IsHitTestVisible = false
+                };
+                canvas.Children.Add(v.BgPath);
+            }
+            else if (v.BgBrush!.Color != bgColor)
+            {
+                v.BgBrush.Color = bgColor;
+            }
+            v.BgPath.Data = bgGeometry;
 
             // Progress overlay
             progress = Math.Clamp(progress, 0, 1);
             int progressPixel = (int)Math.Round(progress * canvasWidth);
             progressPixel = Math.Clamp(progressPixel, 0, Math.Min(points, (int)canvasWidth));
-            if (progressPixel > 0)
+
+            if (progressPixel <= 0)
             {
-                var gradient = new LinearGradientBrush(
+                // Nothing played yet — hide rather than remove, so the next frame is a no-op.
+                if (v.ProgressPath != null) v.ProgressPath.Visibility = Visibility.Collapsed;
+                if (v.Cap != null) v.Cap.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            // The gradient only changes when the palette does (theme switch, colour-match, or the
+            // Rainbow Bars cycle) — not every frame.
+            if (v.Gradient == null ||
+                v.GradientC0 != gradientColors[0] || v.GradientC1 != gradientColors[1] || v.GradientC2 != gradientColors[2])
+            {
+                v.Gradient = new LinearGradientBrush(
                     new GradientStopCollection
                     {
                         new GradientStop(gradientColors[0], 0),
                         new GradientStop(gradientColors[1], 0.5),
                         new GradientStop(gradientColors[2], 1.0)
                     }, new Point(0, 0), new Point(1, 0));
-                gradient.Freeze();
+                v.Gradient.Freeze();
+                v.GradientC0 = gradientColors[0];
+                v.GradientC1 = gradientColors[1];
+                v.GradientC2 = gradientColors[2];
+                if (v.ProgressPath != null) v.ProgressPath.Fill = v.Gradient;
+            }
 
-                var progGeometry = new StreamGeometry();
-                using (var ctx = progGeometry.Open())
+            var progGeometry = new StreamGeometry();
+            using (var ctx = progGeometry.Open())
+            {
+                ctx.BeginFigure(new Point(0, mid), true, true);
+                for (int i = 0; i < progressPixel && i < points; i++)
                 {
-                    ctx.BeginFigure(new Point(0, mid), true, true);
-                    for (int i = 0; i < progressPixel && i < points; i++)
-                    {
-                        double t = (double)i / points;
-                        double envelope = WaveformEnvelope(t, fadeRegion);
-                        double amp = _waveformData[i] * amplitudeScale * envelope;
-                        ctx.LineTo(new Point(i, mid - amp), true, false);
-                    }
-                    if (progressPixel > 0)
-                        ctx.LineTo(new Point(progressPixel, mid), true, false);
-                    for (int i = Math.Min(progressPixel, points) - 1; i >= 0; i--)
-                    {
-                        double t = (double)i / points;
-                        double envelope = WaveformEnvelope(t, fadeRegion);
-                        double amp = _waveformData[i] * amplitudeScale * envelope;
-                        ctx.LineTo(new Point(i, mid + amp), true, false);
-                    }
+                    double t = (double)i / points;
+                    double envelope = WaveformEnvelope(t, fadeRegion);
+                    double amp = _waveformData[i] * amplitudeScale * envelope;
+                    ctx.LineTo(new Point(i, mid - amp), true, false);
                 }
-                progGeometry.Freeze();
-
-                canvas.Children.Add(new System.Windows.Shapes.Path
+                ctx.LineTo(new Point(progressPixel, mid), true, false);
+                for (int i = Math.Min(progressPixel, points) - 1; i >= 0; i--)
                 {
-                    Data = progGeometry,
-                    Fill = gradient,
+                    double t = (double)i / points;
+                    double envelope = WaveformEnvelope(t, fadeRegion);
+                    double amp = _waveformData[i] * amplitudeScale * envelope;
+                    ctx.LineTo(new Point(i, mid + amp), true, false);
+                }
+            }
+            progGeometry.Freeze();
+
+            if (v.ProgressPath == null)
+            {
+                v.ProgressPath = new System.Windows.Shapes.Path
+                {
+                    Fill = v.Gradient,
                     IsHitTestVisible = false
-                });
+                };
+                canvas.Children.Add(v.ProgressPath);
+            }
+            v.ProgressPath.Visibility = Visibility.Visible;
+            v.ProgressPath.Data = progGeometry;
 
-                if (progressPixel > 1)
+            if (progressPixel > 1)
+            {
+                if (v.Cap == null)
                 {
-                    var capBrush = new SolidColorBrush(gradientColors[2]);
-                    capBrush.Freeze();
-                    var cap = new System.Windows.Shapes.Ellipse
+                    v.CapBrush = new SolidColorBrush(gradientColors[2]);
+                    v.Cap = new System.Windows.Shapes.Ellipse
                     {
                         Width = 5,
                         Height = 5,
-                        Fill = capBrush,
+                        Fill = v.CapBrush,
                         IsHitTestVisible = false
                     };
-                    Canvas.SetLeft(cap, progressPixel - 2.5);
-                    Canvas.SetTop(cap, mid - 2.5);
-                    canvas.Children.Add(cap);
+                    canvas.Children.Add(v.Cap);
                 }
+                else if (v.CapBrush!.Color != gradientColors[2])
+                {
+                    v.CapBrush.Color = gradientColors[2];
+                }
+                v.Cap.Visibility = Visibility.Visible;
+                Canvas.SetLeft(v.Cap, progressPixel - 2.5);
+                Canvas.SetTop(v.Cap, mid - 2.5);
+            }
+            else if (v.Cap != null)
+            {
+                v.Cap.Visibility = Visibility.Collapsed;
             }
         }
 
@@ -401,18 +484,8 @@ namespace AudioQualityChecker
                 return;
             }
 
-            var accentBrush = TryFindResource("PlaybarAccentColor") as SolidColorBrush
-                ?? TryFindResource("AccentColor") as SolidColorBrush
-                ?? Brushes.CornflowerBlue;
-            var secondaryBrush = TryFindResource("PlaybarSecondaryColor") as SolidColorBrush
-                ?? accentBrush;
-            var tertiaryBrush = TryFindResource("PlaybarTertiaryColor") as SolidColorBrush
-                ?? secondaryBrush;
-            Color accent = accentBrush.Color;
-            Color secondary = secondaryBrush.Color;
             bool colormatchCycle = ThemeManager.MainColorMatchEnabled && _mainAlbumPrimary != default;
-            if (colormatchCycle)
-                (accent, secondary) = InterpolatePlaybarCycleColors(accent, secondary, tertiaryBrush.Color, DateTime.UtcNow.TimeOfDay.TotalSeconds);
+            var (accent, secondary) = ResolvePlaybarRenderColors(colormatchCycle);
             double pct = SeekSlider.Maximum > 0 ? SeekSlider.Value / SeekSlider.Maximum : 0;
 
             EnsurePlaybarAnimRendering(colormatchCycle || IsAnimatedPlaybarStyle(style));
@@ -445,19 +518,36 @@ namespace AudioQualityChecker
             if (!colormatchCycle && !IsAnimatedPlaybarStyle(style))
                 return;
 
+            var (accent, secondary) = ResolvePlaybarRenderColors(colormatchCycle);
+            double pct = SeekSlider.Maximum > 0 ? SeekSlider.Value / SeekSlider.Maximum : 0;
+            RenderPlaybar(PlaybarAnimCanvas, pct, accent, secondary, style, DateTime.UtcNow.TimeOfDay.TotalSeconds);
+        }
+
+        /// <summary>
+        /// Resolves the playbar accent/secondary pair from the theme resources, applying the
+        /// colour-match cycle when active. Was duplicated verbatim in RenderPlaybarAnim and
+        /// PlaybarAnimRendering_Tick — two copies of the same 3 string-keyed resource walks.
+        ///
+        /// Deliberately NOT cached across frames: the Rainbow Bars cycle rewrites these resource
+        /// keys as it runs, so a cache would need invalidating on every theme, colour-match and
+        /// rainbow write, and a stale entry shows as the wrong playbar colour.
+        /// </summary>
+        private (Color Accent, Color Secondary) ResolvePlaybarRenderColors(bool colormatchCycle)
+        {
             var accentBrush = TryFindResource("PlaybarAccentColor") as SolidColorBrush
                 ?? TryFindResource("AccentColor") as SolidColorBrush
                 ?? Brushes.CornflowerBlue;
             var secondaryBrush = TryFindResource("PlaybarSecondaryColor") as SolidColorBrush
                 ?? accentBrush;
-            var tertiaryBrush = TryFindResource("PlaybarTertiaryColor") as SolidColorBrush
-                ?? secondaryBrush;
+
             Color accent = accentBrush.Color;
             Color secondary = secondaryBrush.Color;
-            if (colormatchCycle)
-                (accent, secondary) = InterpolatePlaybarCycleColors(accent, secondary, tertiaryBrush.Color, DateTime.UtcNow.TimeOfDay.TotalSeconds);
-            double pct = SeekSlider.Maximum > 0 ? SeekSlider.Value / SeekSlider.Maximum : 0;
-            RenderPlaybar(PlaybarAnimCanvas, pct, accent, secondary, style, DateTime.UtcNow.TimeOfDay.TotalSeconds);
+            if (!colormatchCycle) return (accent, secondary);
+
+            var tertiaryBrush = TryFindResource("PlaybarTertiaryColor") as SolidColorBrush
+                ?? secondaryBrush;
+            return InterpolatePlaybarCycleColors(accent, secondary, tertiaryBrush.Color,
+                DateTime.UtcNow.TimeOfDay.TotalSeconds);
         }
 
         /// <summary>

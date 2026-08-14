@@ -22,7 +22,9 @@ namespace AudioQualityChecker.Services
     {
         private readonly IPlaybackSettings _playbackSettings;
         private PlaybackSettingsSnapshot _currentPlaybackSettings = null!;
-        private WaveOutEvent? _waveOut;
+        // IWavePlayer rather than WaveOutEvent so the cross-platform build can slot in
+        // OpenAlWavePlayer. On Windows this is still a WaveOutEvent — see CreateOutputDevice().
+        private IWavePlayer? _waveOut;
         private AudioFileReader? _reader;           // Primary reader (MP3, WAV, AIFF, WMA)
         private MediaFoundationReader? _mfReader;    // Fallback for other formats
         private SampleChannel? _sampleChannel;       // Volume wrapper for MF fallback
@@ -35,7 +37,7 @@ namespace AudioQualityChecker.Services
         private float _normalizationGain = 1f;
 
         // Crossfade support
-        private WaveOutEvent? _fadeOutDevice;
+        private IWavePlayer? _fadeOutDevice;
         private AudioFileReader? _fadeOutReader;
         private MediaFoundationReader? _fadeOutMfReader;
         private WaveStream? _fadeOutWaveStreamReader;
@@ -84,7 +86,11 @@ namespace AudioQualityChecker.Services
         public event EventHandler? GaplessTrackChanged; // fired on seamless track switch
 
         public AudioPlayer()
+#if CROSS_PLATFORM
+            : this(new AvaloniaPlaybackSettings())
+#else
             : this(new ThemeManagerSettings())
+#endif
         {
         }
 
@@ -118,22 +124,42 @@ namespace AudioQualityChecker.Services
             return band >= 0 && band < gains.Count ? gains[band] : 0f;
         }
 
-        public float[] GetVisualizerSamples(int count)
-        {
-            return GetVisualizerSnapshot(count).Samples;
-        }
-
         public (float[] Samples, float UserVolume) GetVisualizerSnapshot(int count)
         {
             lock (_vizLock)
             {
                 int actual = Math.Min(count, _vizBuffer.Length);
                 float[] result = new float[actual];
-                int start = (_vizWritePos - actual + _vizBuffer.Length) % _vizBuffer.Length;
-                for (int i = 0; i < actual; i++)
-                    result[i] = _vizBuffer[(start + i) % _vizBuffer.Length];
+                CopyVisualizerLocked(result, actual);
                 return (result, _vizCapturedUserVolume);
             }
+        }
+
+        /// <summary>
+        /// Fills <paramref name="destination"/> with the most recent samples and returns how many
+        /// were written. Lets render loops reuse one buffer instead of allocating per frame — the
+        /// spectrogram asks for 4096 floats at 60 Hz, which was ~1 MB/s of garbage on its own.
+        /// The ring splits into at most two contiguous runs, so this is two Array.Copy calls rather
+        /// than a per-element modulo taken while holding the audio lock.
+        /// </summary>
+        public int GetVisualizerSnapshot(float[] destination, out float userVolume)
+        {
+            lock (_vizLock)
+            {
+                int actual = Math.Min(destination.Length, _vizBuffer.Length);
+                CopyVisualizerLocked(destination, actual);
+                userVolume = _vizCapturedUserVolume;
+                return actual;
+            }
+        }
+
+        private void CopyVisualizerLocked(float[] destination, int actual)
+        {
+            int start = (_vizWritePos - actual + _vizBuffer.Length) % _vizBuffer.Length;
+            int firstRun = Math.Min(actual, _vizBuffer.Length - start);
+            Array.Copy(_vizBuffer, start, destination, 0, firstRun);
+            if (firstRun < actual)
+                Array.Copy(_vizBuffer, 0, destination, firstRun, actual - firstRun);
         }
 
         /// <summary>
@@ -407,8 +433,15 @@ namespace AudioQualityChecker.Services
 
             int steps = Math.Max(1, durationMs / FadeStepMs);
             int currentStep = 0;
-            _startFadeTimer = new System.Threading.Timer(_ =>
+            System.Threading.Timer? self = null;
+            self = new System.Threading.Timer(_ =>
             {
+                // Timer.Dispose() does NOT wait for an in-flight callback, so a tick belonging to
+                // a previous track can land after Stop()/Play() has rebuilt the pipeline and armed
+                // a new fade. Without this guard that stale tick writes a partial volume to the NEW
+                // reader and then disposes the NEW timer, leaving the track silent forever.
+                if (!ReferenceEquals(System.Threading.Volatile.Read(ref _startFadeTimer), self)) return;
+
                 currentStep++;
                 float progress = Math.Min(1f, (float)currentStep / steps);
                 float vol = targetVol * progress;
@@ -420,7 +453,11 @@ namespace AudioQualityChecker.Services
                     _startFadeTimer = null;
                     ApplyVolume(); // ensure exact final volume
                 }
-            }, null, FadeStepMs, FadeStepMs);
+            }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+            // Publish the field before arming, so the first tick can never beat the assignment
+            // and see a stale (or null) _startFadeTimer through the guard above.
+            _startFadeTimer = self;
+            self.Change(FadeStepMs, FadeStepMs);
         }
 
         /// <summary>
@@ -468,6 +505,8 @@ namespace AudioQualityChecker.Services
             bool adoptedWarmDecoder = TryTakePreopenedDecoder(filePath, out var decoded);
             if (!adoptedWarmDecoder)
                 DisposePreparedDecoder();
+            System.Diagnostics.Debug.WriteLine(
+                $"[SkipPerf] decoder {(adoptedWarmDecoder ? "WARM (adopted pre-open)" : "COLD (opening now)")} — {System.IO.Path.GetFileName(filePath)}");
 
             Stop();
 
@@ -584,11 +623,20 @@ namespace AudioQualityChecker.Services
                 int sampleRate = _spatialAudio.WaveFormat.SampleRate;
                 int baseLatency = sampleRate > 48000 ? 300 : 200;
                 int baseBuffers = sampleRate > 48000 ? 4 : 3;
+#if CROSS_PLATFORM
+                // NAudio has no output device for Linux/macOS — WaveOutEvent P/Invokes winmm.dll
+                // and throws on construction. The factory still returns a WaveOutEvent when this
+                // build runs on Windows, so only the non-Windows case changes.
+                _waveOut = AudioOutputFactory.Create(
+                    useLargeBuffers ? Math.Max(baseLatency, 300) : baseLatency,
+                    useLargeBuffers ? Math.Max(baseBuffers, 4) : baseBuffers);
+#else
                 _waveOut = new WaveOutEvent
                 {
                     DesiredLatency = useLargeBuffers ? Math.Max(baseLatency, 300) : baseLatency,
                     NumberOfBuffers = useLargeBuffers ? Math.Max(baseBuffers, 4) : baseBuffers
                 };
+#endif
                 _waveOut.PlaybackStopped += OnPlaybackStopped;
                 _waveOut.Init(new CaptureWaveProvider(finalSource, this));
                 _waveOut.Play();
@@ -617,18 +665,17 @@ namespace AudioQualityChecker.Services
             const float targetPeak = 0.891f;
             float maxSample = 0f;
 
+            if (!AudioDecoderFactory.TryOpen(filePath, out var decoded))
+                return 1f;
+
+            // The scan MUST run under try/finally: this app is pointed at corrupt and truncated
+            // files by design, and a throw from Read() used to leave the decoder undisposed. The
+            // file then stayed locked, which broke the app's own rename/move/delete on exactly the
+            // files a user most wants to act on.
             try
             {
-                if (!AudioDecoderFactory.TryOpen(filePath, out var decoded))
-                    return 1f;
-
-                ISampleProvider scanner = decoded.Source!;
-                IDisposable scanDisposable = decoded.Reader
-                    ?? (IDisposable?)decoded.MfReader
-                    ?? decoded.WaveStreamReader
-                    ?? decoded.ExtraDisposable
-                    ?? decoded.ExtraDisposable2
-                    ?? throw new InvalidOperationException("No disposable scanner available");
+                ISampleProvider? scanner = decoded.Source;
+                if (scanner == null) return 1f;
 
                 float[] buf = new float[8192];
                 int read;
@@ -645,12 +692,23 @@ namespace AudioQualityChecker.Services
                     totalRead += read;
                 }
 
-                scanDisposable.Dispose();
-
                 if (maxSample > 0.001f)
                     return Math.Min(targetPeak / maxSample, 3f);
             }
-            catch { }
+            catch (Exception ex)
+            {
+#if CROSS_PLATFORM
+                // No CrashLoggingEnabled toggle on this build yet; the logger is local-only
+                // and path-sanitised, so log unconditionally.
+                LocalCrashLogger.Write(ex);
+#else
+                if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+#endif
+            }
+            finally
+            {
+                decoded.Dispose();
+            }
             return 1f;
         }
 

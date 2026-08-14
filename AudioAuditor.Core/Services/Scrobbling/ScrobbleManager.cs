@@ -71,8 +71,19 @@ namespace AudioQualityChecker.Services.Scrobbling
 
         public void RaiseStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
 
-        public bool AnyAuthenticated => _scrobblers.Any(s => s.IsAuthenticated);
-        public bool AnyEnabled => _scrobblers.Any(s => s.IsEnabled && s.IsAuthenticated);
+        /// <summary>
+        /// Copy of the registered scrobblers, taken under <see cref="_lock"/>. Every read of
+        /// <see cref="_scrobblers"/> goes through here: Register and Dispose mutate the list, so
+        /// enumerating it directly threw "Collection was modified" when a service was added or
+        /// disposed while a track was playing.
+        /// </summary>
+        private IScrobbler[] Snapshot()
+        {
+            lock (_lock) return _scrobblers.ToArray();
+        }
+
+        public bool AnyAuthenticated => Snapshot().Any(s => s.IsAuthenticated);
+        public bool AnyEnabled => Snapshot().Any(s => s.IsEnabled && s.IsAuthenticated);
 
         public IReadOnlyCollection<string> Blacklist
         {
@@ -119,7 +130,7 @@ namespace AudioQualityChecker.Services.Scrobbling
             // Now playing notification (best effort, fire-and-forget)
             if (PauseScrobbling || _suppressedThisPlay) return;
             var ct = _cts.Token;
-            foreach (var s in _scrobblers.Where(s => s.IsEnabled && s.IsAuthenticated))
+            foreach (var s in Snapshot().Where(s => s.IsEnabled && s.IsAuthenticated))
             {
                 Observe(s, s.TrackStartedAsync(track, ct), "now playing");
             }
@@ -150,7 +161,7 @@ namespace AudioQualityChecker.Services.Scrobbling
             _alreadyScrobbled = true;
             StateChanged?.Invoke(this, EventArgs.Empty);
             var ct = _cts.Token;
-            foreach (var s in _scrobblers.Where(s => s.IsEnabled && s.IsAuthenticated))
+            foreach (var s in Snapshot().Where(s => s.IsEnabled && s.IsAuthenticated))
             {
                 Observe(s, s.ScrobbleAsync(t, _currentTrackStartedAt, ct), "scrobble");
             }
@@ -159,9 +170,11 @@ namespace AudioQualityChecker.Services.Scrobbling
         public void OnTrackEnded()
         {
             var ct = _cts.Token;
-            foreach (var s in _scrobblers)
+            foreach (var s in Snapshot())
             {
-                _ = s.TrackStoppedAsync(ct);
+                // Routed through Observe like every other submission — a bare `_ =` meant a failed
+                // "stopped playing" notification never reached SubmissionFailed.
+                Observe(s, s.TrackStoppedAsync(ct), "track stopped");
             }
             _currentTrack = null;
             _alreadyScrobbled = false;
@@ -176,7 +189,7 @@ namespace AudioQualityChecker.Services.Scrobbling
             _alreadyScrobbled = true;
             var t = _currentTrack;
             var ct = _cts.Token;
-            foreach (var s in _scrobblers.Where(s => s.IsEnabled && s.IsAuthenticated))
+            foreach (var s in Snapshot().Where(s => s.IsEnabled && s.IsAuthenticated))
             {
                 Observe(s, s.ScrobbleAsync(t, _currentTrackStartedAt, ct), "scrobble");
             }
@@ -226,11 +239,18 @@ namespace AudioQualityChecker.Services.Scrobbling
             try { _cts.Cancel(); } catch { }
             _cts.Dispose();
             _cts = new CancellationTokenSource();
-            foreach (var s in _scrobblers)
+
+            IScrobbler[] toDispose;
+            lock (_lock)
+            {
+                toDispose = _scrobblers.ToArray();
+                _scrobblers.Clear();
+            }
+
+            foreach (var s in toDispose)
             {
                 try { s.Dispose(); } catch { }
             }
-            _scrobblers.Clear();
         }
     }
 }

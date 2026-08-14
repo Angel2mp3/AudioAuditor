@@ -29,6 +29,8 @@ namespace AudioQualityChecker.Services
         private readonly double[] _fftReal;
         private readonly double[] _fftImag;
         private readonly double[] _barValues;
+        private readonly float[] _samples = new float[2048]; // reused across ticks
+        private PointCollection? _scopePoints;                // reused across frames (see RenderScope)
         private float _lastRms;
 
         private const int NumBars = 32;
@@ -86,14 +88,15 @@ namespace AudioQualityChecker.Services
             double h = _canvas.ActualHeight;
             if (w < 10 || h < 10) return;
 
-            var snapshot = _player.GetVisualizerSnapshot(2048);
-            float[] samples = snapshot.Samples;
+            // Reuses _samples across ticks rather than allocating a 2048-float array per frame.
+            int sampleCount = _player.GetVisualizerSnapshot(_samples, out float capturedVolume);
+            float[] samples = _samples;
 
             // Skip FFT and canvas update when audio is silent — saves UI-thread work
             // during quiet passages. Bars continue to decay on ticks that cross the threshold.
             float rms = 0f;
-            int rmsWindow = Math.Min(256, samples.Length);
-            for (int i = samples.Length - rmsWindow; i < samples.Length; i++)
+            int rmsWindow = Math.Min(256, sampleCount);
+            for (int i = sampleCount - rmsWindow; i < sampleCount; i++)
                 rms += samples[i] * samples[i];
             rms = rmsWindow > 0 ? (float)Math.Sqrt(rms / rmsWindow) : 0f;
             bool wasSilent = _lastRms < 0.0001f;
@@ -104,8 +107,8 @@ namespace AudioQualityChecker.Services
             // Fill FFT buffers with Hann window
             Array.Clear(_fftReal);
             Array.Clear(_fftImag);
-            int offset = Math.Max(0, samples.Length - FftSize);
-            for (int i = 0; i < FftSize && (offset + i) < samples.Length; i++)
+            int offset = Math.Max(0, sampleCount - FftSize);
+            for (int i = 0; i < FftSize && (offset + i) < sampleCount; i++)
             {
                 double win = 0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (FftSize - 1)));
                 _fftReal[i] = samples[offset + i] * win;
@@ -113,7 +116,6 @@ namespace AudioQualityChecker.Services
 
             // Compensate for volume when VisualizerFullVolume is enabled, so the bars stay lively
             // at any playback volume (mirrors Spectrogram.cs and the main visualizer).
-            float capturedVolume = snapshot.UserVolume;
             if (ThemeManager.VisualizerFullVolume && capturedVolume > 0.01f && capturedVolume < 1f)
             {
                 double gain = 1.0 / capturedVolume;
@@ -304,7 +306,17 @@ namespace AudioQualityChecker.Services
             }
 
             int steps = Math.Min(80, samples.Length);
-            var points = new PointCollection(steps);
+
+            // Reuse one PointCollection and rewrite its points in place, as the main-window
+            // oscilloscope already does (Spectrogram.cs _scopePoints). Reallocating it per frame
+            // also forced the Polyline to re-bind a whole new collection every tick.
+            bool rebuild = _scopePoints == null || _scopePoints.Count != steps;
+            if (rebuild)
+            {
+                _scopePoints = new PointCollection(steps);
+                for (int i = 0; i < steps; i++) _scopePoints.Add(default);
+            }
+
             double midY = h / 2;
             for (int i = 0; i < steps; i++)
             {
@@ -312,9 +324,11 @@ namespace AudioQualityChecker.Services
                 if (idx < 0) idx = 0;
                 double x = w * i / Math.Max(1, steps - 1);
                 double y = midY + samples[idx] * midY * 0.85;
-                points.Add(new Point(x, Math.Clamp(y, 0, h)));
+                _scopePoints![i] = new Point(x, Math.Clamp(y, 0, h));
             }
-            _scopeLine.Points = points;
+
+            if (rebuild || !ReferenceEquals(_scopeLine.Points, _scopePoints))
+                _scopeLine.Points = _scopePoints;
         }
 
         // Number of concentric circles laid out in a row (a compact version of the

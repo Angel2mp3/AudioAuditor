@@ -21,7 +21,6 @@ namespace AudioQualityChecker
             private readonly System.Drawing.Color _bg = System.Drawing.Color.FromArgb(30, 30, 46);      // PanelBg-ish
             private readonly System.Drawing.Color _hover = System.Drawing.Color.FromArgb(58, 58, 74);   // ButtonBg-ish
             private readonly System.Drawing.Color _accent = System.Drawing.Color.FromArgb(88, 101, 242); // AccentColor-ish
-            private readonly System.Drawing.Color _text = System.Drawing.Color.FromArgb(224, 224, 224);  // TextPrimary-ish
             private readonly System.Drawing.Color _border = System.Drawing.Color.FromArgb(58, 58, 74);   // ButtonBorder-ish
 
             public override System.Drawing.Color MenuBorder => _border;

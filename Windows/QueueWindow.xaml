@@ -31,10 +31,10 @@
                                Foreground="{DynamicResource AccentColor}" Margin="0,0,8,0"
                                VerticalAlignment="Center"/>
                     <TextBlock Text="Play Queue"
-                               FontSize="18" FontWeight="Bold" FontFamily="Segoe UI"
+                               FontSize="18" FontWeight="Bold" FontFamily="{DynamicResource AppFontFamily}"
                                Foreground="{DynamicResource TextPrimary}"/>
                     <TextBlock x:Name="QueueCount" Text="  (0 songs)"
-                               FontSize="13" FontFamily="Segoe UI"
+                               FontSize="13" FontFamily="{DynamicResource AppFontFamily}"
                                Foreground="{DynamicResource TextMuted}"
                                VerticalAlignment="Bottom" Margin="0,0,0,1"/>
                 </StackPanel>
@@ -61,7 +61,7 @@
             <!-- Up Next -->
             <StackPanel Grid.Row="2" x:Name="UpNextPanel" Visibility="Collapsed">
                 <TextBlock Text="Up Next" FontSize="12" FontWeight="SemiBold"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource AccentColor}"
+                           FontFamily="{DynamicResource AppFontFamily}" Foreground="{DynamicResource AccentColor}"
                            Margin="0,0,0,4"/>
                 <StackPanel x:Name="UpNextItems" Orientation="Vertical"/>
             </StackPanel>
@@ -73,7 +73,7 @@
                          Background="Transparent"
                          Foreground="{DynamicResource TextPrimary}"
                          BorderThickness="0"
-                         FontFamily="Segoe UI" FontSize="12"
+                         FontFamily="{DynamicResource AppFontFamily}" FontSize="12"
                          SelectionChanged="QueueList_SelectionChanged">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
@@ -152,7 +152,7 @@
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                     <TextBlock Text="&#xE74A;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                                                VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                    <TextBlock Text="Up" FontFamily="Segoe UI" FontSize="12"/>
+                                    <TextBlock Text="Up" FontFamily="{DynamicResource AppFontFamily}" FontSize="12"/>
                                 </StackPanel>
                             </Border>
                             <ControlTemplate.Triggers>
@@ -175,7 +175,7 @@
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                     <TextBlock Text="&#xE74B;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                                                VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                    <TextBlock Text="Down" FontFamily="Segoe UI" FontSize="12"/>
+                                    <TextBlock Text="Down" FontFamily="{DynamicResource AppFontFamily}" FontSize="12"/>
                                 </StackPanel>
                             </Border>
                             <ControlTemplate.Triggers>
@@ -198,7 +198,7 @@
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                     <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                                                VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                    <TextBlock Text="Remove" FontFamily="Segoe UI" FontSize="12"/>
+                                    <TextBlock Text="Remove" FontFamily="{DynamicResource AppFontFamily}" FontSize="12"/>
                                 </StackPanel>
                             </Border>
                             <ControlTemplate.Triggers>
@@ -221,7 +221,7 @@
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                     <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="12"
                                                VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                    <TextBlock Text="Clear" FontFamily="Segoe UI" FontSize="12"/>
+                                    <TextBlock Text="Clear" FontFamily="{DynamicResource AppFontFamily}" FontSize="12"/>
                                 </StackPanel>
                             </Border>
                             <ControlTemplate.Triggers>
@@ -240,7 +240,7 @@
                     Background="{DynamicResource ButtonBg}"
                     Foreground="{DynamicResource TextPrimary}"
                     BorderBrush="{DynamicResource ButtonBorder}"
-                    FontFamily="Segoe UI" FontSize="13" Cursor="Hand">
+                    FontFamily="{DynamicResource AppFontFamily}" FontSize="13" Cursor="Hand">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="bd"

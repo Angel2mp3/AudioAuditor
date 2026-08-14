@@ -339,6 +339,15 @@ namespace AudioQualityChecker
             ThemeManager.SavePlayOptions();
         }
 
+        private void SystemMediaControls_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.SystemMediaControlsEnabled = ChkSystemMediaControls.IsChecked == true;
+            ThemeManager.SavePlayOptions();
+            // Apply to the live media session immediately so the toggle takes effect without a restart.
+            (Owner as MainWindow)?.ApplySystemMediaControlsEnabled(ThemeManager.SystemMediaControlsEnabled);
+        }
+
         // ═══════════════════════════════════════════
         //  API Key Visibility Toggle
         // ═══════════════════════════════════════════
@@ -360,10 +369,14 @@ namespace AudioQualityChecker
 
         private void ApplyApiKeyVisibility()
         {
+            // Restore the previous value rather than clearing the flag: this runs from the
+            // constructor, and hard-clearing it there un-guards every control assignment that
+            // follows, letting half-initialized handlers overwrite and save real settings.
+            var wasInitializing = _initializing;
+            _initializing = true; // prevent saving dots as keys
             if (_apiKeysVisible)
             {
                 // Show keys: restore real text
-                _initializing = true; // prevent saving dots as keys
                 LastFmApiKeyBox.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
                 LastFmApiSecretBox.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
                 LastFmApiKeyBox.Text = _realApiKey;
@@ -371,12 +384,10 @@ namespace AudioQualityChecker
                 LastFmApiKeyBox.IsReadOnly = false;
                 LastFmApiSecretBox.IsReadOnly = false;
                 EyeSlash.Visibility = Visibility.Collapsed;
-                _initializing = false;
             }
             else
             {
                 // Hide keys: replace text with dots
-                _initializing = true;
                 // Store current real values first
                 if (LastFmApiKeyBox.FontFamily.Source != "Segoe UI" || string.IsNullOrEmpty(_realApiKey))
                 {
@@ -397,8 +408,8 @@ namespace AudioQualityChecker
                 LastFmApiKeyBox.IsReadOnly = true;
                 LastFmApiSecretBox.IsReadOnly = true;
                 EyeSlash.Visibility = Visibility.Visible;
-                _initializing = false;
             }
+            _initializing = wasInitializing;
         }
 
         private void ToggleLibreFmVisibility_Click(object sender, RoutedEventArgs e)
@@ -418,6 +429,7 @@ namespace AudioQualityChecker
 
         private void ApplyLibreFmVisibility()
         {
+            var wasInitializing = _initializing;
             _initializing = true;
             if (_libreFmKeysVisible)
             {
@@ -435,7 +447,7 @@ namespace AudioQualityChecker
                 LibreFmApiSecretBox.IsReadOnly = true;
                 LibreFmEyeSlash.Visibility = Visibility.Visible;
             }
-            _initializing = false;
+            _initializing = wasInitializing;
         }
 
         private void ToggleListenBrainzVisibility_Click(object sender, RoutedEventArgs e)
@@ -456,6 +468,7 @@ namespace AudioQualityChecker
 
         private void ApplyListenBrainzVisibility()
         {
+            var wasInitializing = _initializing;
             _initializing = true;
             if (_listenBrainzTokenVisible)
             {
@@ -473,7 +486,7 @@ namespace AudioQualityChecker
                 ListenBrainzTokenBox.IsReadOnly = true;
                 ListenBrainzEyeSlash.Visibility = Visibility.Visible;
             }
-            _initializing = false;
+            _initializing = wasInitializing;
         }
 
         // ═══════════════════════════════════════════
@@ -529,6 +542,7 @@ namespace AudioQualityChecker
 
         private void ApplyMalojaVisibility()
         {
+            var wasInitializing = _initializing;
             _initializing = true;
             if (_malojaKeyVisible)
             {
@@ -542,7 +556,7 @@ namespace AudioQualityChecker
                 MalojaKeyBox.IsReadOnly = true;
                 MalojaEyeSlash.Visibility = Visibility.Visible;
             }
-            _initializing = false;
+            _initializing = wasInitializing;
         }
 
         // ═══════════════════════════════════════════
@@ -563,23 +577,22 @@ namespace AudioQualityChecker
 
         private void ApplyAcoustIdKeyVisibility()
         {
+            var wasInitializing = _initializing;
+            _initializing = true;
             if (_acoustIdKeyVisible)
             {
-                _initializing = true;
                 AcoustIdKeyBox.Text = _realAcoustIdKey;
                 AcoustIdKeyBox.IsReadOnly = false;
                 AcoustIdEyeSlash.Visibility = Visibility.Collapsed;
-                _initializing = false;
             }
             else
             {
-                _initializing = true;
                 string dots = _realAcoustIdKey.Length > 0 ? new string('●', Math.Max(_realAcoustIdKey.Length, 32)) : "";
                 AcoustIdKeyBox.Text = dots;
                 AcoustIdKeyBox.IsReadOnly = true;
                 AcoustIdEyeSlash.Visibility = Visibility.Visible;
-                _initializing = false;
             }
+            _initializing = wasInitializing;
         }
 
     }

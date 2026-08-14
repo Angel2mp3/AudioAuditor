@@ -23,137 +23,14 @@ namespace AudioQualityChecker
         //  File Analysis (multi-threaded)
         // ═══════════════════════════════════════════
 
-        /// <summary>
-        /// Expands playlist files (.m3u, .m3u8, .pls) into their audio file entries.
-        /// Non-playlist files are passed through unchanged.
-        /// </summary>
-        private List<string> ExpandPlaylists(IEnumerable<string> paths)
-        {
-            var result = new List<string>();
-            foreach (var path in paths)
-            {
-                string ext = IOPath.GetExtension(path);
-                if (PlaylistExtensions.Contains(ext) && File.Exists(path))
-                {
-                    try
-                    {
-                        var playlistDir = IOPath.GetDirectoryName(path) ?? "";
-                        var lines = File.ReadAllLines(path);
+        // Both expansions moved to AudioAuditor.Core (FileSourceExpander) so the Avalonia
+        // build shares them rather than growing a second copy.
 
-                        if (ext.Equals(".pls", StringComparison.OrdinalIgnoreCase))
-                        {
-                            // PLS format: File1=path, File2=path, ...
-                            foreach (var line in lines)
-                            {
-                                if (line.StartsWith("File", StringComparison.OrdinalIgnoreCase) && line.Contains('='))
-                                {
-                                    var filePath = line[(line.IndexOf('=') + 1)..].Trim();
-                                    var resolved = ResolvePath(filePath, playlistDir);
-                                    if (resolved != null) result.Add(resolved);
-                                }
-                            }
-                        }
-                        else
-                        {
-                            // M3U/M3U8: each non-comment, non-empty line is a path
-                            foreach (var line in lines)
-                            {
-                                var trimmed = line.Trim();
-                                if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#'))
-                                    continue;
-                                var resolved = ResolvePath(trimmed, playlistDir);
-                                if (resolved != null) result.Add(resolved);
-                            }
-                        }
-                    }
-                    catch { /* skip unreadable playlist */ }
-                }
-                else
-                {
-                    result.Add(path);
-                }
-            }
-            return result;
+        private List<string> ExpandPlaylists(IEnumerable<string> paths) =>
+            FileSourceExpander.ExpandPlaylists(paths);
 
-            static string? ResolvePath(string entry, string baseDir)
-            {
-                // Skip URLs (http://, https://)
-                if (entry.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                    entry.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                    return null;
-
-                // Try as absolute path first
-                if (IOPath.IsPathRooted(entry) && File.Exists(entry))
-                    return entry;
-
-                // Try relative to playlist directory
-                var combined = IOPath.Combine(baseDir, entry);
-                if (File.Exists(combined))
-                    return IOPath.GetFullPath(combined);
-
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Extracts audio files from archives (.zip, .rar, .7z, etc.).
-        /// Returns the list of extracted audio file paths plus any non-archive audio paths unchanged.
-        /// </summary>
-        private List<string> ExtractAudioFromArchives(IEnumerable<string> paths)
-        {
-            var result = new List<string>();
-            foreach (var path in paths)
-            {
-                string ext = IOPath.GetExtension(path);
-                if (ArchiveExtensions.Contains(ext) && File.Exists(path))
-                {
-                    try
-                    {
-                        string tempDir = IOPath.Combine(IOPath.GetTempPath(), "AudioAuditor_" + Guid.NewGuid().ToString("N"));
-                        Directory.CreateDirectory(tempDir);
-
-                        if (ext.Equals(".zip", StringComparison.OrdinalIgnoreCase))
-                        {
-                            ZipFile.ExtractToDirectory(path, tempDir);
-                        }
-                        else
-                        {
-                            // Use SharpCompress for RAR, 7z, tar, gz, etc.
-                            using var archive = ArchiveFactory.OpenArchive(path, new ReaderOptions());
-                            string safeBase = Path.GetFullPath(tempDir) + Path.DirectorySeparatorChar;
-                            foreach (var entry in archive.Entries.Where(e => !e.IsDirectory && e.Key != null))
-                            {
-                                // ZIP slip guard: skip entries that would escape tempDir
-                                string entryKey = entry.Key!.Replace('/', Path.DirectorySeparatorChar);
-                                string fullDest = Path.GetFullPath(Path.Combine(tempDir, entryKey));
-                                if (!fullDest.StartsWith(safeBase, StringComparison.OrdinalIgnoreCase))
-                                    continue;
-                                entry.WriteToDirectory(tempDir, new ExtractionOptions
-                                {
-                                    ExtractFullPath = true,
-                                    Overwrite = true
-                                });
-                            }
-                        }
-
-                        var extracted = Directory.EnumerateFiles(tempDir, "*.*", SearchOption.AllDirectories)
-                            .Where(f => SupportedExtensions.Contains(IOPath.GetExtension(f)));
-                        result.AddRange(extracted);
-                    }
-                    catch { /* skip corrupt archives */ }
-                }
-                else if (SupportedExtensions.Contains(ext))
-                {
-                    result.Add(path);
-                }
-                else if (ext.Equals(".cue", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
-                {
-                    // Cue files are passed through — expanded later in AnalyzeAndAddFiles
-                    result.Add(path);
-                }
-            }
-            return result;
-        }
+        private List<string> ExtractAudioFromArchives(IEnumerable<string> paths) =>
+            FileSourceExpander.ExtractAudioFromArchives(paths);
 
         private async Task AnalyzeAndAddFiles(string[] filePaths)
         {
@@ -191,39 +68,32 @@ namespace AudioQualityChecker
             HashSet<string>? shLabsTargets = null;
             if (ThemeManager.SHLabsAiDetection)
             {
-                // Count how many actually need an API call (no cache hit)
-                var uncached = newPaths.Where(p => SHLabsDetectionService.GetCachedResult(p) == null).ToList();
+                // Quota split lives in Core (SHLabsBatchPlanner) so Avalonia budgets identically.
                 var (dailyRem, monthlyRem) = SHLabsDetectionService.GetQuota();
-                int available = Math.Min(dailyRem, monthlyRem);
+                var plan = SHLabsBatchPlanner.Create(newPaths, Math.Min(dailyRem, monthlyRem),
+                    p => SHLabsDetectionService.GetCachedResult(p) != null);
 
-                if (uncached.Count > available && available > 0)
-                {
-                    // More files than remaining quota — let the user know
-                    var msg = $"You have {available} SH Labs scan{(available == 1 ? "" : "s")} remaining today. " +
-                              $"{uncached.Count} file{(uncached.Count == 1 ? "" : "s")} need scanning.\n\n" +
-                              $"The first {available} file{(available == 1 ? "" : "s")} will be scanned with SH Labs. " +
-                              $"The rest will use your other selected detection methods.\n\nContinue?";
-                    var confirmed = await ShowSHLabsLimitOverlayAsync(msg, showCancel: true);
-                    if (!confirmed) return;
-
-                    // Take first N uncached files
-                    shLabsTargets = new HashSet<string>(uncached.Take(available), StringComparer.OrdinalIgnoreCase);
-                    // Also include all cached files (free lookups)
-                    foreach (var p in newPaths.Where(p => SHLabsDetectionService.GetCachedResult(p) != null))
-                        shLabsTargets.Add(p);
-                }
-                else if (available == 0)
+                if (plan.IsExhausted)
                 {
                     // No quota left — inform and continue without SH Labs
-                    await ShowSHLabsLimitOverlayAsync(
-                        "You've reached your SH Labs scan limit. Files will be analyzed using your other selected detection methods.",
-                        showCancel: false);
-                    shLabsTargets = null; // disable SH Labs for this batch
+                    await ShowSHLabsLimitOverlayAsync(SHLabsBatchPlanner.ExhaustedMessage, showCancel: false);
+                }
+                else if (plan.IsPartial)
+                {
+                    // More files than remaining quota — let the user know
+                    if (!await ShowSHLabsLimitOverlayAsync(SHLabsBatchPlanner.PartialMessage(plan), showCancel: true))
+                    {
+                        // Say so: this batch is dropped here, and silently returning made the
+                        // files the user just added look like they had vanished.
+                        StatusText.Text = $"Scan cancelled — {newPaths.Length} file(s) not added.";
+                        return;
+                    }
+
+                    shLabsTargets = plan.Targets;
                 }
                 else
                 {
-                    // Enough quota for all files
-                    shLabsTargets = new HashSet<string>(newPaths, StringComparer.OrdinalIgnoreCase);
+                    shLabsTargets = plan.Targets;
                 }
             }
 
@@ -235,6 +105,10 @@ namespace AudioQualityChecker
                 _analysisCompleted = 0;
                 _analysisTotal = 0;
                 _analysisStartTime = DateTime.UtcNow;
+                // Dispose the previous scan's gates before replacing them — every completed scan
+                // used to leave one of each behind for the GC.
+                _analysisSemaphore?.Dispose();
+                _shLabsSemaphore?.Dispose();
                 _analysisSemaphore = new SemaphoreSlim(ThemeManager.MaxConcurrency);
                 _shLabsSemaphore = new SemaphoreSlim(3);
                 _analysisSettingsSnapshot = AnalysisSettingsSnapshot.From(new ThemeManagerSettings());
@@ -265,6 +139,15 @@ namespace AudioQualityChecker
 
             void FlushPendingResultsOnUi()
             {
+                // Do NOT wrap these adds in _filteredView.DeferRefresh(). The grid's view is
+                // filtered, sorted and grouped by folder, so batching the re-settle looks like an
+                // easy win — but ListCollectionView throws "Cannot change or check the contents or
+                // Current position of CollectionView while Refresh is being deferred" on the first
+                // Add, because it reads CurrentPosition while processing the change. DeferRefresh
+                // is for batching changes to the *view's* filter/sort/group settings, not for bulk
+                // mutation of the source. Deferring here dequeued an item, threw on Add, lost that
+                // row, and left uiFlushScheduled stuck at 1 so the grid stopped updating for the
+                // rest of the scan. See GroupedViewDeferRefreshTests.
                 while (pendingUiResults.TryDequeue(out var pending))
                 {
                     firstAddedItem ??= pending;
@@ -308,18 +191,33 @@ namespace AudioQualityChecker
 
             try
             {
-                // Process in chunks to avoid creating 100k+ Task objects simultaneously.
-                // The semaphore still caps concurrent execution; chunking caps task allocation.
-                const int ChunkSize = 500;
-                for (int _chunkStart = 0; _chunkStart < newPaths.Length; _chunkStart += ChunkSize)
+                // Built once for the whole batch. CacheFingerprint is a computed property (~20
+                // interpolated strings + a Join); the per-file overloads rebuilt it twice per file
+                // for a value that never changes within a scan.
+                string batchFingerprint = analysisSettings.CacheFingerprint;
+
+                // One bounded pass over the whole batch rather than chunks of 500 joined by a
+                // Task.WhenAll. The chunk barrier meant a single slow file at the tail of a chunk
+                // left every other worker idle until it finished, and a paused scan could hold one
+                // Task.Delay poller per queued file. ForEachAsync keeps only MaxDegreeOfParallelism
+                // workers alive, which caps both the task allocation the chunking was there to
+                // avoid and the number of pollers.
+                var parallelOptions = new ParallelOptions
                 {
-                    if (ct.IsCancellationRequested) break;
-                    var chunk = newPaths.Skip(_chunkStart).Take(ChunkSize).ToArray();
-                    var chunkTasks = chunk.Select(async path =>
+                    MaxDegreeOfParallelism = Math.Max(1, ThemeManager.MaxConcurrency),
+                    CancellationToken = ct
+                };
+
+                try
+                {
+                    await Parallel.ForEachAsync(newPaths, parallelOptions, async (path, _) =>
                     {
                         AudioFileInfo? info = null;
                         bool acquired = false;
                         bool cacheAnalysisResult = false;
+                        long statSize = 0;
+                        DateTime statWritten = default;
+                        bool statTaken = false;
 
                         // ── Check scan cache first ──
                         if (ThemeManager.ScanCacheEnabled)
@@ -327,11 +225,17 @@ namespace AudioQualityChecker
                             try
                             {
                                 var fi = new System.IO.FileInfo(path);
-                                if (fi.Exists && ScanCacheService.TryGet(path, fi.Length, fi.LastWriteTimeUtc, analysisSettings, out var cached) && cached != null)
+                                if (fi.Exists)
                                 {
-                                    Interlocked.Increment(ref _analysisCompleted);
-                                    QueueUiResult(cached);
-                                    return;
+                                    statSize = fi.Length;
+                                    statWritten = fi.LastWriteTimeUtc;
+                                    statTaken = true;
+                                    if (ScanCacheService.TryGet(path, statSize, statWritten, batchFingerprint, out var cached) && cached != null)
+                                    {
+                                        Interlocked.Increment(ref _analysisCompleted);
+                                        QueueUiResult(cached);
+                                        return;
+                                    }
                                 }
                             }
                             catch { /* cache miss — fall through to normal analysis */ }
@@ -350,12 +254,12 @@ namespace AudioQualityChecker
                             await ThemeManager.WaitForMemoryAsync(ct);
                             ct.ThrowIfCancellationRequested();
 
-                            // Use a dedicated analysis thread so a hung decoder cannot starve the ThreadPool.
-                            var analysisTask = Task.Factory.StartNew(
-                                () => AudioAnalyzer.AnalyzeFile(path, analysisSettings, ct),
-                                ct,
-                                TaskCreationOptions.LongRunning,
-                                TaskScheduler.Default);
+                            // Runs on the ThreadPool. Concurrency is already capped by the semaphore
+                            // above, so LongRunning only meant spinning up and tearing down a
+                            // dedicated OS thread (1 MB of stack reserve) once PER FILE — 100k
+                            // files meant 100k thread creations.
+                            var analysisTask = Task.Run(
+                                () => AudioAnalyzer.AnalyzeFile(path, analysisSettings, ct), ct);
                             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                             var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120), timeoutCts.Token);
                             var winner = await Task.WhenAny(analysisTask, timeoutTask);
@@ -432,73 +336,60 @@ namespace AudioQualityChecker
                             // Cache the result for future use
                             if (ThemeManager.ScanCacheEnabled && cacheAnalysisResult)
                             {
-                                try { ScanCacheService.Set(info, analysisSettings); } catch { }
+                                // Reuse the stat taken for the cache lookup above instead of
+                                // re-running FileInfo on the same path.
+                                try
+                                {
+                                    if (statTaken)
+                                        ScanCacheService.Set(info, batchFingerprint, statSize, statWritten);
+                                    else
+                                        ScanCacheService.Set(info, batchFingerprint);
+                                }
+                                catch (Exception ex)
+                                {
+                                    // A silent miss here just makes the next scan slow, but it is
+                                    // invisible — so it looks like the cache setting does nothing.
+                                    if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+                                }
                             }
 
                             Interlocked.Increment(ref _analysisCompleted);
                             QueueUiResult(info);
                         }
                     });
-
-                    try { await Task.WhenAll(chunkTasks); } catch (OperationCanceledException) { break; }
-                } // end chunk loop
+                }
+                catch (OperationCanceledException) { /* cancelled — still flush what finished */ }
 
                 await FlushPendingResultsAsync();
 
                 // Save scan cache to disk after batch completes
                 if (ThemeManager.ScanCacheEnabled)
                 {
-                    try { await Task.Run(() => ScanCacheService.SaveToDisk()); } catch { }
+                    // Whole-scan cache write: failing silently means every rescan stays slow.
+                    try { await Task.Run(() => ScanCacheService.SaveToDisk()); }
+                    catch (Exception ex) { if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex); }
                 }
 
                 // ── Create virtual tracks from cue sheets ──
+                // One index up front instead of a linear scan of _files per cue entry.
+                Dictionary<string, AudioFileInfo>? filesByPath = null;
+                if (cueEntries.Count > 0)
+                {
+                    filesByPath = new Dictionary<string, AudioFileInfo>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var f in _files)
+                        filesByPath[f.FilePath] = f;
+                }
+
                 foreach (var (audioPath, sheet) in cueEntries)
                 {
                     // Find the analyzed parent file
-                    var parent = _files.FirstOrDefault(f => f.FilePath.Equals(audioPath, StringComparison.OrdinalIgnoreCase));
-                    if (parent == null) continue;
+                    if (!filesByPath!.TryGetValue(audioPath, out var parent)) continue;
 
-                    foreach (var track in sheet.Tracks)
+                    foreach (var virtualTrack in CueVirtualTracks.Build(sheet, parent, existing))
                     {
-                        var endTime = track.EndTime > TimeSpan.Zero ? track.EndTime : TimeSpan.FromSeconds(parent.DurationSeconds);
-                        var duration = endTime - track.StartTime;
-                        if (duration.TotalSeconds <= 0) continue;
-
-                        string trackId = $"{audioPath}#CUE{track.TrackNumber}";
-                        if (existing.Contains(trackId)) continue;
-
-                        var virtual_ = new AudioFileInfo
-                        {
-                            FilePath = trackId,
-                            FileName = $"[{track.TrackNumber:D2}] {(string.IsNullOrEmpty(track.Title) ? IOPath.GetFileNameWithoutExtension(audioPath) : track.Title)}",
-                            FolderPath = parent.FolderPath,
-                            Title = track.Title,
-                            Artist = !string.IsNullOrEmpty(track.Performer) ? track.Performer : parent.Artist,
-                            Extension = parent.Extension,
-                            SampleRate = parent.SampleRate,
-                            BitsPerSample = parent.BitsPerSample,
-                            Channels = parent.Channels,
-                            ReportedBitrate = parent.ReportedBitrate,
-                            ActualBitrate = parent.ActualBitrate,
-                            EffectiveFrequency = parent.EffectiveFrequency,
-                            Duration = duration.TotalHours >= 1
-                                ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
-                                : $"{duration.Minutes}:{duration.Seconds:D2}",
-                            DurationSeconds = duration.TotalSeconds,
-                            FileSize = parent.FileSize,
-                            FileSizeBytes = parent.FileSizeBytes,
-                            DateModified = parent.DateModified,
-                            DateCreated = parent.DateCreated,
-                            Status = parent.Status,
-                            IsCueVirtualTrack = true,
-                            CueSheetPath = sheet.AudioFilePath,
-                            CueTrackNumber = track.TrackNumber,
-                            CueStartTime = track.StartTime,
-                            CueEndTime = endTime,
-                        };
-                        firstAddedItem ??= virtual_;
+                        firstAddedItem ??= virtualTrack;
                         addedItemCount++;
-                        _files.Add(virtual_);
+                        _files.Add(virtualTrack);
                     }
                 }
             }
@@ -523,6 +414,11 @@ namespace AudioQualityChecker
                     long totalBytes = newPaths.Sum(p => { try { return new System.IO.FileInfo(p).Length; } catch { return 0; } });
                     LocalStatsCollector.RecordScan(addedItemCount, totalBytes);
 
+                    // End of scan is the natural point to persist everything the per-file
+                    // RecordAnalysisResult calls accumulated in memory. Off the UI thread: the
+                    // stats file can be several MB before compression.
+                    _ = Task.Run(() => LocalStatsCollector.Flush());
+
                     // Update lifetime stats for 30-day popup
                     if (ThemeManager.FirstScanDate == default)
                         ThemeManager.FirstScanDate = DateTime.Now;
@@ -531,6 +427,9 @@ namespace AudioQualityChecker
 
                     // Persist the working set so "restore last session" can reload it.
                     SaveSessionState();
+
+                    // CD Rip Checker: stamp per-folder rip-log verdicts (opt-in; one cambia run per folder).
+                    BackfillRipLogsAsync(_files.ToList()).Observe(nameof(BackfillRipLogsAsync));
 
                     ScheduleDonationPopup();
                 }
@@ -571,29 +470,7 @@ namespace AudioQualityChecker
             }, DispatcherPriority.ContextIdle);
         }
 
-        private void UpdateAnalysisEta(int completed, int total)
-        {
-            if (completed < 1 || completed >= total)
-            {
-                AnalysisEtaText.Text = "";
-                return;
-            }
-
-            var elapsed = DateTime.UtcNow - _analysisStartTime;
-            double avgPerFile = elapsed.TotalSeconds / completed;
-            int remaining = total - completed;
-            double etaSeconds = avgPerFile * remaining;
-
-            if (etaSeconds < 1)
-                AnalysisEtaText.Text = "< 1s";
-            else if (etaSeconds < 60)
-                AnalysisEtaText.Text = $"~{(int)etaSeconds}s left";
-            else
-            {
-                int mins = (int)(etaSeconds / 60);
-                int secs = (int)(etaSeconds % 60);
-                AnalysisEtaText.Text = secs > 0 ? $"~{mins}m {secs}s left" : $"~{mins}m left";
-            }
-        }
+        private void UpdateAnalysisEta(int completed, int total) =>
+            AnalysisEtaText.Text = AnalysisEta.Format(completed, total, DateTime.UtcNow - _analysisStartTime);
     }
 }

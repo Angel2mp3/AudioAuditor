@@ -382,19 +382,15 @@ namespace AudioQualityChecker
                 : IOPath.GetFileNameWithoutExtension(file.FileName);
 
             string url;
-            if (serviceName == "Custom...")
+            if (serviceName == MusicServiceUrls.CustomServiceName)
             {
-                string customUrl = ThemeManager.CustomServiceUrls[idx];
-                if (string.IsNullOrWhiteSpace(customUrl))
+                var customUrl = MusicServiceUrls.BuildCustom(ThemeManager.CustomServiceUrls[idx], query);
+                if (customUrl == null)
                 {
                     ErrorDialog.Show("No Custom URL", "Configure a custom search URL in Settings first.\nPaste the search URL and the song name will be appended automatically.", this);
                     return;
                 }
-                string encoded = Uri.EscapeDataString(query);
-                if (customUrl.Contains("{query}"))
-                    url = customUrl.Replace("{query}", encoded);
-                else
-                    url = customUrl.TrimEnd('/') + "/" + encoded;
+                url = customUrl;
             }
             else
             {

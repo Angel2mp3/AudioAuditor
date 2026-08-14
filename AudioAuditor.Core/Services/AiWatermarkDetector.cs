@@ -44,6 +44,17 @@ namespace AudioQualityChecker.Services
             "topmediai",
             "sunoai",
             "vocals.ai",
+            "riffusion.com", "riffusion.ai",
+            "musicgen",
+            "elevenlabs.io", "elevenlabs music",
+            "mureka.ai",
+            "cassetteai", "cassette.ai",
+            "sonauto.ai",
+
+            // Google's Lyria only ever appears qualified in real tags ("Google DeepMind Lyria",
+            // Vertex's "lyria-002"). Bare "lyria" is a plausible artist or track name, and a hit
+            // here scores as a strong marker, so the bare form is deliberately not listed.
+            "google lyria", "deepmind lyria", "lyria-00",
 
             // AI watermarking systems
             "audioseal", "audio_seal", "audio seal",
@@ -91,23 +102,23 @@ namespace AudioQualityChecker.Services
             "streamrip", "deemix", "spotify", "tidal",
         };
 
-        // Raw byte patterns to search for in file data (>= 8 bytes to avoid false matches).
-        private static readonly byte[][] RawBytePatterns =
-        {
-            Encoding.ASCII.GetBytes("contentcredentials"),
-            Encoding.ASCII.GetBytes("audioseal"),
-        };
-
-        // Text patterns to search for in raw file header/trailer bytes (>= 7 chars).
+        // Text patterns to search for in raw file bytes. Minimum 7 characters: these are matched
+        // against undecoded file data, where anything shorter starts colliding with audio payload.
         private static readonly string[] RawTextPatterns =
         {
             "suno.ai", "suno.com",
-            "udio.com", "soundraw.io",
+            "udio.com", "udio.ai", "soundraw.io",
             "aiva.ai", "boomy.com", "mubert.com",
             "beatoven.ai", "stability.ai", "loudly.com",
+            "riffusion.com", "riffusion.ai",
+            "musicgen",
+            "elevenlabs.io", "elevenlabs music",
+            "mureka.ai", "cassetteai", "cassette.ai",
+            "sonauto.ai",
             "audioseal", "synthid",
             "contentcredentials",
-            "chirp-v2", "chirp-v3", "chirp-v4",
+            // Prefix, not per-version literals: covers chirp-v5/v6 and whatever Suno ships next.
+            "chirp-v",
         };
 
         // ══════════════════════════════════════════════════════════════
@@ -169,18 +180,26 @@ namespace AudioQualityChecker.Services
             var strong = new[] {
                 "Suno", "Udio", "Soundraw", "AIVA", "Boomy", "Amper", "Loudly",
                 "Beatoven", "Mubert", "Stable Audio", "Jukebox", "TopMediai", "Vocals.ai",
+                "Riffusion", "MusicGen", "ElevenLabs", "Mureka", "CassetteAI", "Sonauto",
+                "Google Lyria",
                 "AudioSeal", "SynthID", "WavMark", "Content Credentials",
                 "Content Authenticity", "Chirp"
             };
             return strong.Any(s => marker.Contains(s, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>
+        /// Scores the found markers by strength, not by count. A strong marker (a named generator,
+        /// an AudioSeal/SynthID watermark, a C2PA manifest) is verifiable evidence and alone clears
+        /// the "Yes" verdict threshold at 0.75; weak generic phrases contribute 0.2 each, so a
+        /// single one can never reach the 0.5 reporting threshold on its own.
+        /// </summary>
         private static double CalculateConfidence(HashSet<string> markers)
         {
             if (markers.Count == 0) return 0;
             double score = 0;
             foreach (var m in markers)
-                score += IsStrongAiMarker(m) ? 0.5 : 0.2;
+                score += IsStrongAiMarker(m) ? 0.75 : 0.2;
             return Math.Min(score, 1.0);
         }
 
@@ -378,63 +397,104 @@ namespace AudioQualityChecker.Services
         //  Raw Byte Pattern Scanning
         // ══════════════════════════════════════════════════════════════
 
+        private const int HeadTailWindow = 128 * 1024;   // 128KB at each end
+        private const int BodySlice = 64 * 1024;         // 64KB per body slice
+        private const int BodySliceCount = 4;            // evenly spaced through the body
+
         private static void ScanRawBytes(string filePath, HashSet<string> found)
         {
             var fi = new FileInfo(filePath);
             if (!fi.Exists || fi.Length == 0) return;
 
-            // Read first 64KB and last 64KB for embedded markers
-            int headTailSize = (int)Math.Min(65536, fi.Length);
+            var windows = new List<byte[]>(BodySliceCount + 2);
 
-            byte[] headBytes;
-            byte[] tailBytes;
+            // The head and tail are the real coverage: ID3v2, Vorbis blocks, MP4 boxes and C2PA
+            // manifests all live at one end of the container in practice. The body slices are a
+            // bounded long shot for anything written into the payload — four spread slices sample
+            // more of a large body than the single midpoint slice they replace, but they sample
+            // it, they do not cover it. All reads stay bounded; this is never a full-file scan.
+            byte[] headBytes = ReadWindow(filePath, 0, (int)Math.Min(HeadTailWindow, fi.Length));
+            windows.Add(headBytes);
 
-            using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            if (fi.Length > headBytes.Length)
             {
-                headBytes = new byte[headTailSize];
-                int headRead = fs.Read(headBytes, 0, headTailSize);
-                if (headRead < headTailSize)
-                    Array.Resize(ref headBytes, headRead);
+                // Always cover the tail once the file is bigger than the head window. The old
+                // `Length > headTailSize * 2` guard meant a file just over the window size had
+                // everything past the head go unscanned.
+                long tailStart = Math.Max(headBytes.Length, fi.Length - HeadTailWindow);
+                windows.Add(ReadWindow(filePath, tailStart, (int)Math.Min(HeadTailWindow, fi.Length - tailStart)));
 
-                if (fi.Length > headTailSize * 2)
+                // Several evenly spaced slices rather than one at the exact midpoint: a large
+                // manifest sits wherever the muxer put it, which is rarely dead centre.
+                long bodyStart = headBytes.Length;
+                long bodyLength = tailStart - bodyStart;
+                if (bodyLength > BodySlice)
                 {
-                    fs.Seek(-headTailSize, SeekOrigin.End);
-                    tailBytes = new byte[headTailSize];
-                    int tailRead = fs.Read(tailBytes, 0, headTailSize);
-                    if (tailRead < headTailSize)
-                        Array.Resize(ref tailBytes, tailRead);
-                }
-                else
-                {
-                    tailBytes = Array.Empty<byte>();
+                    for (int i = 0; i < BodySliceCount; i++)
+                    {
+                        long offset = bodyStart + bodyLength * i / BodySliceCount;
+                        int count = (int)Math.Min(BodySlice, tailStart - offset);
+                        if (count > 0)
+                            windows.Add(ReadWindow(filePath, offset, count));
+                    }
                 }
             }
 
-            foreach (var pattern in RawBytePatterns)
+            var searchable = new List<string>(windows.Count * 2);
+            foreach (var window in windows)
             {
-                if (ContainsPattern(headBytes, pattern) || ContainsPattern(tailBytes, pattern))
-                {
-                    string patternStr = Encoding.ASCII.GetString(pattern);
-                    string source = CategorizeMarker(patternStr);
-                    if (!string.IsNullOrEmpty(source))
-                        found.Add(source);
-                }
-            }
+                if (window.Length == 0) continue;
+                searchable.Add(Encoding.ASCII.GetString(window).ToLowerInvariant());
 
-            string headText = Encoding.ASCII.GetString(headBytes).ToLowerInvariant();
-            string tailText = tailBytes.Length > 0
-                ? Encoding.ASCII.GetString(tailBytes).ToLowerInvariant()
-                : "";
+                // A UTF-16 marker is the same ASCII bytes interleaved with 0x00, so dropping every
+                // zero byte exposes it to the same substring search — in one pass, regardless of
+                // endianness or byte alignment. Patterns are >= 7 literal characters, so zeros
+                // collapsing unrelated audio bytes together cannot manufacture one.
+                var stripped = StripZeroBytes(window);
+                if (stripped.Length > 0 && stripped.Length != window.Length)
+                    searchable.Add(Encoding.ASCII.GetString(stripped).ToLowerInvariant());
+            }
 
             foreach (var pattern in RawTextPatterns)
             {
-                if (headText.Contains(pattern) || tailText.Contains(pattern))
+                foreach (var text in searchable)
                 {
+                    if (!text.Contains(pattern)) continue;
                     string source = CategorizeMarker(pattern);
                     if (!string.IsNullOrEmpty(source))
                         found.Add(source);
+                    break;
                 }
             }
+        }
+
+        /// <summary>Copy of <paramref name="buffer"/> with every 0x00 byte removed.</summary>
+        private static byte[] StripZeroBytes(byte[] buffer)
+        {
+            var stripped = new byte[buffer.Length];
+            int n = 0;
+            for (int i = 0; i < buffer.Length; i++)
+                if (buffer[i] != 0) stripped[n++] = buffer[i];
+            Array.Resize(ref stripped, n);
+            return stripped;
+        }
+
+        /// <summary>Reads up to <paramref name="count"/> bytes at <paramref name="offset"/>, trimmed to what was actually read.</summary>
+        private static byte[] ReadWindow(string filePath, long offset, int count)
+        {
+            if (count <= 0) return Array.Empty<byte>();
+            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            fs.Seek(offset, SeekOrigin.Begin);
+            var buffer = new byte[count];
+            int total = 0;
+            while (total < count)
+            {
+                int read = fs.Read(buffer, total, count - total);
+                if (read <= 0) break;
+                total += read;
+            }
+            if (total < count) Array.Resize(ref buffer, total);
+            return buffer;
         }
 
         // ══════════════════════════════════════════════════════════════
@@ -465,6 +525,13 @@ namespace AudioQualityChecker.Services
             if (lower.Contains("openai jukebox")) return "OpenAI Jukebox";
             if (lower.Contains("topmediai")) return "TopMediai";
             if (lower.Contains("vocals.ai")) return "Vocals.ai";
+            if (lower.Contains("riffusion")) return "Riffusion";
+            if (lower.Contains("musicgen")) return "MusicGen";
+            if (lower.Contains("elevenlabs")) return "ElevenLabs Music";
+            if (lower.Contains("mureka")) return "Mureka";
+            if (lower.Contains("cassetteai") || lower.Contains("cassette.ai")) return "CassetteAI";
+            if (lower.Contains("sonauto")) return "Sonauto";
+            if (lower.Contains("lyria")) return "Google Lyria";
             if (lower.Contains("audioseal") || lower.Contains("audio_seal")) return "AudioSeal Watermark";
             if (lower.Contains("synthid") || lower.Contains("synth_id")) return "SynthID Watermark";
             if (lower.Contains("wavmark") || lower.Contains("wav_mark")) return "WavMark Watermark";
@@ -473,26 +540,6 @@ namespace AudioQualityChecker.Services
             if (lower.Contains("ai-generated") || lower.Contains("ai_generated")) return "AI Generated";
 
             return "AI Marker Found";
-        }
-
-        private static bool ContainsPattern(byte[] buffer, byte[] pattern)
-        {
-            if (pattern.Length == 0 || buffer.Length < pattern.Length) return false;
-
-            for (int i = 0; i <= buffer.Length - pattern.Length; i++)
-            {
-                bool match = true;
-                for (int j = 0; j < pattern.Length; j++)
-                {
-                    if (buffer[i + j] != pattern[j])
-                    {
-                        match = false;
-                        break;
-                    }
-                }
-                if (match) return true;
-            }
-            return false;
         }
     }
 }

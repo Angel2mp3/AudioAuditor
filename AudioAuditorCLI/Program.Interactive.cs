@@ -71,6 +71,14 @@ namespace AudioQualityChecker.CLI
                 var parts = SplitInteractiveInput(input);
                 if (parts.Length == 0) continue;
 
+                // The argv entry point rejoins unquoted paths containing spaces (RejoinArgs);
+                // interactive mode handed them on as fragments, so `scan D:\My Music\album` came
+                // back as three "Path not found" warnings while the quoted form worked. Only
+                // rejoin when nothing was quoted — quoting is how you pass two separate paths,
+                // and merging those into one would be a worse bug than the one being fixed.
+                if (!input.Contains('"'))
+                    parts = RejoinArgs(parts);
+
                 string cmd = parts[0].ToLowerInvariant();
 
                 switch (cmd)
@@ -222,8 +230,18 @@ namespace AudioQualityChecker.CLI
                         Console.WriteLine($"OS: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
                         break;
 
+                    case "checklog" or "riplog":
+                        await RunCheckLog(parts.Skip(1).ToArray());
+                        break;
+
+                    case "credits":
+                        RunCredits(parts.Skip(1).ToArray());
+                        break;
+
                     case "clear" or "cls":
-                        Console.Clear();
+                        // Console.Clear() throws "The handle is invalid" whenever output is
+                        // redirected (a piped or scripted session), which killed the whole process.
+                        try { Console.Clear(); } catch { /* nothing to clear without a console */ }
                         break;
 
                     case "config":
@@ -260,7 +278,7 @@ namespace AudioQualityChecker.CLI
     scan <path> -v       Scan with verbose output
     scan <path> --json   Scan and output as JSON
     scan <path> --fast   Fast scan using default lightweight detectors
-    scan <path> --thorough Enable silence, DR, true peak, LUFS, BPM, rip quality
+    scan <path> --thorough Enable silence, DR, true peak, LUFS, BPM
     info <file>          Detailed analysis of a single file
     export <path> -o f   Analyze and export to file (csv, txt, pdf, xlsx, docx)
     metadata show <file> View file metadata/tags
@@ -270,6 +288,7 @@ namespace AudioQualityChecker.CLI
     rename <path>        Batch-rename files from tags (preview-first, --dry-run)
     duplicates <path>    Find duplicate tracks in a folder
     identify <file>      Identify a track via AcoustID fingerprint
+    checklog <path>      Score an EAC/XLD/whipper CD rip log (alias: riplog)
 
   NAVIGATION:
     cd <dir>             Change working directory
@@ -278,6 +297,8 @@ namespace AudioQualityChecker.CLI
 
   OTHER:
     version              Show version info
+    credits              Show open-source credits and licenses
+    config               View and change saved CLI defaults
     help / ?             Show this help
     exit / quit / q      Exit AudioAuditor
 

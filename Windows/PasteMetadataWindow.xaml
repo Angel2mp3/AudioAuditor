@@ -1,0 +1,460 @@
+﻿<Window x:Class="AudioQualityChecker.PasteMetadataWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Height="780" Width="1100"
+        MinHeight="480" MinWidth="700"
+        WindowStartupLocation="CenterOwner"
+        Loaded="PasteWindow_Loaded"
+        Background="{DynamicResource WindowBg}"
+        Foreground="{DynamicResource TextPrimary}"
+        AllowsTransparency="True">
+
+    <Window.Resources>
+        <!-- Themed Scrollbar -->
+        <!-- ComboBox -->
+        <ControlTemplate x:Key="ComboBoxToggleButton" TargetType="ToggleButton">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="22"/>
+                </Grid.ColumnDefinitions>
+                <Border x:Name="Border" Grid.ColumnSpan="2" Background="{DynamicResource InputBg}"
+                        BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1" CornerRadius="3"/>
+                <Path x:Name="Arrow" Grid.Column="1" Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextMuted}"
+                      StrokeThickness="1.5" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        <Style TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Template="{StaticResource ComboBoxToggleButton}"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          Focusable="False" ClickMode="Press"/>
+                            <ContentPresenter IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              Margin="8,0,24,0" VerticalAlignment="Center"/>
+                            <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True"
+                                   Focusable="False" PopupAnimation="Slide">
+                                <Border Background="{DynamicResource GlassFloatingBg}" BorderBrush="{DynamicResource GlassBorderBrush}"
+                                        BorderThickness="1" CornerRadius="3" MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="320" Margin="0,2,0,0">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelectionBg}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RowHoverBg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- TextBox -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource InputBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="2,0"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- CheckBox -->
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Background="Transparent">
+                            <Border x:Name="checkBorder" Width="16" Height="16" Background="{DynamicResource InputBg}"
+                                    BorderBrush="{DynamicResource ButtonBorder}" BorderThickness="1" CornerRadius="3"
+                                    VerticalAlignment="Center" Margin="0,0,6,0">
+                                <TextBlock x:Name="checkMark" Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                           Foreground="{DynamicResource AccentColor}" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="checkMark" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="checkBorder" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="checkBorder" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- RadioButton -->
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Background="Transparent">
+                            <Grid Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center">
+                                <Ellipse x:Name="outer" Stroke="{DynamicResource ButtonBorder}" StrokeThickness="1" Fill="{DynamicResource InputBg}"/>
+                                <Ellipse x:Name="dot" Width="8" Height="8" Fill="{DynamicResource AccentColor}" Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="dot" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="outer" Property="Stroke" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="outer" Property="Stroke" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Buttons -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ButtonBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ButtonHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="18,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Opacity" Value="0.9"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="bd" Property="Opacity" Value="0.5"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="IconButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ButtonHover}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- DataGrid -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="{DynamicResource PanelBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="RowBackground" Value="{DynamicResource GridRowBg}"/>
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource GridAltRowBg}"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="RowHeaderWidth" Value="0"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource GlassPanelBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="8,7"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+        <Style TargetType="DataGridCell">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource SelectionBg}"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{DynamicResource GlassFloatingBg}" BorderBrush="{DynamicResource GlassBorderBrush}"
+            BorderThickness="1" CornerRadius="8">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="10"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="10"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" MouseLeftButtonDown="Header_MouseDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets" FontSize="17"
+                               Foreground="{DynamicResource AccentColor}" Margin="0,0,8,0"/>
+                    <StackPanel>
+                        <TextBlock Text="Paste Metadata" FontSize="19" FontWeight="Bold"
+                                   FontFamily="{DynamicResource AppFontFamily}" Foreground="{DynamicResource TextPrimary}"/>
+                        <TextBlock x:Name="FileCountText" FontSize="12" FontFamily="{DynamicResource AppFontFamily}"
+                                   Foreground="{DynamicResource TextMuted}"/>
+                    </StackPanel>
+                </StackPanel>
+                <Button Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" HorizontalAlignment="Right"
+                        VerticalAlignment="Top" Click="Close_Click" Style="{StaticResource IconButton}"/>
+            </Grid>
+
+            <!-- Mode + input -->
+            <Border Grid.Row="2" Background="{DynamicResource GlassPanelBg}" BorderBrush="{DynamicResource GlassBorderBrush}"
+                    BorderThickness="1" CornerRadius="6" Padding="12">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <RadioButton x:Name="RbPaste" Content="Paste text" IsChecked="True" GroupName="Mode"
+                                     Checked="Mode_Changed" Margin="0,0,18,0"/>
+                        <RadioButton x:Name="RbMaster" Content="Copy from a master file" GroupName="Mode"
+                                     Checked="Mode_Changed" Margin="0,0,18,0"/>
+                        <RadioButton x:Name="RbFolder" Content="Copy from a folder" GroupName="Mode"
+                                     Checked="Mode_Changed"/>
+                    </StackPanel>
+
+                    <!-- Paste-text panel -->
+                    <StackPanel x:Name="PastePanel">
+                        <TextBlock Text="Paste a tracklist, a CSV/table, or a block of &quot;Field: value&quot; lines — the type is auto-detected."
+                                   Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,6"/>
+                        <TextBox x:Name="PasteBox" Height="120" AcceptsReturn="True" AcceptsTab="True"
+                                 TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                 FontFamily="Consolas" FontSize="12" TextChanged="PasteBox_TextChanged"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <TextBlock Text="Interpret as:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}"
+                                       FontSize="12" Margin="0,0,6,0"/>
+                            <ComboBox x:Name="CmbKind" Width="150" SelectedIndex="0" SelectionChanged="Kind_Changed">
+                                <ComboBoxItem Content="Auto-detect"/>
+                                <ComboBoxItem Content="Single block"/>
+                                <ComboBoxItem Content="Tracklist"/>
+                                <ComboBoxItem Content="CSV / table"/>
+                            </ComboBox>
+                            <TextBlock x:Name="DetectedText" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Master panel -->
+                    <StackPanel x:Name="MasterPanel" Visibility="Collapsed">
+                        <TextBlock Text="Copy shared album-level metadata (album, album artist, year, genre, disc, composer) from one well-tagged file to the rest."
+                                   Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Master file:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}"
+                                       FontSize="12" Margin="0,0,6,0"/>
+                            <ComboBox x:Name="CmbMaster" Width="380" DisplayMemberPath="FileName"/>
+                            <CheckBox x:Name="ChkCopyCover" Content="Also copy cover art" Margin="16,0,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- Folder panel -->
+                    <StackPanel x:Name="FolderPanel" Visibility="Collapsed">
+                        <TextBlock Text="Pick a separate, well-tagged folder. Each source file is matched to a loaded file by name/title (works across different names and formats), then the fields you check are copied over."
+                                   Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Source folder:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}"
+                                       FontSize="12" Margin="0,0,6,0"/>
+                            <TextBox x:Name="FolderPathBox" Width="480" IsReadOnly="True" VerticalAlignment="Center"/>
+                            <Button Content="Browse…" Click="FolderBrowse_Click" Margin="8,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock Text="Fields to copy:" Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,0,4"/>
+                        <WrapPanel>
+                            <CheckBox x:Name="FldfTitle" Content="Title" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfArtist" Content="Artist" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfAlbum" Content="Album" IsChecked="True" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfAlbumArtist" Content="Album Artist" IsChecked="True" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfYear" Content="Year" IsChecked="True" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfTrack" Content="Track #" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfDisc" Content="Disc #" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfGenre" Content="Genre" IsChecked="True" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfComposer" Content="Composer" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfComment" Content="Comment" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfLyrics" Content="Lyrics" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfCopyright" Content="Copyright" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfCover" Content="Cover art" Margin="0,0,16,6"/>
+                            <CheckBox x:Name="FldfFileName" Content="File name (rename to match source)" Margin="0,0,16,6"/>
+                        </WrapPanel>
+                    </StackPanel>
+
+                    <Button x:Name="BtnParse" Content="Preview changes" Click="Parse_Click"
+                            HorizontalAlignment="Left" Margin="0,12,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Review grid -->
+            <DataGrid Grid.Row="4" x:Name="ChangesGrid" AutoGenerateColumns="False" CanUserAddRows="False"
+                      CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal" SelectionMode="Extended">
+                <DataGrid.Columns>
+                    <DataGridCheckBoxColumn Header="Apply" Binding="{Binding IsSelected, Mode=TwoWay}" Width="56"/>
+                    <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="220" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="ToolTip" Value="{Binding FileName}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="Field" Binding="{Binding Field}" Width="110" IsReadOnly="True"/>
+                    <DataGridTextColumn Header="Old" Binding="{Binding OldValue}" Width="200" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="ToolTip" Value="{Binding OldValue}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTextColumn Header="New" Binding="{Binding NewValue}" Width="*" IsReadOnly="True">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="ToolTip" Value="{Binding NewValue}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <!-- Footer -->
+            <Border Grid.Row="6" Background="{DynamicResource GlassPanelBg}" CornerRadius="6" Padding="10,8"
+                    BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <CheckBox x:Name="ChkBackups" Content="Create backups before writing" IsChecked="True" Margin="0,0,16,0"/>
+                        <TextBlock x:Name="StatusText" VerticalAlignment="Center" FontSize="12"
+                                   Foreground="{DynamicResource TextSecondary}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Content="Close" Click="Close_Click" Margin="0,0,8,0"/>
+                        <Button x:Name="BtnApply" Content="Apply Selected" Style="{StaticResource PrimaryButton}" Click="Apply_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

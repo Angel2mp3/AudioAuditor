@@ -47,7 +47,7 @@ namespace AudioQualityChecker.CLI
 
         private static readonly string[] Tips =
         {
-            "Tip: Use --fast to skip silence, DR, true peak, LUFS, BPM, and rip quality checks.",
+            "Tip: Use --fast to skip silence, DR, true peak, LUFS, and BPM checks.",
             "Tip: Use --thorough when you want the full detector set for a smaller batch.",
             "Tip: Use --json to pipe results into other tools.",
             "Tip: Use --status fake to filter only questionable files.",
@@ -61,7 +61,7 @@ namespace AudioQualityChecker.CLI
             "Tip: Use --shlabs for cloud-based AI music detection (quota limited).",
             "Tip: Use 'metadata show file.flac' to view all embedded tags.",
             "Tip: Use --experimental-ai for spectral AI detection patterns.",
-            "Tip: Use --rip-quality to check CD rip integrity.",
+            "Tip: Use 'checklog rip.log' to score an EAC/XLD/whipper CD rip log.",
             "Tip: Use --no-config to ignore saved defaults for one run.",
             "Tip: Use spectrogram command to generate visual frequency plots."
         };
@@ -82,8 +82,54 @@ namespace AudioQualityChecker.CLI
 
         static async Task<int> Main(string[] args)
         {
+            try
+            {
+                return await RunMain(args);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine();
+                Console.WriteLine("Cancelled.");
+                return 130;
+            }
+            catch (Exception ex)
+            {
+                // Nothing caught here before, so any unexpected failure dumped a raw .NET stack
+                // trace at the user — and on a build that carries symbols, the frames spell out the
+                // build machine's source paths. Report the message; keep the trace behind a switch.
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"Error: {ex.Message}");
+                Console.Error.WriteLine(Environment.GetEnvironmentVariable("AUDIOAUDITOR_DEBUG") == "1"
+                    ? ex.ToString()
+                    : "Set AUDIOAUDITOR_DEBUG=1 for the full stack trace.");
+                return 1;
+            }
+            finally
+            {
+                // Archive scans extract into temp folders sized by the archive. Only one command
+                // cleaned up after itself, so any other path through a .zip/.rar — and every crash —
+                // left the extraction behind in %TEMP% permanently.
+                CleanupTempDirs();
+            }
+        }
+
+        static async Task<int> RunMain(string[] args)
+        {
             // Enable UTF-8 output so star/Unicode chars render correctly on Windows
             Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+            // PowerShell prefixes a redirected stdin stream with a UTF-8 BOM, and the default
+            // Console.In does not strip it — so the first piped line arrived as "﻿exit" and
+            // every stdin entry point saw a corrupted first item: an unknown command in interactive
+            // mode, an unopenable first path in `find … | audioauditorcli analyze`. Re-open stdin
+            // with BOM detection once, here, instead of trimming at ~20 ReadLine call sites.
+            if (Console.IsInputRedirected)
+            {
+                Console.SetIn(new StreamReader(
+                    Console.OpenStandardInput(),
+                    new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                    detectEncodingFromByteOrderMarks: true));
+            }
 
             // Rejoin args to handle unquoted paths with spaces, then re-split properly
             args = RejoinArgs(args);
@@ -162,6 +208,10 @@ namespace AudioQualityChecker.CLI
             }
             catch { /* never block startup */ }
 
+            // A scan that was Ctrl+C'd mid-decode leaves its ffmpeg temp WAV behind, and those are
+            // sized by track length. Sweeping old ones here costs one directory listing.
+            _ = Task.Run(AudioQualityChecker.Services.FfmpegDecoder.CleanStaleTempFiles);
+
             // Non-blocking update check — starts in background, prints result if available
             var updateCheck = !skipUpdateCheck
                 ? Task.Run(async () =>
@@ -187,6 +237,13 @@ namespace AudioQualityChecker.CLI
                 Console.WriteLine($"AudioAuditor CLI v{GetVersion()}");
                 Console.WriteLine($"Runtime: {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
                 Console.WriteLine($"OS: {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+
+                // ffmpeg is the decoder of last resort — without it AAC/M4A, ALAC, WMA, APE, WavPack
+                // and friends are metadata-only. Cheapest place to tell someone why.
+                string? ffmpeg = AudioQualityChecker.Services.FfmpegDecoder.FfmpegPath;
+                Console.WriteLine(ffmpeg != null
+                    ? $"Extended decoders: ffmpeg ({ffmpeg})"
+                    : "Extended decoders: ffmpeg not found — AAC/M4A, ALAC, WMA, APE and WavPack will be metadata-only");
                 return 0;
             }
 
@@ -194,7 +251,8 @@ namespace AudioQualityChecker.CLI
 
             int result = command switch
             {
-                "analyze" => await RunAnalyze(args.Skip(1).ToArray()),
+                // "scan" is the form the README, the startup tip, and interactive mode all use.
+                "analyze" or "scan" => await RunAnalyze(args.Skip(1).ToArray()),
                 "export" => RunExport(args.Skip(1).ToArray()),
                 "metadata" => RunMetadata(args.Skip(1).ToArray()),
                 "info" => await RunInfo(args.Skip(1).ToArray()),
@@ -202,6 +260,9 @@ namespace AudioQualityChecker.CLI
                 "rename" => RunRename(args.Skip(1).ToArray()),
                 "duplicates" or "dupes" or "dupe" => RunDuplicates(args.Skip(1).ToArray()),
                 "identify" or "id" => await RunIdentify(args.Skip(1).ToArray()),
+                "checklog" or "riplog" => await RunCheckLog(args.Skip(1).ToArray()),
+                "credits" => RunCredits(args.Skip(1).ToArray()),
+                "selfcheck" => RunSelfCheck(args.Skip(1).ToArray()),
                 _ => Error($"Unknown command: {args[0]}. Use --help for usage.")
             };
 
@@ -268,7 +329,7 @@ namespace AudioQualityChecker.CLI
 
             if (args[0].Equals("metadata", StringComparison.OrdinalIgnoreCase) &&
                 args.Length > 1 &&
-                !args[1].StartsWith("-"))
+                !IsFlagToken(args[1]))
             {
                 result.Add(args[1]);
                 startIndex = 2;
@@ -278,7 +339,7 @@ namespace AudioQualityChecker.CLI
             {
                 string arg = args[i];
 
-                if (arg.StartsWith("-"))
+                if (IsFlagToken(arg))
                 {
                     // Flush any accumulated path parts
                     if (pathParts.Count > 0)
@@ -329,6 +390,17 @@ namespace AudioQualityChecker.CLI
 
             return result.ToArray();
         }
+
+        /// <summary>
+        /// True for a real option token ("-v", "--json"), false for a dash that merely happens to
+        /// sit inside an unquoted path.
+        ///
+        /// A bare "-" was being treated as a flag, which mattered because "Artist - Title.flac" is
+        /// how most music is named: an unquoted path shattered into three fragments, each reported
+        /// as "Path not found". A flag is a dash followed by a letter — everything else is text.
+        /// </summary>
+        static bool IsFlagToken(string arg) =>
+            arg.Length > 1 && arg[0] == '-' && char.IsLetter(arg.TrimStart('-').FirstOrDefault());
 
         static string[] PrependConfigArgs(string[] args)
         {
@@ -387,7 +459,6 @@ namespace AudioQualityChecker.CLI
                     Console.WriteLine("  Example: --memory auto");
                     Console.WriteLine("  Example: --thorough");
                     Console.WriteLine("  Example: --fast");
-                    Console.WriteLine("  Example: --rip-quality");
                     Console.WriteLine("  Example: --experimental-ai");
                     Console.WriteLine("  Example: --shlabs");
                     Console.WriteLine("  Example: --no-bpm");
@@ -445,7 +516,7 @@ USAGE:
   {exe} <command> [options]
 
 COMMANDS:
-  analyze      Analyze audio files or folders for quality
+  scan         Analyze audio files or folders for quality (alias: analyze)
   export       Analyze and export results to a file
   metadata     View, edit, or auto-enrich audio file metadata
   info         Show detailed info for a single file
@@ -453,6 +524,9 @@ COMMANDS:
   rename       Batch-rename files from their tags (preview-first)
   duplicates   Find duplicate tracks in a folder
   identify     Identify a track via AcoustID fingerprint
+  checklog     Score an EAC/XLD/whipper CD rip log (CD Rip Checker)
+  credits      Show open-source credits and licenses
+  selfcheck    Run the built-in assertion suite against this build
 
 GLOBAL OPTIONS:
   --cpu <mode>     CPU usage mode: auto, low (2), medium (4), high (8), max (16)
@@ -473,17 +547,17 @@ COMMON ANALYZE OPTIONS:
   --recursive, -r   Recurse into folders
   --no-recursive    Do not recurse into folders
   --fast            Force lightweight scan defaults
-  --thorough        Enable silence, DR, true peak, LUFS, BPM, and rip quality
+  --thorough        Enable silence, DR, true peak, LUFS, and BPM
   --silence         Enable silence detection
   --dynamic-range   Enable dynamic range measurement
   --true-peak       Enable true peak measurement
   --lufs            Enable integrated LUFS measurement
   --bpm             Enable BPM detection
-  --rip-quality     Enable rip/encode quality detection
   --experimental-ai Enable experimental spectral AI detection
   --shlabs          Enable SH Labs AI detection
   --no-ai           Disable the standard AI watermark detector
   --always-full     Always run a full-file pass even when detectors are off
+  --rip-log         Score the EAC/XLD/whipper log sitting next to the files (one run per folder)
   --cutoff-allow <hz> Don't flag as fake when frequency cutoff >= this Hz (default 19600)
 
 EXAMPLES:

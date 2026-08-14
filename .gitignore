@@ -37,8 +37,9 @@ icon-test/
 /*.gif
 /*.bmp
 /*.webp
+# Logo.png is the README / website logo and is deliberately tracked at the repo root.
+# Logo.ico is gone — nothing referenced it; the app and installer use Resources/app.ico.
 !/Logo.png
-!/Logo.ico
 
 # NuGet
 packages/
@@ -61,6 +62,9 @@ Proxy/
 *.vssscc
 *.sln.docstates
 *.code-workspace
+# The public .sln carries only WPF + CLI + Core. *.Local.sln keeps the test
+# projects and the Avalonia port in one solution for local work.
+*.Local.sln
 
 
 # IDE / VS files
@@ -98,11 +102,27 @@ session.dat
 
 # Dev / temp / personal files
 scripts/
+# The technical-reference set under docs/ is unfinished and is held back from release.
+# Un-ignore it once the papers are accurate; the README deliberately links to none of them.
 docs/
 dev-notes/
+# Scratch media + internal review notes. Holds commercial audio files used as
+# detector fixtures — never publishable.
+dev-tests/
 to-do.txt
+todo.md
+ai-detection-improvements.txt
 .recovery/
 website-broken-backup/
+# Timestamped backups written by the website safety procedure in AGENTS.md
+website-backups/
+# Same snapshots under their older name; these hold copies of website/, which is
+# itself ignored, so tracking them would leak that tree into the public repo.
+backups/
+
+# Local-only umbrella: reference trees, worker configs, and agent-tool caches
+# moved off the repo root to keep it readable.
+_local/
 
 # Windows shortcuts (embed local paths)
 *.lnk
@@ -110,36 +130,33 @@ website-broken-backup/
 # Tooling
 .vercel/
 **/.vercel/
-.understand-anything/
-.claude/
-.codex/
-.agents/
-.omc/
-AGENTS.md
-angents.md
-.playwright-mcp/
-.playwright-mcp
 
-# Cloudflare worker caches
-contact-worker/.wrangler/
+# Cloudflare worker
+# The bare pattern covers the whole tree, caches and wrangler config included.
 contact-worker
 
-# Temp plan files
-plan_temp.md
+# ═══ Vendored reference source (not built by this repo) ═══
+# cambia's Rust tree and pano-scrobbler are kept locally for reference only. The shipped
+# binaries live in third-party/, which stays tracked so the folder layout and README ship.
+# Both patterns are anchored to the repo root: a bare `cambia/` also matched
+# third-party/cambia/, which contradicted the line above.
+/cambia/
+/cambia-master/
+/pano-scrobbler-main/
 
 # ═══ Cross-platform port ═══
 AudioAuditor.Avalonia/
 AVALONIA_PORT_PLAN.md
 
-# ═══ Web app  ═══
+# ═══ Website ═══
 website/
-website/
-website/app/
-website/DEPLOYMENT.md
 
-# Generated/local web files 
-website/app-dist/
+# ═══ Web app (unreleased; lives outside the website publish root) ═══
+web-app-dev/
+
+# Generated/local web files
 website/cloudflare-pages/
+publish/cloudflare-pages/
 
 # SH Labs secrets (any location)
 **/SHLabsSecrets.cs
@@ -147,14 +164,20 @@ website/cloudflare-pages/
 # Internal security documentation
 SECURITY_INTERNALS.md
 
+# Environment files — global, not just under website/ and web-app-dev/
+.env
+.env.*
+*.local
+*.dev.vars
+
 # Node / Wrangler
 node_modules/
 .wrangler/
-website/app/node_modules/
-website/app/proxy/.env
-website/app/proxy/.env.*
-website/app/proxy/*.local
-website/app/proxy/*.log
+web-app-dev/app/node_modules/
+web-app-dev/app/proxy/.env
+web-app-dev/app/proxy/.env.*
+web-app-dev/app/proxy/*.local
+web-app-dev/app/proxy/*.log
 website/.wrangler/
 website/.env
 website/.env.*
@@ -163,6 +186,9 @@ website/*.local
 todo.txt
 TODO.txt
 notes.txt
+# Session hand-off scratch notes
+resume from this.txt
+resume*.txt
 *.tmp
 *.bak
 *.swp
@@ -185,9 +211,7 @@ Properties/PublishProfiles/
 *.iss~
 final-releases/Setup/
 final-releases/Portable/
-final-releases/
 installer/
-winget/
 
 # Crash dumps
 *.dmp
@@ -214,7 +238,3 @@ test-results/
 AudioAuditorSmoke*/
 smoke-output/
 smoke-results/
-contact-worker/wrangler.toml
-contact-worker/worker.js
-.hermes/
-.superpowers/

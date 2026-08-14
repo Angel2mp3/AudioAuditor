@@ -45,8 +45,11 @@ namespace AudioQualityChecker
                 },
                 getCurrentTrack: () =>
                 {
-                    if (FileGrid.SelectedItem is AudioFileInfo file) return file;
-                    return _files.FirstOrDefault(f => f.FilePath == _player.CurrentFile);
+                    // Playback is the source of truth: merely selecting a row in the grid must not
+                    // repaint the mini player. Selection is only a placeholder before anything plays.
+                    if (_player.CurrentFile is string path)
+                        return _files.FirstOrDefault(f => f.FilePath == path);
+                    return FileGrid.SelectedItem as AudioFileInfo;
                 },
                 onToggleVisualizer: () => Dispatcher.Invoke(RefreshVisualizerOwnershipAfterMiniChange),
                 onToggleColorMatch: () =>
@@ -152,13 +155,18 @@ namespace AudioQualityChecker
 
         private void OnWindowDeactivated(object? sender, EventArgs e)
         {
-            if (_occlusionCheckTimer != null)
+            // Built once and restarted. Every deactivation used to throw the old timer away and
+            // allocate a replacement, which over a session of alt-tabbing is a lot of dispatcher
+            // timers for a job one can do.
+            if (_occlusionCheckTimer == null)
+            {
+                _occlusionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                _occlusionCheckTimer.Tick += OcclusionCheckTimer_Tick;
+            }
+            else
             {
                 _occlusionCheckTimer.Stop();
-                _occlusionCheckTimer.Tick -= OcclusionCheckTimer_Tick;
             }
-            _occlusionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            _occlusionCheckTimer.Tick += OcclusionCheckTimer_Tick;
             _occlusionCheckTimer.Start();
         }
 

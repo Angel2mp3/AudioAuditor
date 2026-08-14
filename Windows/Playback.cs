@@ -77,6 +77,7 @@ namespace AudioQualityChecker
         {
             _crossfadeEarlyTriggered = false;
             _pendingPlaybackVisual = false; // explicit stop overrides any in-flight skip visual
+            CancelPendingSkip();            // ...and a queued burst target must not fire afterwards
             _player.Stop();
             _playerTimer.Stop();
             StopWaveformAnimation();
@@ -164,6 +165,7 @@ namespace AudioQualityChecker
             {
                 string tip = mode switch { LoopMode.All => "Loop: All", LoopMode.One => "Loop: One", _ => "Loop: Off" };
                 BtnLoop.ToolTip = tip;
+                System.Windows.Automation.AutomationProperties.SetName(BtnLoop, tip);
                 if (active && accent is System.Windows.Media.SolidColorBrush scb)
                 {
                     var glowColor = scb.Color;
@@ -304,7 +306,7 @@ namespace AudioQualityChecker
 
         private AudioFileInfo? FindCurrentTrack(List<AudioFileInfo> items)
         {
-            string? currentPath = _player.CurrentFile;
+            string? currentPath = CurrentTrackAnchorPath();
             if (currentPath == null)
                 return null;
 
@@ -361,8 +363,9 @@ namespace AudioQualityChecker
             if (items == null || items.Count == 0) return;
 
             int currentIdx = -1;
-            if (_player.CurrentFile != null)
-                currentIdx = items.FindIndex(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+            string? anchorPath = CurrentTrackAnchorPath();
+            if (anchorPath != null)
+                currentIdx = items.FindIndex(f => string.Equals(f.FilePath, anchorPath, StringComparison.OrdinalIgnoreCase));
             else if (FileGrid.SelectedItem is AudioFileInfo sel)
                 currentIdx = items.IndexOf(sel);
 
@@ -416,8 +419,9 @@ namespace AudioQualityChecker
             }
 
             int currentIdx = -1;
-            if (_player.CurrentFile != null)
-                currentIdx = items.FindIndex(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase));
+            string? anchorPath = CurrentTrackAnchorPath();
+            if (anchorPath != null)
+                currentIdx = items.FindIndex(f => string.Equals(f.FilePath, anchorPath, StringComparison.OrdinalIgnoreCase));
             else if (FileGrid.SelectedItem is AudioFileInfo sel)
                 currentIdx = items.IndexOf(sel);
 
@@ -434,26 +438,58 @@ namespace AudioQualityChecker
         private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             _player.Volume = (float)(VolumeSlider.Value / 100.0);
+
+            // Raising the volume IS an unmute. Without this _isMuted stayed latched until the icon
+            // was clicked again: the Now Playing icon (which ORs in _isMuted) kept drawing the muted
+            // glyph at full volume, the new level was never persisted, and the next icon click
+            // "unmuted" back to the stale pre-mute level.
+            if (_isMuted && VolumeSlider.Value > 0)
+                _isMuted = false;
+
             // Persist volume so it's restored across sessions. Skip the save while muted
             // (mute writes 0 to the slider — we want the user's pre-mute level to survive).
             if (!_isMuted)
             {
                 ThemeManager.Volume = VolumeSlider.Value;
-                ThemeManager.SavePlayOptions();
+                ThemeManager.SavePlayOptionsDebounced();
             }
             if (VolumeLabel != null)
                 VolumeLabel.Text = $"{(int)VolumeSlider.Value}%";
             if (VolumeIconPath != null)
             {
-                if (VolumeSlider.Value <= 0)
-                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 12,5 L 15,8 M 15,5 L 12,8");
-                else if (VolumeSlider.Value < 34)
-                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,6 Q 12.5,8 11,10");
-                else if (VolumeSlider.Value < 67)
-                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11 M 13,3.5 Q 15.5,8 13,12.5");
-                else
-                    VolumeIconPath.Data = System.Windows.Media.Geometry.Parse("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11 M 13,3 Q 16,8 13,13 M 15,1 Q 19,8 15,15");
+                double v = VolumeSlider.Value;
+                VolumeIconPath.Data = v <= 0 ? VolumeIconMuted
+                                    : v < 34  ? VolumeIconLow
+                                    : v < 67  ? VolumeIconMedium
+                                              : VolumeIconHigh;
             }
+
+            // Mirror onto the Now Playing slider. Both screens share one volume, but only NP pushed
+            // its value down to here — dragging the main slider left the NP icon on the old level.
+            // Setting an identical value raises no ValueChanged, so the NP handler's write back to
+            // this slider terminates instead of looping.
+            if (NpVolumeSlider != null && NpVolumeSlider.Value != VolumeSlider.Value)
+                NpVolumeSlider.Value = VolumeSlider.Value;
+            NpUpdateVolumeIcon();
+        }
+
+        // Parsed once and frozen. Geometry.Parse walks the path mini-language and builds a fresh
+        // PathGeometry every call — it was running on every volume ValueChanged, i.e. per pixel of
+        // drag, to produce one of four constant shapes.
+        private static readonly Geometry VolumeIconMuted =
+            ParseFrozen("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 12,5 L 15,8 M 15,5 L 12,8");
+        private static readonly Geometry VolumeIconLow =
+            ParseFrozen("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,6 Q 12.5,8 11,10");
+        private static readonly Geometry VolumeIconMedium =
+            ParseFrozen("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11 M 13,3.5 Q 15.5,8 13,12.5");
+        private static readonly Geometry VolumeIconHigh =
+            ParseFrozen("M 2,5 L 5,5 L 9,2 L 9,14 L 5,11 L 2,11 Z M 11,5 Q 13,8 11,11 M 13,3 Q 16,8 13,13 M 15,1 Q 19,8 15,15");
+
+        private static Geometry ParseFrozen(string path)
+        {
+            var g = Geometry.Parse(path);
+            g.Freeze();
+            return g;
         }
 
         private void VolumeIcon_Click(object sender, MouseButtonEventArgs e)
@@ -580,13 +616,32 @@ namespace AudioQualityChecker
 
         // Rapid-click debounce: collapse a burst of PlayFile calls so only the latest target plays.
         // _playFileBusy guards re-entrancy; _pendingPlayRequest holds the last requested track during
-        // a play-in-progress; _lastPlayFileTickMs adds a 120 ms cooldown for keyboard/Next-Prev spam.
+        // a play-in-progress.
+        //
+        // The first skip of a burst plays immediately — a single deliberate Next must not gain any
+        // latency. Anything arriving within SkipSettleMs of the last one is collapsed instead: the
+        // target text updates right away, its decoder is warmed in the background, and the settle
+        // timer is pushed out. Only when the clicking stops does the final target actually load, so
+        // a 6-click burst pays ONE device teardown + decoder open instead of six. The old behaviour
+        // (120 ms cooldown + an immediate Background-priority drain) re-loaded every intermediate
+        // track in full, which is what made rapid skipping stutter.
         private int _playFileBusy;
         private AudioFileInfo? _pendingPlayRequest;
         private bool _pendingIsManualSkip;
         private bool _pendingPreserveCrossfade;
+        // Prev walks _playHistory and sets _navigatingHistory around its PlayFile call so the track
+        // isn't re-appended. A collapsed skip loads later, long after that flag has been cleared, so
+        // the flag has to travel with the queued request or a Prev burst rewrites its own history.
+        private bool _pendingNavigatingHistory;
+        // Stamped when a real load STARTS (not when it finishes) — it answers "how long since the
+        // last track the user actually got", which is what decides whether a click is a fresh skip
+        // or part of a burst. Stamping it at completion instead made a slow load push every later
+        // click into burst mode, and made the drain fight its own cooldown.
         private long _lastPlayFileTickMs;
-        private const int PlayFileCooldownMs = 120;
+        // Absolute deadline for the queued burst target: the last click's time + SkipSettleMs.
+        private long _pendingDeadlineMs;
+        private const int SkipSettleMs = 250;
+        private DispatcherTimer? _skipSettleTimer;
 
         // True while a PlayFile load is in flight. PlayFile stops the current track and loads the
         // next decoder on a background thread, so _player.IsPlaying briefly reads false mid-skip.
@@ -600,30 +655,56 @@ namespace AudioQualityChecker
             return PlaybackSettingsSnapshot.From(new ThemeManagerSettings());
         }
 
+        // Memo for the currently playing row. PlayerTimer_Tick fires every 50ms and the Discord
+        // block used to scan the entire _files list on every one of them — 20·N ordinal string
+        // comparisons per second on the UI thread for a value that only changes on track change.
+        private string? _playingFileLookupPath;
+        private AudioFileInfo? _playingFileLookupResult;
+
+        private AudioFileInfo? FindPlayingFileCached()
+        {
+            string? current = _player.CurrentFile;
+            if (current == null)
+            {
+                _playingFileLookupPath = null;
+                _playingFileLookupResult = null;
+                return null;
+            }
+
+            if (!string.Equals(_playingFileLookupPath, current, StringComparison.OrdinalIgnoreCase))
+            {
+                _playingFileLookupPath = current;
+                _playingFileLookupResult = _files.FirstOrDefault(
+                    f => string.Equals(f.FilePath, current, StringComparison.OrdinalIgnoreCase));
+            }
+            return _playingFileLookupResult;
+        }
+
         // Bumped each time a load begins; a backgrounded load discards its result if superseded.
         private int _loadGeneration;
 
         private void PlayFile(AudioFileInfo file, bool isManualSkip = false, bool preserveCrossfadeGuard = false)
         {
-            // Cooldown collapse: if the previous PlayFile finished within the cooldown window,
-            // store the new request and let the existing call's tail dispatch it.
+            // Burst collapse: a load is already in flight, or the previous one finished within the
+            // settle window. Either way this is part of a click burst — queue it instead of paying
+            // another teardown/decoder-open cycle.
             long nowMs = Environment.TickCount64;
             if (System.Threading.Interlocked.Exchange(ref _playFileBusy, 1) == 1)
             {
-                _pendingPlayRequest = file;
-                _pendingIsManualSkip = isManualSkip;
-                _pendingPreserveCrossfade = preserveCrossfadeGuard;
+                QueuePendingPlay(file, isManualSkip, preserveCrossfadeGuard);
                 return;
             }
-            if (nowMs - _lastPlayFileTickMs < PlayFileCooldownMs)
+            if (nowMs - _lastPlayFileTickMs < SkipSettleMs)
             {
-                _pendingPlayRequest = file;
-                _pendingIsManualSkip = isManualSkip;
-                _pendingPreserveCrossfade = preserveCrossfadeGuard;
                 System.Threading.Interlocked.Exchange(ref _playFileBusy, 0);
-                Dispatcher.BeginInvoke(new Action(DrainPendingPlayRequest), System.Windows.Threading.DispatcherPriority.Background);
+                QueuePendingPlay(file, isManualSkip, preserveCrossfadeGuard);
                 return;
             }
+
+            // A real load starts here, so any queued burst target is superseded by this one.
+            _lastPlayFileTickMs = nowMs;
+            _pendingPlayRequest = null;
+            _skipSettleTimer?.Stop();
 
             if (!preserveCrossfadeGuard)
                 _crossfadeEarlyTriggered = false;
@@ -659,10 +740,47 @@ namespace AudioQualityChecker
                 if (crossfade && _player.IsPlaying && (!isManualSkip || playbackSettings.CrossfadeOnManualSkip))
                 {
                     _player.SetUserVolume((float)(VolumeSlider.Value / 100.0));
-                    _player.PlayWithCrossfade(file.FilePath, normalize, playbackSettings);
-                    ApplyPlaybackTrackUi(file);
-                    _consecutiveFailedPlays = 0;
-                    PreloadNextTrackData();
+
+                    // Warm the decoder on a BACKGROUND thread first, then crossfade on the UI thread.
+                    // PlayWithCrossfade adopts the warm decoder, so the UI thread only does the
+                    // fade-out handoff and pipeline init — never a decode. For a sequential advance
+                    // the track is already warm and PrepareNextDecoder returns immediately; this only
+                    // costs a dispatcher hop. The outgoing track keeps playing during the open, which
+                    // is what a crossfade wants anyway. The busy guard is held until the continuation
+                    // runs, so rapid skips still collapse into _pendingPlayRequest.
+                    int gen = ++_loadGeneration;
+                    asyncHandoff = true;
+                    string warmPath = file.FilePath;
+                    System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try { _player.PrepareNextDecoder(warmPath); } catch { }
+
+                        Dispatcher.BeginInvoke(new Action(() =>
+                        {
+                            try
+                            {
+                                if (gen == _loadGeneration)
+                                {
+                                    try
+                                    {
+                                        _player.PlayWithCrossfade(warmPath, normalize, playbackSettings);
+                                        ApplyPlaybackTrackUi(file);
+                                        _consecutiveFailedPlays = 0;
+                                        PreloadNextTrackData();
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        HandlePlayFailure(file, ex);
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                System.Threading.Interlocked.Exchange(ref _playFileBusy, 0);
+                                RestartSkipSettleTimer();
+                            }
+                        }));
+                    });
                 }
                 else
                 {
@@ -675,7 +793,9 @@ namespace AudioQualityChecker
                     // UI. The busy guard is held until the load completes (released in the
                     // continuation), so loads stay serialized and rapid skips still collapse into
                     // _pendingPlayRequest.
+                    var stopWatch = Stopwatch.StartNew();
                     _player.Stop();
+                    Debug.WriteLine($"[SkipPerf] Stop() (UI thread) {stopWatch.ElapsedMilliseconds}ms");
                     _playerTimer.Stop();
                     _player.SetUserVolume((float)(VolumeSlider.Value / 100.0));
                     int gen = ++_loadGeneration;
@@ -683,8 +803,10 @@ namespace AudioQualityChecker
                     System.Threading.Tasks.Task.Run(() =>
                     {
                         Exception? err = null;
+                        var loadWatch = Stopwatch.StartNew();
                         try { _player.Play(file.FilePath, normalize, playbackSettings); }
                         catch (Exception ex) { err = ex; }
+                        Debug.WriteLine($"[SkipPerf] Play() load {loadWatch.ElapsedMilliseconds}ms — {IOPath.GetFileName(file.FilePath)}");
 
                         Dispatcher.BeginInvoke(new Action(() =>
                         {
@@ -706,10 +828,8 @@ namespace AudioQualityChecker
                             }
                             finally
                             {
-                                _lastPlayFileTickMs = Environment.TickCount64;
                                 System.Threading.Interlocked.Exchange(ref _playFileBusy, 0);
-                                if (_pendingPlayRequest != null)
-                                    Dispatcher.BeginInvoke(new Action(DrainPendingPlayRequest), System.Windows.Threading.DispatcherPriority.Background);
+                                RestartSkipSettleTimer();
                             }
                         }));
                     });
@@ -725,10 +845,8 @@ namespace AudioQualityChecker
                 // paths (crossfade / a pre-load exception) release it here.
                 if (!asyncHandoff)
                 {
-                    _lastPlayFileTickMs = Environment.TickCount64;
                     System.Threading.Interlocked.Exchange(ref _playFileBusy, 0);
-                    if (_pendingPlayRequest != null)
-                        Dispatcher.BeginInvoke(new Action(DrainPendingPlayRequest), System.Windows.Threading.DispatcherPriority.Background);
+                    RestartSkipSettleTimer();
                 }
             }
         }
@@ -758,16 +876,144 @@ namespace AudioQualityChecker
             }
         }
 
-        // Replays the latest queued PlayFile target after a busy/cooldown collapse.
+        /// <summary>
+        /// Records the latest target of a click burst without loading it. The grid selection was
+        /// already moved by the caller; here we mirror it in the playbar/Now Playing text so the
+        /// skip looks instant, warm the decoder so the settle window is spent usefully, and push
+        /// the settle deadline out.
+        /// </summary>
+        private void QueuePendingPlay(AudioFileInfo file, bool isManualSkip, bool preserveCrossfade)
+        {
+            // A genuinely new click pushes the deadline out. A re-queue of the SAME target (the
+            // settle timer fired while a load was still in flight) must not, or a long load would
+            // keep resetting the clock and the target would never get to play.
+            bool sameTarget = ReferenceEquals(_pendingPlayRequest, file);
+            if (!sameTarget)
+                _pendingDeadlineMs = Environment.TickCount64 + SkipSettleMs;
+
+            _pendingPlayRequest = file;
+            _pendingIsManualSkip = isManualSkip;
+            _pendingPreserveCrossfade = preserveCrossfade;
+            _pendingNavigatingHistory = _navigatingHistory;
+
+            ShowPendingTrackText(file);
+            // Only a NEW target is worth warming. Re-queues of the same file would otherwise stack
+            // another background open on every pass — and a decoder open is a full-file decode for
+            // FLAC, so a handful of re-queues during a slow load was enough to swamp the thread pool.
+            if (!sameTarget)
+                WarmPendingDecoder(file.FilePath);
+            RestartSkipSettleTimer();
+        }
+
+        /// <summary>
+        /// (Re)arms the settle timer. Every collapsed click restarts it, so the queued target only
+        /// loads once the user stops clicking. A no-op when nothing is queued.
+        /// </summary>
+        private void RestartSkipSettleTimer()
+        {
+            if (_pendingPlayRequest == null) return;
+
+            if (_skipSettleTimer == null)
+            {
+                _skipSettleTimer = new DispatcherTimer(DispatcherPriority.Input)
+                {
+                    Interval = TimeSpan.FromMilliseconds(SkipSettleMs)
+                };
+                _skipSettleTimer.Tick += (_, _) =>
+                {
+                    _skipSettleTimer!.Stop();
+                    DrainPendingPlayRequest();
+                };
+            }
+
+            // Fire on the deadline set by the last click, not SkipSettleMs from now — otherwise a
+            // load finishing after the deadline has already passed would add another full window.
+            // The cooldown gate in PlayFile has to be part of that deadline too: arming purely off
+            // _pendingDeadlineMs meant that once it had passed, remaining went negative, the timer
+            // re-armed at 1ms, the drain bounced straight back off the cooldown, and the pair spun
+            // at ~1kHz on the dispatcher for the rest of the settle window.
+            long earliest = Math.Max(_pendingDeadlineMs, _lastPlayFileTickMs + SkipSettleMs);
+            long remaining = earliest - Environment.TickCount64;
+            _skipSettleTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, remaining));
+            _skipSettleTimer.Stop();
+            _skipSettleTimer.Start();
+        }
+
+        /// <summary>
+        /// Pre-opens the burst target's decoder so the load that finally runs is nearly instant.
+        /// Gapless and crossfade have their own next-track machinery and never adopt through
+        /// Play(), so warming there would just hold a file handle for nothing.
+        /// </summary>
+        private void WarmPendingDecoder(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath)) return;
+            if (ThemeManager.GaplessEnabled || ThemeManager.Crossfade) return;
+
+            Task.Run(() =>
+            {
+                try { _player.PrepareNextDecoder(filePath); }
+                catch { /* cold open at the settle is the fallback */ }
+            });
+        }
+
+        /// <summary>
+        /// Cheap text-only feedback for a queued skip — no cover, palette, lyrics or waveform work.
+        /// ApplyPlaybackTrackUi overwrites all of it when the real load lands.
+        /// </summary>
+        private void ShowPendingTrackText(AudioFileInfo file)
+        {
+            _pendingPlaybackVisual = true;
+
+            if (!string.IsNullOrEmpty(file.FilePath))
+                PlayerFileText.Text = IOPath.GetFileName(file.FilePath);
+
+            var displayTitle = file.Title
+                ?? (file.FileName != null ? IOPath.GetFileNameWithoutExtension(file.FileName) : null)
+                ?? "Unknown";
+            NpSongTitle.Text = displayTitle;
+            NpBigTitle.Text = displayTitle;
+            NpSongArtist.Text = file.Artist ?? "";
+        }
+
+        /// <summary>
+        /// Drops a queued burst target. Called whenever the user explicitly takes playback over
+        /// (Stop, double-clicking a row) so a stale settle timer can't override their choice.
+        /// </summary>
+        private void CancelPendingSkip()
+        {
+            _skipSettleTimer?.Stop();
+            _pendingPlayRequest = null;
+            try { _player.DisposePreparedDecoder(); } catch { }
+        }
+
+        // Replays the latest queued PlayFile target once the burst settles.
         private void DrainPendingPlayRequest()
         {
             var pending = _pendingPlayRequest;
             if (pending == null) return;
+            // A load is still in flight — PlayFile would only bounce off the busy guard and re-queue
+            // this same request, re-arming the timer for another immediate tick. Its continuation
+            // already calls RestartSkipSettleTimer(), so dropping this tick loses nothing.
+            if (System.Threading.Volatile.Read(ref _playFileBusy) == 1) return;
             bool manual = _pendingIsManualSkip;
             bool preserve = _pendingPreserveCrossfade;
-            _pendingPlayRequest = null;
-            PlayFile(pending, manual, preserve);
+            bool navigatingHistory = _pendingNavigatingHistory;
+            // Deliberately NOT cleared here — PlayFile clears it when it commits to a real load. If
+            // the load guard is still held, PlayFile re-queues this same instance and QueuePendingPlay
+            // recognises it by reference, keeping the original deadline instead of pushing it out.
+
+            bool previous = _navigatingHistory;
+            _navigatingHistory = navigatingHistory;
+            try { PlayFile(pending, manual, preserve); }
+            finally { _navigatingHistory = previous; }
         }
+
+        /// <summary>
+        /// Track that navigation should advance from. While a burst target is queued the player is
+        /// still on the previous track, so anchoring on <see cref="AudioPlayer.CurrentFile"/> alone
+        /// would re-pick the track already pending and the burst would under-advance.
+        /// </summary>
+        private string? CurrentTrackAnchorPath() => _pendingPlayRequest?.FilePath ?? _player.CurrentFile;
 
         private void ApplyPlaybackTrackUi(AudioFileInfo file, bool updateQueuePopup = false, bool deferHeavyUi = true)
         {
@@ -810,11 +1056,19 @@ namespace AudioQualityChecker
             // playbar frozen on the old track ("the next song plays but the UI doesn't update").
             UpdatePlayerUI();
 
+            // Publish to Windows' media session (SMTC) immediately — NOT in the deferred block below.
+            // That block runs at Background priority, which the per-frame lyric render loop can starve,
+            // leaving the OS media session (and therefore Pano Scrobbler) stuck on the old track or
+            // never populated at all. The heavy tag/cover read is offloaded inside the service.
+            _smtc?.UpdateNowPlayingFromTags(file.FilePath);
+            _smtc?.UpdatePlaybackState(true, false);
+
             // Heavy UI rebuilds. Normally deferred so rapid manual skips feel instant. For
             // automatic transitions (gapless) the caller passes deferHeavyUi:false so the full
             // refresh runs synchronously and can't be starved by the render loop.
             var applyHeavyUi = new Action(() =>
             {
+                var heavyWatch = Stopwatch.StartNew();
                 DrawWaveformBackground();
 
                 _currentSpectrogramFile = file;
@@ -827,12 +1081,21 @@ namespace AudioQualityChecker
                 _lastScrobbleError = null; // fresh track — drop any stale failure from the last one
                 _scrobbler.OnTrackStarted(file, _player.TotalDuration.TotalSeconds);
                 UpdateScrobbleWidgetVisual();
-                _smtc?.UpdateNowPlayingFromTags(file.FilePath);
-                _smtc?.UpdatePlaybackState(true, false);
 
                 ObserveUiTask(UpdateAlbumCoverAsync(file.FilePath, _npColorGeneration), nameof(UpdateAlbumCoverAsync));
                 ObserveUiTask(LoadMainCoverColors(file.FilePath), nameof(LoadMainCoverColors));
+                Debug.WriteLine($"[SkipPerf] heavy UI block (UI thread) {heavyWatch.ElapsedMilliseconds}ms");
             });
+
+            // A newer skip is already queued, so this track is only a stepping stone in a burst —
+            // rebuilding the waveform, visualizer, cover, palette and Now Playing assets for it
+            // would compete for the same disk/CPU as the load the user is actually waiting on.
+            // Latch the work instead; the burst's final track runs it once.
+            if (_pendingPlayRequest != null)
+            {
+                _pendingPlaybackVisual = true; // still mid-burst — don't let the icon flip backward
+                return;
+            }
 
             if (deferHeavyUi)
                 Dispatcher.BeginInvoke(applyHeavyUi, DispatcherPriority.Background);
@@ -845,6 +1108,9 @@ namespace AudioQualityChecker
                 {
                     NpSetTrack(file);
                     NpResumeVisibleWork(forceReloadLyrics: false, forceLyricResync: true);
+                    // Brief, intentional settle-pause on the background effect across the transition
+                    // (instead of the old rebuild/restart).
+                    NpPulseAmbientMotionForTransition();
                     if (updateQueuePopup)
                         Dispatcher.BeginInvoke(new Action(() => NpUpdateQueuePopup()), DispatcherPriority.Background);
                 }
@@ -953,17 +1219,28 @@ namespace AudioQualityChecker
 
             UpdatePlayerTimeText();
 
-            var playbackSettings = CreatePlaybackSettingsSnapshot();
+            // NOTE: no PlaybackSettingsSnapshot here. This tick fires every 50ms and building one
+            // allocates a ThemeManagerSettings, the record, and a copy of the EQ gains array — 60
+            // objects/sec for values that are read straight off ThemeManager anyway. The gapless
+            // branch below builds one only when it actually needs to hand it to the player.
 
             // Scrobble threshold check (Last.fm / Libre.fm / ListenBrainz)
             _scrobbler.OnPositionUpdate(_player.CurrentPosition.TotalSeconds);
 
+            // Push the live timeline to SMTC ~once a second. This is what makes Pano Scrobbler
+            // (and the OS seek bar) see a moving position/duration — without it the session looks
+            // frozen and Pano never scrobbles. Throttled because the tick fires every 50ms.
+            if (_smtc != null && _cachedDurationSec > 0
+                && (DateTime.UtcNow - _lastSmtcTimelinePush).TotalMilliseconds >= 1000)
+            {
+                _lastSmtcTimelinePush = DateTime.UtcNow;
+                _smtc.UpdateTimeline(_cachedPositionSec, _cachedDurationSec);
+            }
+
             // Discord Rich Presence — service handles its own throttling
             if (_discord.IsEnabled)
             {
-                var discordFile = _player.CurrentFile != null
-                    ? _files.FirstOrDefault(f => string.Equals(f.FilePath, _player.CurrentFile, StringComparison.OrdinalIgnoreCase))
-                    : null;
+                var discordFile = FindPlayingFileCached();
                 _discord.UpdatePresence(discordFile?.Artist, discordFile?.Title, discordFile?.FileName,
                     _player.TotalDuration, _player.CurrentPosition, false);
             }
@@ -986,9 +1263,10 @@ namespace AudioQualityChecker
                     // this the swarm of overlapping prepares keeps _gaplessNext nulled and the track
                     // switch loses the bookkeeping that updates CurrentFile / the UI.
                     _gaplessPrepInFlight = true;
+                    var gaplessSettings = CreatePlaybackSettingsSnapshot();
                     _ = System.Threading.Tasks.Task.Run(() =>
                     {
-                        try { _player.PrepareGapless(nextTrack.FilePath, playbackSettings.AudioNormalization, playbackSettings); }
+                        try { _player.PrepareGapless(nextTrack.FilePath, gaplessSettings.AudioNormalization, gaplessSettings); }
                         catch { /* gapless prep failed — normal TrackFinished will handle it */ }
                         finally { _gaplessPrepInFlight = false; }
                     });
@@ -998,8 +1276,8 @@ namespace AudioQualityChecker
             // Early crossfade: start next track before current one ends so there is real overlap
             // Add 100ms safety buffer to avoid cutting off the end if the timer fires late
             double remaining = _cachedDurationSec - _cachedPositionSec;
-            double crossfadeDuration = playbackSettings.CrossfadeDurationSeconds;
-            if (playbackSettings.CrossfadeEnabled && ThemeManager.AutoPlayNext
+            double crossfadeDuration = ThemeManager.CrossfadeDuration;
+            if (ThemeManager.Crossfade && ThemeManager.AutoPlayNext
                 && _player.IsPlaying && !_player.IsGaplessActive
                 && !_crossfadeEarlyTriggered
                 && _cachedDurationSec >= crossfadeDuration * 2  // track must be longer than 2× fade
@@ -1172,7 +1450,8 @@ namespace AudioQualityChecker
         private void UpdatePlayerUI()
         {
             // Treat an in-flight skip as "playing" so the icon doesn't flip backward mid-load.
-            if (_player.IsPlaying || _pendingPlaybackVisual)
+            bool showingPause = _player.IsPlaying || _pendingPlaybackVisual;
+            if (showingPause)
             {
                 PlayIcon.Visibility = Visibility.Collapsed;
                 PauseIcon.Visibility = Visibility.Visible;
@@ -1181,6 +1460,15 @@ namespace AudioQualityChecker
             {
                 PlayIcon.Visibility = Visibility.Visible;
                 PauseIcon.Visibility = Visibility.Collapsed;
+            }
+
+            // The button's content is vector art, so the accessible name has to be maintained by
+            // hand — otherwise a screen reader announces nothing at all here.
+            if (BtnPlayPause != null)
+            {
+                string label = showingPause ? "Pause" : "Play";
+                System.Windows.Automation.AutomationProperties.SetName(BtnPlayPause, label);
+                BtnPlayPause.ToolTip = label;
             }
 
             PlayerFileText.Text = _player.CurrentFile != null

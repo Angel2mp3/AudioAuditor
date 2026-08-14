@@ -13,8 +13,11 @@
         AllowsTransparency="True">
 
     <Window.Resources>
-        <!-- Mini button base -->
+        <!-- Mini button base. Every button here is icon-only, so the accessible name comes from
+             the ToolTip each already carries — see the matching note in MainWindow.xaml. -->
         <Style x:Key="MiniBtn" TargetType="Button">
+            <Setter Property="AutomationProperties.Name"
+                    Value="{Binding RelativeSource={RelativeSource Self}, Path=ToolTip}"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -43,6 +46,8 @@
 
         <!-- Play/Pause button -->
         <Style x:Key="MiniPlayBtn" TargetType="Button">
+            <Setter Property="AutomationProperties.Name"
+                    Value="{Binding RelativeSource={RelativeSource Self}, Path=ToolTip}"/>
             <Setter Property="Background" Value="{DynamicResource AccentColor}"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -370,7 +375,7 @@
                                    Margin="0,1,0,0"
                                    Foreground="{DynamicResource TextMuted}"
                                    FontSize="9"
-                                   FontFamily="Segoe UI"/>
+                                   FontFamily="{DynamicResource AppFontFamily}"/>
                     </StackPanel>
 
                     <!-- Volume -->

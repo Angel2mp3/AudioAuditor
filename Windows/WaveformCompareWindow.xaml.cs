@@ -42,7 +42,7 @@ namespace AudioQualityChecker
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ClickCount == 2) return;
-            DragMove();
+            this.SafeDragMove();
         }
 
         private void Close_Click(object sender, RoutedEventArgs e) => Close();
@@ -112,57 +112,14 @@ namespace AudioQualityChecker
             }
         }
 
+        // Correlation and waveform loading live in Services.WaveformCompare, which exists so both
+        // UIs draw the same numbers. This window had kept a verbatim copy that drifted out of the
+        // shared fix (NaN escaping the flat-signal guard), so it now calls the shared code.
         private static double ComputeCorrelation(double[] a, double[] b, int len)
-        {
-            double sumA = 0, sumB = 0, sumAB = 0, sumA2 = 0, sumB2 = 0;
-            for (int i = 0; i < len; i++)
-            {
-                sumA += a[i];
-                sumB += b[i];
-                sumAB += a[i] * b[i];
-                sumA2 += a[i] * a[i];
-                sumB2 += b[i] * b[i];
-            }
-            double n = len;
-            double denom = Math.Sqrt((n * sumA2 - sumA * sumA) * (n * sumB2 - sumB * sumB));
-            if (denom < 1e-20) return 0;
-            return (n * sumAB - sumA * sumB) / denom;
-        }
+            => WaveformCompare.Correlation(a, b, len);
 
         private static double[]? LoadWaveform(string filePath)
-        {
-            try
-            {
-                var (disposable, samples, format) = AudioAnalyzer.OpenAudioFile(filePath);
-                if (disposable == null || samples == null || format == null) return null;
-
-                using (disposable)
-                {
-                    int channels = format.Channels;
-                    int blockSize = 8192;
-                    float[] buf = new float[blockSize * channels];
-                    var result = new System.Collections.Generic.List<double>();
-
-                    int read;
-                    while ((read = samples.Read(buf, 0, buf.Length)) > 0)
-                    {
-                        int frames = read / channels;
-                        for (int i = 0; i < frames; i++)
-                        {
-                            double sum = 0;
-                            for (int ch = 0; ch < channels; ch++)
-                                sum += buf[i * channels + ch];
-                            result.Add(sum / channels);
-                        }
-                    }
-                    return result.ToArray();
-                }
-            }
-            catch
-            {
-                return null;
-            }
-        }
+            => WaveformCompare.Load(filePath);
 
         /// <summary>
         /// Renders both waveforms on a single canvas.

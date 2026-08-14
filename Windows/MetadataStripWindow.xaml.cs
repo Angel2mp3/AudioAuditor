@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -16,6 +18,9 @@ namespace AudioQualityChecker
         private const int DWMWA_CAPTION_COLOR = 35;
 
         private readonly List<AudioFileInfo> _files;
+
+        /// <summary>Guards against a second strip starting while one is in flight (tag writes are not re-entrant).</summary>
+        private bool _stripping;
 
         /// <summary>Set to true when metadata was modified so the caller can refresh.</summary>
         public bool MetadataChanged { get; private set; }
@@ -59,7 +64,7 @@ namespace AudioQualityChecker
         private void Header_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.LeftButton == MouseButtonState.Pressed)
-                DragMove();
+                this.SafeDragMove();
         }
 
         private void Close_Click(object sender, RoutedEventArgs e) => Close();
@@ -100,8 +105,9 @@ namespace AudioQualityChecker
             ChkReplayGain.IsChecked = false;
         }
 
-        private void StripFields_Click(object sender, RoutedEventArgs e)
+        private async void StripFields_Click(object sender, RoutedEventArgs e)
         {
+            if (_stripping) return;
             bool any = ChkTitle.IsChecked == true || ChkArtist.IsChecked == true ||
                        ChkAlbum.IsChecked == true || ChkAlbumArtist.IsChecked == true ||
                        ChkYear.IsChecked == true || ChkTrackNumber.IsChecked == true ||
@@ -116,118 +122,99 @@ namespace AudioQualityChecker
                 return;
             }
 
-            var confirmResult = MessageBox.Show(
+            bool confirmResult = ErrorDialog.Confirm("Strip Metadata",
                 $"This will strip the selected metadata fields from {_files.Count} file{(_files.Count != 1 ? "s" : "")}.\n\nThis cannot be undone. Continue?",
-                "Strip Metadata",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
+                this, severity: AlertSeverity.Warning);
 
-            if (confirmResult != MessageBoxResult.Yes) return;
+            if (!confirmResult) return;
 
-            int success = 0;
-            int failed = 0;
+            // Clearing lives in Core (MetadataStripService) so the Avalonia window strips
+            // exactly the same things — Replay Gain spans three tag formats.
+            var fields = SelectedFields();
+            bool backups = ChkStripBackups.IsChecked == true;
+            var files = _files.ToList();
+            var written = new List<AudioFileInfo>();
+            var errors = new List<string>();
 
-            foreach (var fileInfo in _files)
+            _stripping = true;
+            BtnStrip.IsEnabled = false;
+            try
             {
-                try
-                {
-                    using var tagFile = TagLib.File.Create(fileInfo.FilePath);
-                    var tag = tagFile.Tag;
+                // Off the UI thread: this is one TagLib open+save per file, and on a large selection
+                // the window used to lock up with no progress and no way to tell it was still going.
+                var progress = new Progress<(int done, int total, string name)>(p =>
+                    StatusText.Text = $"Stripping {p.done + 1}/{p.total}: {p.name}");
 
-                    if (ChkTitle.IsChecked == true)
+                await Task.Run(() =>
+                {
+                    for (int i = 0; i < files.Count; i++)
                     {
-                        tag.Title = null;
-                        fileInfo.Title = "";
+                        var fileInfo = files[i];
+                        ((IProgress<(int, int, string)>)progress).Report((i, files.Count, fileInfo.FileName));
+                        try
+                        {
+                            if (backups) Services.FileRenamer.CreateBackup(fileInfo.FilePath);
+                            Services.MetadataStripService.Strip(fileInfo.FilePath, fields);
+                            written.Add(fileInfo);
+                        }
+                        catch (Exception ex)
+                        {
+                            errors.Add($"{fileInfo.FileName}: {ex.Message}");
+                        }
                     }
-                    if (ChkArtist.IsChecked == true)
+                });
+
+                // Mirror onto the in-memory rows so the grid matches without a re-scan — but only
+                // for files that were actually written.
+                foreach (var fileInfo in written)
+                {
+                    if (fields.HasFlag(Services.StripFields.Title)) fileInfo.Title = "";
+                    if (fields.HasFlag(Services.StripFields.Artist)) fileInfo.Artist = "";
+                    if (fields.HasFlag(Services.StripFields.Album)) fileInfo.Album = "";
+                    if (fields.HasFlag(Services.StripFields.Cover)) fileInfo.HasAlbumCover = false;
+                    if (fields.HasFlag(Services.StripFields.ReplayGain))
                     {
-                        tag.Performers = Array.Empty<string>();
-                        fileInfo.Artist = "";
-                    }
-                    if (ChkAlbum.IsChecked == true)
-                        tag.Album = null;
-                    if (ChkAlbumArtist.IsChecked == true)
-                        tag.AlbumArtists = Array.Empty<string>();
-                    if (ChkYear.IsChecked == true)
-                        tag.Year = 0;
-                    if (ChkTrackNumber.IsChecked == true)
-                    {
-                        tag.Track = 0;
-                        tag.Disc = 0;
-                    }
-                    if (ChkGenre.IsChecked == true)
-                        tag.Genres = Array.Empty<string>();
-                    if (ChkComposer.IsChecked == true)
-                        tag.Composers = Array.Empty<string>();
-                    if (ChkConductor.IsChecked == true)
-                        tag.Conductor = null;
-                    if (ChkComment.IsChecked == true)
-                        tag.Comment = null;
-                    if (ChkLyrics.IsChecked == true)
-                        tag.Lyrics = null;
-                    if (ChkCopyright.IsChecked == true)
-                        tag.Copyright = null;
-                    if (ChkCover.IsChecked == true)
-                    {
-                        tag.Pictures = Array.Empty<TagLib.IPicture>();
-                        fileInfo.HasAlbumCover = false;
-                    }
-                    if (ChkReplayGain.IsChecked == true)
-                    {
-                        StripReplayGainTags(tagFile);
                         fileInfo.ReplayGain = 0;
                         fileInfo.HasReplayGain = false;
                     }
+                }
 
-                    tagFile.Save();
-                    success++;
-                }
-                catch
-                {
-                    failed++;
-                }
+                MetadataChanged = written.Count > 0;
+                string msg = $"Stripped fields from {written.Count} file{(written.Count != 1 ? "s" : "")}";
+                if (errors.Count > 0) msg += $" ({errors.Count} failed — {errors[0]})";
+                StatusText.Text = msg;
             }
-
-            MetadataChanged = success > 0;
-            string msg = $"Stripped fields from {success} file{(success != 1 ? "s" : "")}";
-            if (failed > 0) msg += $" ({failed} failed)";
-            StatusText.Text = msg;
+            catch (Exception ex)
+            {
+                StatusText.Text = $"Strip failed: {ex.Message}";
+            }
+            finally
+            {
+                _stripping = false;
+                BtnStrip.IsEnabled = true;
+            }
         }
 
-        /// <summary>Remove REPLAYGAIN_* tags from all tag formats.</summary>
-        private static void StripReplayGainTags(TagLib.File tagFile)
+        private Services.StripFields SelectedFields()
         {
-            // ID3v2 TXXX frames
-            if (tagFile.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3)
-            {
-                var toRemove = new List<TagLib.Id3v2.Frame>();
-                foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>())
-                {
-                    if (frame.Description != null &&
-                        frame.Description.StartsWith("REPLAYGAIN_", StringComparison.OrdinalIgnoreCase))
-                        toRemove.Add(frame);
-                }
-                foreach (var f in toRemove)
-                    id3.RemoveFrame(f);
-            }
+            var fields = Services.StripFields.None;
 
-            // Xiph Comment (FLAC/OGG)
-            if (tagFile.GetTag(TagLib.TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph)
-            {
-                xiph.RemoveField("REPLAYGAIN_TRACK_GAIN");
-                xiph.RemoveField("REPLAYGAIN_TRACK_PEAK");
-                xiph.RemoveField("REPLAYGAIN_ALBUM_GAIN");
-                xiph.RemoveField("REPLAYGAIN_ALBUM_PEAK");
-            }
+            if (ChkTitle.IsChecked == true) fields |= Services.StripFields.Title;
+            if (ChkArtist.IsChecked == true) fields |= Services.StripFields.Artist;
+            if (ChkAlbum.IsChecked == true) fields |= Services.StripFields.Album;
+            if (ChkAlbumArtist.IsChecked == true) fields |= Services.StripFields.AlbumArtist;
+            if (ChkYear.IsChecked == true) fields |= Services.StripFields.Year;
+            if (ChkTrackNumber.IsChecked == true) fields |= Services.StripFields.TrackNumber;
+            if (ChkGenre.IsChecked == true) fields |= Services.StripFields.Genre;
+            if (ChkComposer.IsChecked == true) fields |= Services.StripFields.Composer;
+            if (ChkConductor.IsChecked == true) fields |= Services.StripFields.Conductor;
+            if (ChkComment.IsChecked == true) fields |= Services.StripFields.Comment;
+            if (ChkLyrics.IsChecked == true) fields |= Services.StripFields.Lyrics;
+            if (ChkCopyright.IsChecked == true) fields |= Services.StripFields.Copyright;
+            if (ChkCover.IsChecked == true) fields |= Services.StripFields.Cover;
+            if (ChkReplayGain.IsChecked == true) fields |= Services.StripFields.ReplayGain;
 
-            // APE tags
-            if (tagFile.GetTag(TagLib.TagTypes.Ape) is TagLib.Ape.Tag ape)
-            {
-                ape.RemoveItem("REPLAYGAIN_TRACK_GAIN");
-                ape.RemoveItem("REPLAYGAIN_TRACK_PEAK");
-                ape.RemoveItem("REPLAYGAIN_ALBUM_GAIN");
-                ape.RemoveItem("REPLAYGAIN_ALBUM_PEAK");
-            }
+            return fields;
         }
     }
 }

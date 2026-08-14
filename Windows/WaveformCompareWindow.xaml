@@ -135,7 +135,7 @@
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid>
                     <TextBlock Text="Waveform Comparison" FontWeight="SemiBold" FontSize="14"
-                               FontFamily="Segoe UI" VerticalAlignment="Center" Margin="16,0,0,0"
+                               FontFamily="{DynamicResource AppFontFamily}" VerticalAlignment="Center" Margin="16,0,0,0"
                                Foreground="{DynamicResource TextPrimary}"/>
                     <Button Content="✕" HorizontalAlignment="Right" VerticalAlignment="Center"
                             Margin="0,0,8,0" Click="Close_Click" Cursor="Hand"
@@ -154,14 +154,14 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="File A:" FontWeight="SemiBold" FontSize="12"
-                           Foreground="#5B9BD5" FontFamily="Segoe UI" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                           Foreground="#5B9BD5" FontFamily="{DynamicResource AppFontFamily}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <TextBlock Grid.Column="1" x:Name="FileALabel" FontSize="12"
-                           Foreground="{DynamicResource TextSecondary}" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" FontFamily="{DynamicResource AppFontFamily}"
                            TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="3" Text="File B:" FontWeight="SemiBold" FontSize="12"
-                           Foreground="#E57373" FontFamily="Segoe UI" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                           Foreground="#E57373" FontFamily="{DynamicResource AppFontFamily}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                 <TextBlock Grid.Column="4" x:Name="FileBLabel" FontSize="12"
-                           Foreground="{DynamicResource TextSecondary}" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextSecondary}" FontFamily="{DynamicResource AppFontFamily}"
                            TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
             </Grid>
 
@@ -178,13 +178,13 @@
                 <!-- Vertical merge slider -->
                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="Merge" FontSize="10" Foreground="{DynamicResource TextMuted}"
-                               FontFamily="Segoe UI" HorizontalAlignment="Center" Margin="0,0,0,4"/>
+                               FontFamily="{DynamicResource AppFontFamily}" HorizontalAlignment="Center" Margin="0,0,0,4"/>
                     <Slider x:Name="MergeSlider" Orientation="Vertical" Minimum="0" Maximum="100" Value="0"
                             Height="140" TickFrequency="10" IsSnapToTickEnabled="False"
                             ValueChanged="MergeSlider_ValueChanged"
                             Style="{StaticResource ThemedVerticalSlider}"/>
                     <TextBlock x:Name="MergeLabel" Text="0%" FontSize="10"
-                               Foreground="{DynamicResource TextMuted}" FontFamily="Segoe UI"
+                               Foreground="{DynamicResource TextMuted}" FontFamily="{DynamicResource AppFontFamily}"
                                HorizontalAlignment="Center" Margin="0,4,0,0"/>
                 </StackPanel>
             </Grid>
@@ -196,14 +196,14 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Offset:" FontSize="11" FontFamily="Segoe UI"
+                <TextBlock Grid.Column="0" Text="Offset:" FontSize="11" FontFamily="{DynamicResource AppFontFamily}"
                            Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <Slider Grid.Column="1" x:Name="OffsetSlider" Minimum="-500" Maximum="500" Value="0"
                         TickFrequency="50" IsSnapToTickEnabled="False"
                         ValueChanged="OffsetSlider_ValueChanged"
                         Style="{StaticResource ThemedSlider}"/>
                 <TextBlock Grid.Column="2" x:Name="OffsetLabel" Text="0 px" FontSize="11"
-                           FontFamily="Segoe UI" Foreground="{DynamicResource TextMuted}"
+                           FontFamily="{DynamicResource AppFontFamily}" Foreground="{DynamicResource TextMuted}"
                            VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="50"/>
             </Grid>
 
@@ -214,18 +214,18 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" x:Name="StatsText" FontSize="12"
-                           Foreground="{DynamicResource TextMuted}" FontFamily="Segoe UI"
+                           Foreground="{DynamicResource TextMuted}" FontFamily="{DynamicResource AppFontFamily}"
                            VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
                     <Rectangle Width="14" Height="3" Fill="#5B9BD5" Margin="0,0,4,0" VerticalAlignment="Center"/>
                     <TextBlock Text="File A" FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                               FontFamily="Segoe UI" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                               FontFamily="{DynamicResource AppFontFamily}" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     <Rectangle Width="14" Height="3" Fill="#E57373" Margin="0,0,4,0" VerticalAlignment="Center"/>
                     <TextBlock Text="File B" FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                               FontFamily="Segoe UI" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                               FontFamily="{DynamicResource AppFontFamily}" Margin="0,0,12,0" VerticalAlignment="Center"/>
                     <Rectangle Width="14" Height="3" Fill="#81C784" Margin="0,0,4,0" VerticalAlignment="Center"/>
                     <TextBlock Text="Difference" FontSize="11" Foreground="{DynamicResource TextSecondary}"
-                               FontFamily="Segoe UI" VerticalAlignment="Center"/>
+                               FontFamily="{DynamicResource AppFontFamily}" VerticalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Grid>

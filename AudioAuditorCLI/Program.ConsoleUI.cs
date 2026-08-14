@@ -616,7 +616,9 @@ namespace AudioQualityChecker.CLI
                     if (r.HasClipping) flags.Add($"Clipping {r.ClippingPercentage:F1}%");
                     else if (r.HasScaledClipping) flags.Add($"Scaled Clip {r.ScaledClippingPercentage:F1}%");
                     if (r.IsMqa) flags.Add(r.IsMqaStudio ? "MQA Studio" : "MQA");
-                    if (r.IsAnyAiDetected) flags.Add($"AI: {r.AiVerdict} ({r.AiCombinedConfidence:F0}%)");
+                    // AiDisplay names the evidence tier ("Yes - watermark (86%)"), so a heuristic
+                    // guess never reads like proof. Same string the GUI's AI column shows.
+                    if (r.IsAnyAiDetected) flags.Add($"AI: {r.AiDisplay}");
                     if (r.ExperimentalAiSuspicious) flags.Add($"Spectral AI: {r.ExperimentalAiConfidence:P0}");
                     if (r.HasReplayGain) flags.Add($"RG: {r.ReplayGain:+0.0;-0.0;0.0} dB");
                     if (r.IsFakeStereo) flags.Add($"Fake Stereo: {r.FakeStereoType}");
@@ -624,7 +626,11 @@ namespace AudioQualityChecker.CLI
                     if (r.HasAlbumCover) flags.Add("Cover: Yes");
                     if (r.HasTruePeak) flags.Add($"TP: {r.TruePeakDisplay}");
                     if (r.HasLufs) flags.Add($"LUFS: {r.LufsDisplay}");
-                    if (r.HasRipQuality) flags.Add($"Rip: {r.RipQuality}");
+                    // DR comes out of the same full-file pass as TP and LUFS and was reaching the
+                    // JSON, the CSV, `info` and the GUI — but never the scan output, which made
+                    // --dynamic-range look like a flag that does nothing.
+                    if (r.HasDynamicRange) flags.Add($"DR: {r.DynamicRangeDisplay}");
+                    if (r.HasRipLog) flags.Add($"Rip Log: {r.RipLogDisplay}");
                     if (r.SHLabsScanned) flags.Add($"SHLabs: {r.SHLabsPrediction}");
                     if (r.IsCueVirtualTrack) flags.Add("Cue Track");
                     if (flags.Count > 0)
@@ -636,7 +642,13 @@ namespace AudioQualityChecker.CLI
                         if (r.MaxSampleLevel > 0) Console.WriteLine($"  Peak:      {r.MaxSampleLevelDb:F1} dBFS");
                         if (r.HasTruePeak) Console.WriteLine($"  True Peak: {r.TruePeakDisplay}");
                         if (r.HasLufs) Console.WriteLine($"  LUFS:      {r.LufsDisplay}");
-                        if (r.HasRipQuality) Console.WriteLine($"  Rip Qual:  {r.RipQuality} — {r.RipQualityDetail}");
+                        if (r.HasDynamicRange) Console.WriteLine($"  Dyn Range: {r.DynamicRangeDisplay}");
+                        if (r.HasRipLog) Console.WriteLine($"  Rip Log:   {r.RipLogDisplay}");
+                        // Named spectral checks, printed whenever any fired — not only when they
+                        // crossed the suspicious line. A check that fires alone can't reach a
+                        // verdict, but it is evidence, and the JSON and GUI tooltip both show it.
+                        if (r.ExperimentalAiFlags?.Count > 0)
+                            Console.WriteLine($"  Spectral:  {string.Join(", ", r.ExperimentalAiFlags)}");
                         if (r.SHLabsScanned) Console.WriteLine($"  SH Labs:   {r.SHLabsPrediction} ({r.SHLabsProbability:F0}%) [{r.SHLabsAiType}]");
                         if (r.IsMqa) Console.WriteLine($"  MQA Info:  Original SR: {r.MqaOriginalSampleRate} | Encoder: {r.MqaEncoder}");
                         if (r.Frequency > 0) Console.WriteLine($"  Dom Freq:  {r.Frequency:N0} Hz");
@@ -651,7 +663,7 @@ namespace AudioQualityChecker.CLI
             else
             {
                 // For large result sets, just show fakes/corrupt/flagged files
-                var flagged = results.Where(r => r.Status == AudioStatus.Fake || r.Status == AudioStatus.Corrupt || r.IsAiPossibleOrYes || r.HasClipping || r.HasScaledClipping || r.IsFakeStereo || r.HasExcessiveSilence || (r.HasRipQuality && r.RipQuality == "Bad")).ToList();
+                var flagged = results.Where(r => r.Status == AudioStatus.Fake || r.Status == AudioStatus.Corrupt || r.IsAiPossibleOrYes || r.HasClipping || r.HasScaledClipping || r.IsFakeStereo || r.HasExcessiveSilence || (r.HasRipLog && r.RipLogVerdict == "Bad")).ToList();
                 if (flagged.Count > 0)
                 {
                     Console.WriteLine($"\nFlagged files ({flagged.Count}):");
@@ -670,7 +682,7 @@ namespace AudioQualityChecker.CLI
                         if (r.HasScaledClipping) reason += (reason.Length > 0 ? " + " : "") + "SCALE";
                         if (r.IsFakeStereo) reason += (reason.Length > 0 ? " + " : "") + "STEREO";
                         if (r.HasExcessiveSilence) reason += (reason.Length > 0 ? " + " : "") + "SILENCE";
-                        if (r.HasRipQuality && r.RipQuality == "Bad") reason += (reason.Length > 0 ? " + " : "") + "RIP";
+                        if (r.HasRipLog && r.RipLogVerdict == "Bad") reason += (reason.Length > 0 ? " + " : "") + "RIP";
                         Console.Write($"  [{reason}]");
                         ResetColor();
                         Console.WriteLine($" {r.FileName}");
@@ -713,7 +725,7 @@ namespace AudioQualityChecker.CLI
             if (clipping > 0) Console.WriteLine($"  Clipping:  {clipping}");
             int fakeStereo = results.Count(r => r.IsFakeStereo);
             if (fakeStereo > 0) Console.WriteLine($"  FakeStereo:{fakeStereo}");
-            int badRip = results.Count(r => r.HasRipQuality && r.RipQuality == "Bad");
+            int badRip = results.Count(r => r.HasRipLog && r.RipLogVerdict == "Bad");
             if (badRip > 0) Console.WriteLine($"  Bad Rip:   {badRip}");
             int cueVirtual = results.Count(r => r.IsCueVirtualTrack);
             if (cueVirtual > 0) Console.WriteLine($"  Cue Tracks:{cueVirtual}");
@@ -762,6 +774,8 @@ namespace AudioQualityChecker.CLI
             Console.WriteLine($"Reported Bitrate:{r.ReportedBitrateDisplay}");
             Console.WriteLine($"Actual Bitrate:  {r.ActualBitrateDisplay}");
             Console.WriteLine($"Max Frequency:   {r.EffectiveFrequencyDisplay}");
+            if (r.CutoffDropDb > 0)
+                Console.WriteLine($"Cutoff Drop:     {r.CutoffDropDb:F1} dB");
             Console.WriteLine($"Frequency:       {(r.Frequency > 0 ? $"{r.Frequency:N0} Hz" : "-")}");
             Console.WriteLine();
             Console.WriteLine($"Clipping:        {r.ClippingDisplay}");
@@ -775,7 +789,7 @@ namespace AudioQualityChecker.CLI
             Console.WriteLine($"BPM:             {(r.Bpm > 0 ? r.Bpm.ToString() : "-")}");
             Console.WriteLine($"Replay Gain:     {(r.HasReplayGain ? $"{r.ReplayGain:F1} dB" : "-")}");
             Console.WriteLine($"Dynamic Range:   {r.DynamicRangeDisplay}");
-            if (r.HasRipQuality) Console.WriteLine($"Rip Quality:     {r.RipQualityDisplay}");
+            if (r.HasRipLog) Console.WriteLine($"Rip Log:         {r.RipLogDisplay}");
             Console.WriteLine($"Album Cover:     {(r.HasAlbumCover ? "Yes" : "No")}");
             if (r.IsAlac) Console.WriteLine($"ALAC:            Yes");
             Console.WriteLine();
@@ -811,18 +825,20 @@ namespace AudioQualityChecker.CLI
             Console.Write("AI Detection:    ");
             SetColor(verdictColor);
             Console.WriteLine(r.IsAnyAiDetected
-                ? $"{r.AiVerdict} ({r.AiCombinedConfidence:F0}% confidence)"
+                ? $"{r.AiVerdict} ({r.AiCombinedConfidence:F0}% confidence, {r.AiEvidenceKind})"
                 : $"{r.AiVerdict}");
             ResetColor();
             if (r.IsAiGenerated)
-                Console.WriteLine($"  Watermark:     {r.AiSource}");
+                Console.WriteLine($"  Watermark:     {r.AiSource} ({r.AiConfidence:P0})");
             if (r.AiSources?.Count > 0)
                 Console.WriteLine($"  Sources:       {string.Join(", ", r.AiSources)}");
+            // "Suspicious" stays gated on the verdict so a lone sub-threshold check never reads as
+            // an accusation — but the checks themselves are printed whenever any fired, matching
+            // the JSON output and the GUI's tooltip.
             if (r.ExperimentalAiSuspicious)
-            {
                 Console.WriteLine($"  Spectral:      Suspicious ({r.ExperimentalAiConfidence:P0})");
-                Console.WriteLine($"    Flags:       {string.Join(", ", r.ExperimentalAiFlags)}");
-            }
+            if (r.ExperimentalAiFlags?.Count > 0)
+                Console.WriteLine($"    Checks:      {string.Join(", ", r.ExperimentalAiFlags)}");
             if (r.SHLabsScanned)
             {
                 Console.WriteLine($"  SH Labs:       {r.SHLabsPrediction} ({r.SHLabsProbability:F0}%)");
@@ -855,6 +871,7 @@ namespace AudioQualityChecker.CLI
                 fileName = r.FileName,
                 filePath = r.FilePath,
                 status = r.Status.ToString(),
+                errorMessage = r.ErrorMessage,
                 artist = r.Artist,
                 title = r.Title,
                 extension = r.Extension,
@@ -868,6 +885,7 @@ namespace AudioQualityChecker.CLI
                 reportedBitrate = r.ReportedBitrate,
                 actualBitrate = r.ActualBitrate,
                 effectiveFrequency = r.EffectiveFrequency,
+                cutoffDropDb = Math.Round(r.CutoffDropDb, 1),
                 hasClipping = r.HasClipping,
                 clippingPercentage = Math.Round(r.ClippingPercentage, 4),
                 hasScaledClipping = r.HasScaledClipping,
@@ -886,8 +904,11 @@ namespace AudioQualityChecker.CLI
                 mqaEncoder = r.MqaEncoder,
                 aiVerdict = r.AiVerdict,
                 aiConfidence = Math.Round(r.AiCombinedConfidence, 1),
+                aiEvidence = r.AiEvidenceKind,
+                hasVerifiableAiEvidence = r.HasVerifiableAiEvidence,
                 isAiGenerated = r.IsAiGenerated,
                 aiSource = r.AiSource,
+                aiMarkerConfidence = Math.Round(r.AiConfidence, 2),
                 experimentalAiSuspicious = r.ExperimentalAiSuspicious,
                 experimentalAiConfidence = Math.Round(r.ExperimentalAiConfidence, 2),
                 experimentalAiFlags = r.ExperimentalAiFlags ?? new List<string>(),
@@ -905,9 +926,9 @@ namespace AudioQualityChecker.CLI
                 hasTruePeak = r.HasTruePeak,
                 integratedLufs = Math.Round(r.IntegratedLufs, 2),
                 hasLufs = r.HasLufs,
-                ripQuality = r.RipQuality,
-                ripQualityDetail = r.RipQualityDetail,
-                hasRipQuality = r.HasRipQuality,
+                ripLogScore = r.RipLogScore,
+                ripLogVerdict = r.RipLogVerdict,
+                hasRipLog = r.HasRipLog,
                 isAlac = r.IsAlac,
                 clippingSamples = r.ClippingSamples,
                 shLabsScanned = r.SHLabsScanned,
@@ -945,6 +966,7 @@ namespace AudioQualityChecker.CLI
             public int MemoryLimitMb;
             public bool Recursive;
             public string? StatusFilter;
+            public bool RipLog;
             public List<string> Paths;
 
             public static CommonFlags Default() => new()
@@ -956,7 +978,8 @@ namespace AudioQualityChecker.CLI
         }
 
         /// <summary>
-        /// Tries to parse a common flag (--threads, --cpu, --memory, --recursive, --no-recursive, --status).
+        /// Tries to parse a common flag (--threads, --cpu, --memory, --recursive, --no-recursive,
+        /// --status, --rip-log).
         /// Returns true if the flag was consumed. Advances index i if the flag has a value.
         /// Sets errorMsg if parsing fails (caller should return Error(errorMsg)).
         /// </summary>
@@ -983,6 +1006,9 @@ namespace AudioQualityChecker.CLI
                     return true;
                 case "--status" when i + 1 < args.Length:
                     flags.StatusFilter = args[++i].ToLowerInvariant();
+                    return true;
+                case "--rip-log" or "--riplog":
+                    flags.RipLog = true;
                     return true;
                 default:
                     if (!args[i].StartsWith("-"))

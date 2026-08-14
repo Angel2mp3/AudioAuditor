@@ -148,18 +148,16 @@ namespace AudioQualityChecker
                 : IOPath.GetFileNameWithoutExtension(file.FileName);
 
             string url;
-            if (serviceName == "Custom...")
+            if (serviceName == MusicServiceUrls.CustomServiceName)
             {
-                string customUrl = ThemeManager.NpSearchCustomServiceUrls[idx];
-                if (string.IsNullOrWhiteSpace(customUrl))
+                var customUrl = MusicServiceUrls.BuildCustom(
+                    ThemeManager.NpSearchCustomServiceUrls[idx], query);
+                if (customUrl == null)
                 {
                     ErrorDialog.Show("No Custom URL", "Configure a custom search URL in Settings first.\nPaste the search URL and the song name will be appended automatically.", this);
                     return;
                 }
-                string encoded = Uri.EscapeDataString(query);
-                url = customUrl.Contains("{query}")
-                    ? customUrl.Replace("{query}", encoded)
-                    : customUrl.TrimEnd('/') + "/" + encoded;
+                url = customUrl;
             }
             else
             {

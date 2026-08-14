@@ -8,7 +8,7 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor</AssemblyName>
-    <Version>1.8.0</Version>
+    <Version>2.0.0</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -25,6 +25,10 @@
     <Page Remove="AudioAuditor.Avalonia\**" />
     <Compile Remove="AudioAuditorMac\**" />
     <None Remove="AudioAuditorMac\**" />
+    <!-- Gitignored scratch. archive/ holds deliberately-removed code that no longer compiles,
+         and the default **/*.cs glob was picking it up and failing the build. -->
+    <Compile Remove="dev-tests\**" />
+    <None Remove="dev-tests\**" />
     <Compile Remove="AudioAuditor.Tests\**" />
     <None Remove="AudioAuditor.Tests\**" />
     <Compile Remove="AudioAuditor.Core.Tests\**" />
@@ -45,7 +49,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="DiscordRichPresence" Version="1.2.1.24" />
+    <!-- DiscordRichPresence is not listed here: DiscordRichPresenceService lives in
+         AudioAuditor.Core, which references the package itself. No WPF file touches DiscordRPC
+         types directly. ProtectedData IS used here (ThemeManager credential storage). -->
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
@@ -58,11 +64,32 @@
     <ProjectReference Include="AudioAuditor.Core\AudioAuditor.Core.csproj" />
   </ItemGroup>
 
-  <!-- Third-party license/notice files, shipped beside the exe so the Credits window can open them -->
   <ItemGroup>
-    <None Update="Third.Party.Notices\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>AudioAuditor.Windows.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- Third-party license/notice files, embedded into the exe so the Credits window can open
+       them in both the installer and the single-file portable build -->
+  <ItemGroup>
+    <Resource Include="Third.Party.Notices\**\*.txt" />
+  </ItemGroup>
+
+  <!-- Bundled FFmpeg (LGPL build) for audio conversion, invoked as a separate process.
+       Drop the executable into third-party\ffmpeg\. The wildcard keeps the build working
+       before the binary is added, and copies it next to the app (where FindFfmpeg looks). -->
+  <ItemGroup>
+    <None Include="third-party\ffmpeg\**\*" CopyToOutputDirectory="PreserveNewest"
+          Link="third-party\ffmpeg\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- Bundled cambia (MIT) CD rip-log checker, invoked as a separate process by the
+       CD Rip Checker. Drop the executable into third-party\cambia\; the wildcard copies it
+       next to the app (where RipLogCheckService.FindCambia looks). -->
+  <ItemGroup>
+    <None Include="third-party\cambia\**\*" CopyToOutputDirectory="PreserveNewest"
+          Link="third-party\cambia\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -21,6 +22,13 @@ namespace AudioQualityChecker
         /// </summary>
         public static IReadOnlyList<string> PendingStartupPaths { get; private set; } = Array.Empty<string>();
 
+        // A stable, explicit AppUserModelID gives our Windows media (SMTC) session a consistent
+        // identity, so AudioAuditor appears under a clean, unchanging name in Pano Scrobbler's
+        // app list (and groups predictably on the taskbar) instead of a derived process id.
+        [DllImport("shell32.dll", PreserveSig = false)]
+        private static extern void SetCurrentProcessExplicitAppUserModelID(
+            [MarshalAs(UnmanagedType.LPWStr)] string appID);
+
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
@@ -30,8 +38,17 @@ namespace AudioQualityChecker
         [DllImport("user32.dll")]
         private static extern bool IsIconic(IntPtr hWnd);
 
-        [DllImport("user32.dll", EntryPoint = "SendMessageW", CharSet = CharSet.Unicode)]
-        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref CopyDataStruct lParam);
+        // SendMessageTimeout, not SendMessage: a plain SendMessage blocks until the target's message
+        // loop gets round to us, so launching a file while the running instance is busy (mid-scan on
+        // the UI thread) left the new process hung with no window and no feedback. ABORTIFHUNG bails
+        // out immediately if Windows already considers the target unresponsive.
+        [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr SendMessageTimeout(
+            IntPtr hWnd, int msg, IntPtr wParam, ref CopyDataStruct lParam,
+            int flags, int timeoutMs, out IntPtr result);
+
+        private const int SMTO_ABORTIFHUNG = 0x0002;
+        private const int CopyDataTimeoutMs = 2000;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct CopyDataStruct
@@ -46,6 +63,9 @@ namespace AudioQualityChecker
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            // Stable media-session identity (see P/Invoke note). Best-effort; never block startup.
+            try { SetCurrentProcessExplicitAppUserModelID("AngelSoftware.AudioAuditor"); } catch { }
+
             // Capture file/folder args from "Open With" or drag-onto-exe launches
             var paths = (e.Args ?? Array.Empty<string>())
                 .Where(a => !string.IsNullOrWhiteSpace(a) && !a.StartsWith("-"))
@@ -93,6 +113,13 @@ namespace AudioQualityChecker
             }
 
             PendingStartupPaths = paths;
+
+            // A scan or a spectrogram export that was killed mid-decode leaves its ffmpeg temp WAV
+            // behind, and those are sized by track length — a batch export runs several at once, so
+            // they add up fast. The CLI already sweeps at startup; the GUI never did. Placed after
+            // the single-instance guard so only the primary instance sweeps.
+            _ = Task.Run(FfmpegDecoder.CleanStaleTempFiles);
+
             base.OnStartup(e);
             ThemeManager.Initialize();
             ApplyGpuRenderMode();
@@ -220,9 +247,11 @@ namespace AudioQualityChecker
                 if (Current?.MainWindow is MainWindow mw)
                     mw.SaveSessionState(crashSnapshot: true);
             }
-            catch { }
+            // LocalCrashLogger.Write never throws internally, so it is safe even on this path.
+            // Losing the snapshot silently means the post-crash restore offer has nothing to show.
+            catch (Exception snapEx) { if (Services.ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(snapEx); }
             try { SessionRestoreService.WriteRecoveryMarker(ex?.GetType().Name ?? "crash"); }
-            catch { }
+            catch (Exception markerEx) { if (Services.ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(markerEx); }
         }
 
         /// <summary>
@@ -261,17 +290,18 @@ namespace AudioQualityChecker
                 var hwnd = FindExistingMainWindowHandle();
                 if (hwnd == IntPtr.Zero) return;
 
-                string payload = string.Join("\n", paths);
+                var (payload, byteCount) = CopyDataPayload.Pack(paths);
                 IntPtr buffer = Marshal.StringToHGlobalUni(payload);
                 try
                 {
                     var cds = new CopyDataStruct
                     {
                         dwData = (IntPtr)AudioQualityChecker.MainWindow.OpenPathsCopyDataId,
-                        cbData = (payload.Length + 1) * 2, // UTF-16 bytes including terminator
+                        cbData = byteCount, // UTF-16 bytes including terminator
                         lpData = buffer
                     };
-                    SendMessage(hwnd, WM_COPYDATA, IntPtr.Zero, ref cds);
+                    SendMessageTimeout(hwnd, WM_COPYDATA, IntPtr.Zero, ref cds,
+                        SMTO_ABORTIFHUNG, CopyDataTimeoutMs, out _);
                 }
                 finally
                 {
@@ -283,13 +313,17 @@ namespace AudioQualityChecker
 
         private static IntPtr FindExistingMainWindowHandle()
         {
-            var current = System.Diagnostics.Process.GetCurrentProcess();
+            // GetProcessesByName hands back live Process objects that each hold an OS handle;
+            // without disposal every "Open With" launch leaks one per running instance.
+            using var current = System.Diagnostics.Process.GetCurrentProcess();
+            var found = IntPtr.Zero;
             foreach (var proc in System.Diagnostics.Process.GetProcessesByName(current.ProcessName))
             {
-                if (proc.Id != current.Id && proc.MainWindowHandle != IntPtr.Zero)
-                    return proc.MainWindowHandle;
+                if (found == IntPtr.Zero && proc.Id != current.Id && proc.MainWindowHandle != IntPtr.Zero)
+                    found = proc.MainWindowHandle;
+                proc.Dispose();
             }
-            return IntPtr.Zero;
+            return found;
         }
 
         private static void BringExistingInstanceToFront()
@@ -302,6 +336,16 @@ namespace AudioQualityChecker
 
         protected override void OnExit(ExitEventArgs e)
         {
+            // Slider drags queue a debounced settings write; flush it so quitting mid-drag (or
+            // right after releasing) still persists the final value.
+            try { Services.ThemeManager.FlushPendingPlayOptions(); }
+            catch (Exception ex) { if (Services.ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex); }
+
+            // Stats are accumulated in memory and written periodically rather than on every
+            // recorded event, so anything since the last flush would be lost without this.
+            try { Services.LocalStatsCollector.Flush(); }
+            catch (Exception ex) { if (Services.ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex); }
+
             if (_createdNewMutex && _singleInstanceMutex != null)
             {
                 _singleInstanceMutex.ReleaseMutex();

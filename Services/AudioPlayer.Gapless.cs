@@ -34,19 +34,6 @@ namespace AudioQualityChecker.Services
                 lock (_lock) _next = next;
             }
 
-            /// <summary>
-            /// Replace the current source entirely (used when the UI seeks or the track
-            /// is changed manually while gapless is active).
-            /// </summary>
-            public void ReplaceCurrent(ISampleProvider newSource)
-            {
-                lock (_lock)
-                {
-                    _current = newSource;
-                    _ended = false;
-                }
-            }
-
             public int Read(float[] buffer, int offset, int count)
             {
                 if (_ended) return 0;
@@ -218,6 +205,12 @@ namespace AudioQualityChecker.Services
         {
             // This is called from the audio callback thread, not the UI thread.
             // Marshal to the UI dispatcher so handlers don't get cross-thread exceptions.
+#if CROSS_PLATFORM
+            // Dispatcher.UIThread is always present once the app is running, so there is no
+            // null branch to fall through here.
+            GaplessTrace.Log("OnGaplessTrackSwitched: invoked; dispatcher=present");
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => HandleGaplessTrackSwitched());
+#else
             var dispatcher = System.Windows.Application.Current?.Dispatcher;
             GaplessTrace.Log($"OnGaplessTrackSwitched: invoked; dispatcher={(dispatcher != null ? "present" : "NULL")}");
             if (dispatcher != null)
@@ -226,6 +219,7 @@ namespace AudioQualityChecker.Services
                 return;
             }
             HandleGaplessTrackSwitched();
+#endif
         }
 
         private void HandleGaplessTrackSwitched()

@@ -20,7 +20,6 @@ namespace AudioQualityChecker.Services
         /// <summary>Set to true to enable BPM detection. Defaults to false for performance.</summary>
         public static bool EnableBpmDetection { get; set; } = false;
         public static bool EnableExperimentalAi { get; set; }
-        public static bool EnableRipQuality { get; set; }
         public static bool EnableSilenceDetection { get; set; }
         public static bool EnableFakeStereoDetection { get; set; } = true;
         public static bool EnableDynamicRange { get; set; }
@@ -60,36 +59,10 @@ namespace AudioQualityChecker.Services
 
         public static IAnalysisSettings ActiveSettings { get; set; } = new StaticAnalysisSettings();
 
-        public static void ApplySettings(IAnalysisSettings settings)
-        {
-            ArgumentNullException.ThrowIfNull(settings);
-            var snapshot = AnalysisSettingsSnapshot.From(settings);
-
-            EnableBpmDetection = snapshot.EnableBpmDetection;
-            EnableExperimentalAi = snapshot.EnableExperimentalAi;
-            EnableRipQuality = snapshot.EnableRipQuality;
-            EnableSilenceDetection = snapshot.EnableSilenceDetection;
-            EnableFakeStereoDetection = snapshot.EnableFakeStereoDetection;
-            EnableDynamicRange = snapshot.EnableDynamicRange;
-            EnableTruePeak = snapshot.EnableTruePeak;
-            EnableLufs = snapshot.EnableLufs;
-            EnableClippingDetection = snapshot.EnableClippingDetection;
-            EnableMqaDetection = snapshot.EnableMqaDetection;
-            EnableDefaultAiDetection = snapshot.EnableDefaultAiDetection;
-            AlwaysFullAnalysis = snapshot.AlwaysFullAnalysis;
-            FrequencyCutoffAllowEnabled = snapshot.FrequencyCutoffAllowEnabled;
-            FrequencyCutoffAllowHz = snapshot.FrequencyCutoffAllowHz;
-            SilenceMinGapEnabled = snapshot.Silence.MinGapEnabled;
-            SilenceMinGapSeconds = snapshot.Silence.MinGapSeconds;
-            SilenceSkipEdgesEnabled = snapshot.Silence.SkipEdgesEnabled;
-            SilenceSkipEdgeSeconds = snapshot.Silence.SkipEdgeSeconds;
-        }
-
         private sealed class StaticAnalysisSettings : IAnalysisSettings
         {
             public bool EnableBpmDetection => AudioAnalyzer.EnableBpmDetection;
             public bool EnableExperimentalAi => AudioAnalyzer.EnableExperimentalAi;
-            public bool EnableRipQuality => AudioAnalyzer.EnableRipQuality;
             public bool EnableSilenceDetection => AudioAnalyzer.EnableSilenceDetection;
             public bool EnableFakeStereoDetection => AudioAnalyzer.EnableFakeStereoDetection;
             public bool EnableDynamicRange => AudioAnalyzer.EnableDynamicRange;
@@ -151,6 +124,9 @@ namespace AudioQualityChecker.Services
             };
 
             TagLib.File? sharedTagFile = null;
+            // Opened lazily right before the first pass that decodes audio, so files that fail
+            // metadata or never reach the spectral pass do not pay for a decoder open.
+            SharedAudioSource? sharedAudio = null;
             try
             {
                 var fi = new FileInfo(filePath);
@@ -226,38 +202,41 @@ namespace AudioQualityChecker.Services
                 }
 
                 // ── Spectral analysis via NAudio ──
+                sharedAudio = SharedAudioSource.TryCreate(filePath);
                 try
                 {
-                    AnalyzeSpectralContent(filePath, info, analysisSettings, ct);
+                    AnalyzeSpectralContent(filePath, info, analysisSettings, ct, sharedAudio);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch
                 {
-                    if (info.SampleRate > 0)
-                    {
-                        info.Status = AudioStatus.Unknown;
+                    info.Status = AudioStatus.Unknown;
+
+                    // Say which of the two it is. "Cannot decode audio data" reads like the file is
+                    // damaged, when for these formats it only means no decoder ships for them —
+                    // tags, duration and renaming all still work. Installing ffmpeg is the fix, so
+                    // the message says so rather than leaving it looking permanent.
+                    if (SupportedFormats.AnalysisUnsupportedExtensions.Contains(info.Extension))
+                        info.ErrorMessage = $"No {info.Extension.TrimStart('.').ToUpperInvariant()} decoder available — install ffmpeg for full format support (metadata only)";
+                    else if (info.SampleRate > 0)
                         info.ErrorMessage = "Spectral analysis failed";
-                    }
                     else
-                    {
-                        info.Status = AudioStatus.Unknown;
                         info.ErrorMessage = "Cannot decode audio data";
-                    }
+
                     return info;
                 }
 
 
-                // Combined full-file pass (Silence + DR + True Peak + LUFS + Rip Quality)
+                // Combined full-file pass (Silence + DR + True Peak + LUFS)
                 if (analysisSettings.AlwaysFullAnalysis
                     || analysisSettings.EnableSilenceDetection
                     || analysisSettings.EnableDynamicRange
                     || analysisSettings.EnableTruePeak
-                    || analysisSettings.EnableLufs
-                    || analysisSettings.EnableRipQuality)
+                    || analysisSettings.EnableLufs)
                 {
                     try
                     {
-                        RunFullFilePass(filePath, info, analysisSettings, ct);
+                        RunFullFilePass(filePath, info, analysisSettings, ct, sharedAudio);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch { /* Full file pass is optional; individual features degrade gracefully */ }
@@ -266,7 +245,7 @@ namespace AudioQualityChecker.Services
                 // Optimizer detection
                 try
                 {
-                    if (DetectOptimizer(info))
+                    if (DetectOptimizer(info, sharedAudio))
                     {
                         info.Status = AudioStatus.Optimized;
                         return info;
@@ -308,6 +287,7 @@ namespace AudioQualityChecker.Services
                             info.IsAiGenerated = true;
                             info.AiSource = aiResult.Summary;
                             info.AiSources = aiResult.Sources;
+                            info.AiConfidence = aiResult.Confidence;
                         }
                     }
                     catch { /* AI detection is optional */ }
@@ -318,10 +298,15 @@ namespace AudioQualityChecker.Services
                 {
                     if (analysisSettings.EnableExperimentalAi)
                     {
-                        var expResult = ExperimentalAiDetector.Analyze(filePath);
-                        if (expResult != null && expResult.Suspicious)
+                        var expResult = ExperimentalAiDetector.Analyze(filePath, sharedAudio);
+                        if (expResult != null)
                         {
-                            info.ExperimentalAiSuspicious = true;
+                            // Record what was measured even when it falls short of Suspicious. The
+                            // flags were computed either way, and discarding them meant a check
+                            // that fired without corroboration left no trace anywhere — the
+                            // evidence simply vanished between the detector and the report.
+                            // Only Suspicious feeds the verdict; see AudioFileInfo.
+                            info.ExperimentalAiSuspicious = expResult.Suspicious;
                             info.ExperimentalAiConfidence = expResult.Confidence;
                             info.ExperimentalAiFlags = expResult.Flags;
                         }
@@ -338,6 +323,7 @@ namespace AudioQualityChecker.Services
             finally
             {
                 sharedTagFile?.Dispose();
+                sharedAudio?.Dispose();
             }
 
             return info;
@@ -351,11 +337,14 @@ namespace AudioQualityChecker.Services
             string filePath,
             AudioFileInfo info,
             IAnalysisSettings settings,
-            CancellationToken ct)
+            CancellationToken ct,
+            SharedAudioSource? shared = null)
         {
             WaitIfPaused(ct);
-            var (disposable, samples, waveFormat) = OpenAudioFile(filePath);
-            using var _ = disposable;
+            using var lease = AudioLease.Open(filePath, shared);
+            IDisposable disposable = lease.Reader;
+            ISampleProvider samples = lease.Samples;
+            WaveFormat waveFormat = lease.Format;
 
             int sampleRate = waveFormat.SampleRate;
             int channels = waveFormat.Channels;
@@ -397,6 +386,11 @@ namespace AudioQualityChecker.Services
             double[] avgSpectrum = new double[spectrumSize];
             float[] readBuf = new float[FftSize * channels];
             float[] skipBuf = new float[4096 * channels];
+
+            // Hoisted out of the segment loop — these were being reallocated on all 100 segments.
+            double[] real = new double[FftSize];
+            double[] imag = new double[FftSize];
+            double[] segmentMax = new double[spectrumSize];
 
             double[] window = new double[FftSize];
             for (int i = 0; i < FftSize; i++)
@@ -468,17 +462,12 @@ namespace AudioQualityChecker.Services
                 currentFrame += FftSize;
                 if (read < readBuf.Length) continue;
 
-                double[] real = new double[FftSize];
-                double[] imag = new double[FftSize];
-
                 for (int i = 0; i < FftSize; i++)
                 {
-                    float sum = 0;
                     for (int ch = 0; ch < channels; ch++)
                     {
                         float sample = readBuf[i * channels + ch];
                         float absSample = Math.Abs(sample);
-                        sum += sample;
                         if (settings.EnableClippingDetection)
                         {
                             if (absSample >= ClippingThreshold) clippingSamples++;
@@ -502,17 +491,34 @@ namespace AudioQualityChecker.Services
                         corrRR += (double)right * right;
                         stereoSamples++;
                     }
-
-                    real[i] = (sum / channels) * window[i];
                 }
 
-                FFT(real, imag);
+                // Transform each channel separately and keep the strongest bin across them,
+                // rather than folding the channels down to (L+R)/2 first. A mono sum cancels
+                // anti-correlated content, which can carve a hole in the spectrum that exists in
+                // neither channel — and a hole above ~20 kHz is exactly what now reads as an
+                // encoder lowpass. Taking the per-bin max means a frequency counts as present if
+                // any channel has it, so stereo phase can no longer manufacture a fake verdict.
+                Array.Clear(segmentMax, 0, spectrumSize);
+                for (int ch = 0; ch < channels; ch++)
+                {
+                    for (int i = 0; i < FftSize; i++)
+                    {
+                        real[i] = readBuf[i * channels + ch] * window[i];
+                        imag[i] = 0.0;
+                    }
+
+                    FFT(real, imag);
+
+                    for (int i = 0; i < spectrumSize; i++)
+                    {
+                        double mag = Math.Sqrt(real[i] * real[i] + imag[i] * imag[i]);
+                        if (mag > segmentMax[i]) segmentMax[i] = mag;
+                    }
+                }
 
                 for (int i = 0; i < spectrumSize; i++)
-                {
-                    double mag = Math.Sqrt(real[i] * real[i] + imag[i] * imag[i]);
-                    avgSpectrum[i] += mag;
-                }
+                    avgSpectrum[i] += segmentMax[i];
                 validSegments++;
             }
 
@@ -556,10 +562,12 @@ namespace AudioQualityChecker.Services
                 }
             }
 
-            int rawCutoff = FindCutoffFrequency(avgSpectrum, sampleRate);
+            int rawCutoff = FindCutoffFrequency(avgSpectrum, sampleRate, out double wallDropDb);
             info.EffectiveFrequency = _calibrationOffset == 0.0
                 ? rawCutoff
                 : Math.Max(0, rawCutoff + (int)(_calibrationOffset * 100));
+            info.CutoffDropDb = wallDropDb;
+            info.AnalysisSampleRate = sampleRate;
 
             if (settings.EnableFakeStereoDetection && trackStereo && stereoSamples > 0 && corrLL > 0 && corrRR > 0)
             {
@@ -580,15 +588,16 @@ namespace AudioQualityChecker.Services
             }
 
             bool isLossless = IsLosslessFile(info);
-            string codec = info.IsAlac ? "alac" : info.Extension.TrimStart('.');
-            int estimated = EstimateBitrateFromCutoff(info.EffectiveFrequency, sampleRate, isLossless, codec);
+            string codec = CodecFamily(info);
+            bool fullBand = isLossless
+                         && IsFullBandLossless(info.EffectiveFrequency, info.CutoffDropDb, sampleRate);
+            int estimated = EstimateBitrateFromCutoff(info.EffectiveFrequency, sampleRate, fullBand, codec);
 
             if (isLossless)
             {
                 int cutoff = info.EffectiveFrequency;
-                int nyquist = sampleRate / 2;
 
-                if (cutoff >= (int)(nyquist * 0.90) || cutoff >= 20000)
+                if (fullBand)
                 {
                     if (info.DurationSeconds > 0 && info.FileSizeBytes > 0)
                         info.ActualBitrate = (int)(info.FileSizeBytes * 8.0 / info.DurationSeconds / 1000.0);
@@ -617,6 +626,7 @@ namespace AudioQualityChecker.Services
             }
             else
             {
+                info.EstimatedSourceBitrate = estimated;
                 if (info.ReportedBitrate > 0)
                 {
                     double ratio = (double)estimated / info.ReportedBitrate;
@@ -1132,106 +1142,233 @@ namespace AudioQualityChecker.Services
         /// MediaFoundationReader for formats NAudio can't natively decode (AAC/M4A, WMA, etc.).
         /// Returns the reader (to be disposed by caller) and the ISampleProvider.
         /// </summary>
-        public static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFile(string filePath)
+        /// <param name="ct">
+        /// Only reaches the ffmpeg fallback, which is the one decoder in the chain that does real
+        /// work before returning — it decodes the whole file to a temp WAV. Every other branch here
+        /// just opens a handle and has nothing to cancel.
+        /// </param>
+        public static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFile(
+            string filePath, CancellationToken ct = default)
         {
-            return OpenAudioFileInner(filePath);
+            return OpenAudioFileInner(filePath, ct);
         }
 
-        private static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFileInner(string filePath)
+        /// <summary>
+        /// One decoder held open for the whole of <see cref="AnalyzeFile(string, IAnalysisSettings, CancellationToken)"/>
+        /// and rewound between passes, instead of the four independent opens the passes used to do
+        /// (spectral, full-file, optimizer, experimental AI). On Windows most formats decode through
+        /// Media Foundation, so each of those opens was a full source-resolution and topology build
+        /// on top of re-reading the file from the start.
+        ///
+        /// Sharing is deliberately restricted to <see cref="AudioFileReader"/>, which is the only
+        /// decoder in the <see cref="OpenAudioFile"/> chain that is *itself* the
+        /// <see cref="ISampleProvider"/>. Every other path wraps the stream in a converter
+        /// (<c>SampleChannel</c>, <c>WaveToSampleProvider</c>, <c>Pcm16BitToSampleProvider</c>,
+        /// <c>WaveFormatConversionStream</c>) that holds buffer state a stream seek does not reset —
+        /// rewinding one of those could hand the next pass different samples, and detection results
+        /// have to stay identical. Anything else returns null here and each pass opens its own
+        /// reader exactly as before.
+        /// </summary>
+        internal sealed class SharedAudioSource : IDisposable
+        {
+            private readonly AudioFileReader _reader;
+
+            private SharedAudioSource(AudioFileReader reader) => _reader = reader;
+
+            public IDisposable Reader => _reader;
+            public ISampleProvider Samples => _reader;
+            public WaveFormat Format => _reader.WaveFormat;
+
+            /// <summary>
+            /// Set false to make every pass open its own decoder, as they did before sharing
+            /// existed. Exists so the parity tests can run both paths in one process and diff the
+            /// resulting <see cref="AudioFileInfo"/>, and doubles as a kill switch if reuse ever
+            /// turns out to misbehave on a format in the wild.
+            /// </summary>
+            internal static bool Enabled { get; set; } = true;
+
+            public static SharedAudioSource? TryCreate(string filePath)
+            {
+                if (!Enabled) return null;
+
+                IDisposable? reader = null;
+                try
+                {
+                    (reader, _, _) = OpenAudioFile(filePath);
+                    if (reader is AudioFileReader afr)
+                        return new SharedAudioSource(afr);
+                }
+                catch { /* nothing shareable — the passes fall back to their own opens */ }
+
+                try { reader?.Dispose(); } catch { }
+                return null;
+            }
+
+            /// <summary>Seeks back to the start for the next pass. False means the caller must open its own.</summary>
+            public bool TryRewind()
+            {
+                try
+                {
+                    _reader.Position = 0;
+                    return true;
+                }
+                catch { return false; }
+            }
+
+            public void Dispose()
+            {
+                try { _reader.Dispose(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// A decoder for one analysis pass, either borrowed from <paramref name="shared"/> or opened
+        /// fresh. Disposing the lease disposes the reader only when this pass owns it — the shared
+        /// source outlives every pass and is disposed by <c>AnalyzeFile</c>.
+        /// </summary>
+        internal readonly struct AudioLease : IDisposable
+        {
+            private readonly bool _owned;
+
+            private AudioLease(IDisposable reader, ISampleProvider samples, WaveFormat format, bool owned)
+            {
+                Reader = reader;
+                Samples = samples;
+                Format = format;
+                _owned = owned;
+            }
+
+            public IDisposable Reader { get; }
+            public ISampleProvider Samples { get; }
+            public WaveFormat Format { get; }
+
+            public static AudioLease Open(string filePath, SharedAudioSource? shared)
+            {
+                if (shared != null && shared.TryRewind())
+                    return new AudioLease(shared.Reader, shared.Samples, shared.Format, owned: false);
+
+                var (reader, samples, format) = OpenAudioFile(filePath);
+                return new AudioLease(reader, samples, format, owned: true);
+            }
+
+            public void Dispose()
+            {
+                if (_owned) Reader.Dispose();
+            }
+        }
+
+        private static (IDisposable reader, ISampleProvider samples, WaveFormat format) OpenAudioFileInner(
+            string filePath, CancellationToken ct = default)
         {
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
+
+            // Every block below declares its reader OUTSIDE the try and disposes it on failure.
+            // The wrapper constructors (Pcm16BitToSampleProvider / SampleChannel) throw on
+            // unsupported bit depths, and when they did the reader that had already been
+            // constructed was left undisposed — holding the file handle for the process lifetime.
+            // AudioDecoderFactory.TryOpen has always done this correctly; this copy had drifted.
 
             // ── Opus files: use OpusFileReader (Concentus) ──
             if (ext is ".opus")
             {
+                OpusFileReader? opus = null;
                 try
                 {
-                    var opus = new OpusFileReader(filePath);
+                    opus = new OpusFileReader(filePath);
                     ISampleProvider opusSample = opus.WaveFormat.Encoding == WaveFormatEncoding.IeeeFloat
                         ? (ISampleProvider)new WaveToSampleProvider(opus)
                         : new Pcm16BitToSampleProvider(opus);
                     return (opus, opusSample, opus.WaveFormat);
                 }
-                catch { /* fall through */ }
+                catch { opus?.Dispose(); }
             }
 
             // ── OGG Vorbis files ──
             if (ext is ".ogg")
             {
+                VorbisWaveReader? vorbis = null;
                 try
                 {
-                    var vorbis = new VorbisWaveReader(filePath);
+                    vorbis = new VorbisWaveReader(filePath);
                     return (vorbis, vorbis, vorbis.WaveFormat);
                 }
-                catch { /* fall through */ }
+                catch { vorbis?.Dispose(); }
             }
 
             // ── DSD files ──
             if (ext is ".dsf" or ".dff" or ".dsd")
             {
+                DsdToPcmReader? dsd = null;
                 try
                 {
-                    var dsd = new DsdToPcmReader(filePath);
+                    dsd = new DsdToPcmReader(filePath);
                     ISampleProvider dsdSample = dsd.WaveFormat.Encoding == WaveFormatEncoding.IeeeFloat
                         ? (ISampleProvider)new WaveToSampleProvider(dsd)
                         : new Pcm16BitToSampleProvider(dsd);
                     return (dsd, dsdSample, dsd.WaveFormat);
                 }
-                catch { /* fall through */ }
+                catch { dsd?.Dispose(); }
             }
 
 #if !CROSS_PLATFORM
             // TTA (True Audio) — MediaFoundation has a TTA codec on Win10+
             if (ext is ".tta")
             {
+                MediaFoundationReader? tta = null;
                 try
                 {
-                    var tta = new MediaFoundationReader(filePath);
+                    tta = new MediaFoundationReader(filePath);
                     var ttaSample = new SampleChannel(tta, false);
                     return (tta, ttaSample, ttaSample.WaveFormat);
                 }
-                catch { /* fall through */ }
+                catch { tta?.Dispose(); }
             }
 
             // MPC (Musepack) — MediaFoundationReader may work if codec is installed
             if (ext is ".mpc" or ".mp+")
             {
+                MediaFoundationReader? mpc = null;
                 try
                 {
-                    var mpc = new MediaFoundationReader(filePath);
+                    mpc = new MediaFoundationReader(filePath);
                     var mpcSample = new SampleChannel(mpc, false);
                     return (mpc, mpcSample, mpcSample.WaveFormat);
                 }
-                catch { /* MPC codec likely not installed — TagLib# metadata still available */ }
+                catch { mpc?.Dispose(); /* MPC codec likely not installed — TagLib# metadata still available */ }
             }
 #endif
 
             // AudioFileReader handles: MP3, WAV, AIFF, WMA, FLAC (via MediaFoundation on Win10+)
-            try
             {
-                var afr = new AudioFileReader(filePath);
-                return (afr, afr, afr.WaveFormat);
+                AudioFileReader? afr = null;
+                try
+                {
+                    afr = new AudioFileReader(filePath);
+                    return (afr, afr, afr.WaveFormat);
+                }
+                catch { afr?.Dispose(); /* fall through to MediaFoundation */ }
             }
-            catch { /* fall through to MediaFoundation */ }
 
             // Managed MPEG decoder (NLayer) — pure managed, works on every OS. This is what makes
             // MP3/MP2 analysis work on Linux/macOS, where AudioFileReader has no frame decompressor.
             // On Windows AudioFileReader already succeeds above, so this never runs there (no change).
             if (ext is ".mp3" or ".mp2")
             {
+                NLayerMp3SampleProvider? mp3 = null;
                 try
                 {
-                    var mp3 = new NLayerMp3SampleProvider(filePath);
+                    mp3 = new NLayerMp3SampleProvider(filePath);
                     return (mp3, mp3, mp3.WaveFormat);
                 }
-                catch { /* fall through */ }
+                catch { mp3?.Dispose(); }
             }
 
 #if !CROSS_PLATFORM
             // MediaFoundationReader with float output
+            MediaFoundationReader? mfr = null;
             try
             {
-                var mfr = new MediaFoundationReader(filePath);
+                mfr = new MediaFoundationReader(filePath);
                 if (mfr.WaveFormat.Encoding == WaveFormatEncoding.IeeeFloat)
                 {
                     var sp = (ISampleProvider)new WaveToSampleProvider(mfr);
@@ -1246,21 +1383,24 @@ namespace AudioQualityChecker.Services
                 }
                 catch { /* try explicit conversion */ }
 
-                // Explicit conversion to 16-bit PCM
+                // Explicit conversion to 16-bit PCM. The conversion stream owns an ACM handle, so it
+                // is returned as the disposable (it closes mfr underneath) rather than mfr itself —
+                // returning mfr left the ACM handle open for the process lifetime.
+                WaveFormatConversionStream? conv = null;
                 try
                 {
-                    var conv = new WaveFormatConversionStream(
+                    conv = new WaveFormatConversionStream(
                         new WaveFormat(mfr.WaveFormat.SampleRate, 16, mfr.WaveFormat.Channels), mfr);
                     var sp16 = new Pcm16BitToSampleProvider(conv);
-                    return (mfr, sp16, mfr.WaveFormat);
+                    return (conv, sp16, mfr.WaveFormat);
                 }
                 catch
                 {
-                    mfr.Dispose();
+                    conv?.Dispose();
                     throw;
                 }
             }
-            catch { /* fall through */ }
+            catch { mfr?.Dispose(); /* fall through */ }
 
             // MediaFoundationReader with forced PCM output (helps some FLAC/AAC files)
             try
@@ -1287,35 +1427,56 @@ namespace AudioQualityChecker.Services
             // Managed FLAC decoder (handles hi-res and files MediaFoundation can't decode)
             if (ext is ".flac" or ".fla")
             {
+                FlacFileReader? flac = null;
                 try
                 {
-                    var flac = new FlacFileReader(filePath);
+                    flac = new FlacFileReader(filePath);
                     var flacSample = new SampleChannel(flac, false);
                     return (flac, flacSample, flacSample.WaveFormat);
                 }
-                catch { /* fall through */ }
+                catch { flac?.Dispose(); }
             }
 
             // WaveFileReader for raw WAV/RF64/BWF (including 24-bit → 16-bit conversion)
             if (ext is ".wav" or ".wave" or ".bwf" or ".rf64")
             {
+                WaveFileReader? wav = null;
+                IDisposable? converter = null;
                 try
                 {
-                    var wav = new WaveFileReader(filePath);
+                    wav = new WaveFileReader(filePath);
                     if (wav.WaveFormat.BitsPerSample == 24 || wav.WaveFormat.BitsPerSample == 32)
                     {
                         var floatProvider = new Wave32To16Stream(wav);
+                        converter = floatProvider;
                         var sample = new SampleChannel(floatProvider, false);
                         return (floatProvider, sample, sample.WaveFormat);
                     }
                     else
                     {
                         var pcm = WaveFormatConversionStream.CreatePcmStream(wav);
+                        converter = pcm;
                         var sample = new SampleChannel(pcm, false);
                         return (pcm, sample, sample.WaveFormat);
                     }
                 }
-                catch { /* fall through */ }
+                catch
+                {
+                    converter?.Dispose();
+                    wav?.Dispose();
+                }
+            }
+
+            // ── ffmpeg, last resort for everything else ──
+            // Deliberately after every managed and Media Foundation decoder: formats that already
+            // decode in-process keep doing so, and no process is spawned for them. This is the only
+            // decoder for AAC/M4A, ALAC and WMA on Linux/macOS, and the only one anywhere for APE,
+            // WavPack, TAK, Musepack and Speex. Silently absent when ffmpeg isn't installed.
+            if (FfmpegDecoder.TryOpen(filePath, out var ffmpeg, ct) && ffmpeg != null)
+            {
+                // WaveToSampleProvider, not WaveFormatConversionStream: that one is ACM-backed and
+                // therefore Windows-only. ffmpeg already gave us IEEE float, so no conversion is needed.
+                return (ffmpeg, new WaveToSampleProvider(ffmpeg), ffmpeg.WaveFormat);
             }
 
             throw new InvalidOperationException($"Cannot open audio file: {Path.GetFileName(filePath)}");
@@ -1330,90 +1491,6 @@ namespace AudioQualityChecker.Services
         }
 
         // True Peak + LUFS - see AudioAnalyzer.Loudness.cs
-        // ═══════════════════════════════════════════════════════
-        //  Rip/Encode Quality Detection
-        // ═══════════════════════════════════════════════════════
-
-        /// <summary>
-        /// Improved rip quality analysis with better-tuned thresholds and additional
-        /// signals (DC offset, noise floor) to reduce false positives.
-        /// </summary>
-        private static void FinalizeRipQuality(AudioFileInfo info, int sr, int channels,
-            long totalFrames, long zeroRuns, long stickyRuns, long popClicks, long truncatedSamples,
-            float dcOffset, float noiseFloorRms)
-        {
-            var issues = new List<string>();
-            string quality = "Good";
-            double durationSec = totalFrames > 0 ? (double)totalFrames / sr : 0;
-
-            // Zero gaps: only flag if > 2 occurrences or very long gaps (> 1s)
-            if (zeroRuns > 2)
-            {
-                issues.Add($"{zeroRuns} zero gaps");
-                quality = "Bad";
-            }
-            else if (zeroRuns > 0)
-            {
-                issues.Add($"{zeroRuns} zero gap");
-                if (quality == "Good") quality = "Suspect";
-            }
-
-            // Glitches/stuck samples: require more occurrences, threshold tuned
-            if (stickyRuns > 10)
-            {
-                issues.Add($"{stickyRuns} glitches");
-                quality = "Bad";
-            }
-            else if (stickyRuns > 3)
-            {
-                issues.Add($"{stickyRuns} glitches");
-                if (quality == "Good") quality = "Suspect";
-            }
-
-            // Clicks/pops: adaptive threshold, normalized per channel
-            double popsPerSecond = durationSec > 0 ? popClicks / (double)channels / durationSec : 0;
-            if (popsPerSecond > 10)
-            {
-                issues.Add($"clicks {popsPerSecond:F0}/s");
-                quality = "Bad";
-            }
-            else if (popsPerSecond > 3)
-            {
-                issues.Add($"clicks {popsPerSecond:F1}/s");
-                if (quality == "Good") quality = "Suspect";
-            }
-
-            // Bit truncation: only for 16-bit lossless, flag if > 60%
-            if (totalFrames > 0 && info.BitsPerSample == 16 && IsLosslessFile(info))
-            {
-                double truncPct = (double)truncatedSamples / totalFrames * 100;
-                if (truncPct > 60)
-                {
-                    issues.Add("bit truncation");
-                    if (quality == "Good") quality = "Suspect";
-                }
-            }
-
-            // DC offset: indicates bad ADC or ripping hardware
-            float dcPct = Math.Abs(dcOffset) * 100;
-            if (dcPct > 1.0f)
-            {
-                issues.Add($"DC offset {dcPct:F1}%");
-                if (quality == "Good") quality = "Suspect";
-            }
-
-            // High noise floor in quiet sections
-            float noiseDb = noiseFloorRms > 0 ? (float)(20.0 * Math.Log10(noiseFloorRms)) : -120f;
-            if (noiseDb > -50f)
-            {
-                issues.Add($"high noise floor ({noiseDb:F0} dBFS)");
-                if (quality == "Good") quality = "Suspect";
-            }
-
-            info.RipQuality = quality;
-            info.RipQualityDetail = issues.Count > 0 ? string.Join(", ", issues) : "Clean";
-            info.HasRipQuality = true;
-        }
 
         private static string FormatDuration(TimeSpan ts)
         {

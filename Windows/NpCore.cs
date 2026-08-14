@@ -140,7 +140,9 @@ namespace AudioQualityChecker
             _npLyricsScrollTimer = null;
             NpCancelLyricsWork(invalidateVersion: true);
             NpClearFocusedLyricsEffects();
-            NpStopBgAnimation();
+            // Freeze (don't tear down) the background field so reopening resumes it in place instead
+            // of rebuilding — the rebuild was the visible "restart on reopen/minimize".
+            NpFreezeParticleMotion();
             NpStopGlowPulse();
             NpStopVisualizer();
             NpEnsurePlaybarCycleRendering(false); // stop the 60fps CompositionTarget.Rendering hook while hidden
@@ -202,6 +204,10 @@ namespace AudioQualityChecker
                 _npUpdateTimer?.Start();
                 NpStartBgAnimation();
                 NpStartGlowPulse();
+                // Timers/particle clocks were just (re)created running — freeze them immediately if
+                // playback is paused (or a resize is in flight) so resuming NP doesn't start motion
+                // on a paused track.
+                NpRefreshAmbientMotionState();
 
                 if (NowPlayingWorkCoordinator.ResolveVisualizerOwner(CaptureNowPlayingWorkState()) == VisualizerSurfaceOwner.NowPlaying)
                     NpStartVisualizer();
@@ -322,83 +328,8 @@ namespace AudioQualityChecker
                     !string.Equals(_player.CurrentFile, filePath, StringComparison.OrdinalIgnoreCase))
                     return;
 
-                var defaultBrush = (Brush)FindResource("TextSecondary");
-
-                // Build audio specs with color-coded bitrate
-                NpSongSpecs.Inlines.Clear();
-                var specParts = new List<string>();
-                if (!string.IsNullOrEmpty(file.FormatDisplay)) specParts.Add(file.FormatDisplay);
-                if (file.SampleRate > 0) specParts.Add($"{file.SampleRate / 1000.0:0.#} kHz");
-                if (file.BitsPerSample > 0) specParts.Add($"{file.BitsPerSample}-bit");
-                if (file.Channels > 0) specParts.Add(file.Channels == 1 ? "Mono" : file.Channels == 2 ? "Stereo" : $"{file.Channels}ch");
-
-                for (int s = 0; s < specParts.Count; s++)
-                {
-                    if (s > 0) NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run(specParts[s]) { Foreground = defaultBrush });
-                }
-
-                int displayBitrate = file.ActualBitrate > 0 ? file.ActualBitrate : file.ReportedBitrate;
-                if (displayBitrate > 0)
-                {
-                    if (specParts.Count > 0)
-                        NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
-
-                    var statusColor = file.Status switch
-                    {
-                        AudioStatus.Valid => System.Windows.Media.Color.FromRgb(0x4C, 0xC9, 0x4C),
-                        AudioStatus.Fake => System.Windows.Media.Color.FromRgb(0xFF, 0x5C, 0x5C),
-                        AudioStatus.Corrupt => System.Windows.Media.Color.FromRgb(0xFF, 0x5C, 0x5C),
-                        _ => System.Windows.Media.Color.FromRgb(0xFF, 0xA5, 0x00),
-                    };
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run($"{displayBitrate} kbps")
-                    {
-                        Foreground = new SolidColorBrush(statusColor),
-                        FontWeight = FontWeights.SemiBold
-                    });
-                }
-
-                if (ThemeManager.DynamicRangeEnabled && file.HasDynamicRange && file.DynamicRange > 0)
-                {
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run($"DR-{file.DynamicRange:0}") { Foreground = defaultBrush });
-                }
-
-                if (ThemeManager.BpmDetectionEnabled && file.Bpm > 0)
-                {
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run($"{file.Bpm} BPM") { Foreground = defaultBrush });
-                }
-
-                if (ThemeManager.RipQualityEnabled && file.HasRipQuality)
-                {
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run("  •  ") { Foreground = defaultBrush });
-                    var ripColor = file.RipQuality switch
-                    {
-                        "Good" => System.Windows.Media.Color.FromRgb(0x4C, 0xC9, 0x4C),
-                        "Suspect" => System.Windows.Media.Color.FromRgb(0xFF, 0xA5, 0x00),
-                        "Bad" => System.Windows.Media.Color.FromRgb(0xFF, 0x5C, 0x5C),
-                        _ => System.Windows.Media.Color.FromRgb(0xFF, 0xA5, 0x00),
-                    };
-                    NpSongSpecs.Inlines.Add(new System.Windows.Documents.Run(file.RipQualityDisplay)
-                    {
-                        Foreground = new SolidColorBrush(ripColor),
-                        FontWeight = FontWeights.SemiBold
-                    });
-                }
-
-                // Build MQA / AI / quality tags
-                NpTagsPanel.Children.Clear();
-                if (file.IsMqa)
-                    NpTagsPanel.Children.Add(NpCreateTag(file.IsMqaStudio ? "MQA Studio" : "MQA", "#00C2FF"));
-                if (file.IsAlac)
-                    NpTagsPanel.Children.Add(NpCreateTag("ALAC", "#7ACC52"));
-                if (file.AiVerdict == "Yes")
-                    NpTagsPanel.Children.Add(NpCreateTag("AI", "#FF6B6B"));
-                else if (file.AiVerdict == "Possible")
-                    NpTagsPanel.Children.Add(NpCreateTag("AI?", "#FFC107"));
-                if (file.IsFakeStereo)
-                    NpTagsPanel.Children.Add(NpCreateTag("Fake Stereo", "#FFA500"));
+                // Build the user-customizable song-info row (text specs + tag pills, in chosen order).
+                NpBuildSongInfoPanel(file);
 
                 NpUpdateNextTrackPreview();
             }), DispatcherPriority.Background);
@@ -430,40 +361,17 @@ namespace AudioQualityChecker
         private async Task NpLoadCoverAsync(string filePath)
         {
             int gen = _npColorGeneration;
-            string cacheKey = HashPath(filePath);
+            string pathHash = HashPath(filePath);
             try
             {
-                // Check cover bytes cache first for instant loading
+                // Cover bytes are cached by path hash; pull them (or read from disk) first so we
+                // can derive the cover identity that keys colors and manual picks.
                 byte[]? imageData = null;
                 lock (_coverBytesCacheLock)
                 {
-                    if (_coverBytesCache.TryGetValue(cacheKey, out var cachedBytes))
+                    if (_coverBytesCache.TryGetValue(pathHash, out var cachedBytes))
                         imageData = cachedBytes;
                 }
-
-                // Check color cache first for instant application
-                if (TryGetNpColorFromCache(cacheKey, out var cachedColors))
-                {
-                    BitmapImage? cachedBitmap = null;
-                    try
-                    {
-                        if (imageData == null)
-                            imageData = await Task.Run(() => NpReadCoverImageData(filePath));
-                        if (imageData != null)
-                            cachedBitmap = await Task.Run(() => NpDecodeCoverBitmap(imageData));
-                    }
-                    catch { /* cached colors can still be applied without artwork */ }
-
-                    Dispatcher.Invoke(() =>
-                    {
-                        if (gen != _npColorGeneration) return;
-                        if (cachedBitmap != null)
-                            NpApplyCoverBitmap(cachedBitmap, cacheKey);
-                        ApplyNpExtractedColors(cachedColors);
-                    });
-                    return;
-                }
-
                 if (imageData == null)
                     imageData = await Task.Run(() => NpReadCoverImageData(filePath));
 
@@ -473,15 +381,43 @@ namespace AudioQualityChecker
                     return;
                 }
 
+                // Colors and manual picks are keyed by cover content — one entry per unique cover.
+                string coverKey = NpResolveColorKey(filePath, imageData);
+
+                // Now that the cover identity is known, adopt this cover's shared picks (migrating
+                // any legacy per-file picks) before colors apply, so picks win the theme pass.
+                Dispatcher.Invoke(() =>
+                {
+                    if (gen != _npColorGeneration) return;
+                    NpApplyDeferredCoverPicks(filePath, coverKey);
+                });
+
+                // Check color cache for instant application
+                if (TryGetNpColorFromCache(coverKey, out var cachedColors))
+                {
+                    BitmapImage? cachedBitmap = null;
+                    try { cachedBitmap = await Task.Run(() => NpDecodeCoverBitmap(imageData)); }
+                    catch { /* cached colors can still be applied without artwork */ }
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (gen != _npColorGeneration) return;
+                        if (cachedBitmap != null)
+                            NpApplyCoverBitmap(cachedBitmap, coverKey);
+                        ApplyNpExtractedColors(cachedColors);
+                    });
+                    return;
+                }
+
                 var bmp = await Task.Run(() => NpDecodeCoverBitmap(imageData));
 
                 Dispatcher.Invoke(() =>
                 {
                     if (gen != _npColorGeneration) return;
-                    NpApplyCoverBitmap(bmp, cacheKey);
+                    NpApplyCoverBitmap(bmp, coverKey);
                 });
 
-                await NpApplyGlowAsync(imageData, filePath, gen);
+                await NpApplyGlowAsync(imageData, coverKey, gen);
             }
             catch
             {
@@ -499,16 +435,44 @@ namespace AudioQualityChecker
             return data.Length == 0 ? null : data.ToArray();
         }
 
+        /// <summary>
+        /// Largest width we ever need for the Now Playing cover — it is displayed at a few hundred
+        /// px, or fullscreen on a maximized window. Embedded art is routinely 3000×3000, which is
+        /// 36 MB of BGRA held alive as NpCoverImage.Source for no visible benefit. Every other
+        /// decode site in the app caps its size (MainWindow 400, BatchEditor 220, …); this one
+        /// didn't.
+        /// </summary>
+        private const int NpMaxCoverDecodeWidth = 1024;
+
+        /// <summary>
+        /// Reads just the image header to get its real width, so the cap is only applied when the
+        /// source is actually larger. Setting DecodePixelWidth unconditionally would UPSCALE small
+        /// covers, which costs memory instead of saving it. Returns 0 if the header can't be read.
+        /// </summary>
+        private static int NpPeekPixelWidth(Stream stream)
+        {
+            try
+            {
+                stream.Position = 0;
+                var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+                return decoder.Frames.Count > 0 ? decoder.Frames[0].PixelWidth : 0;
+            }
+            catch { return 0; }
+            finally { stream.Position = 0; }
+        }
+
         private static BitmapImage NpDecodeCoverBitmap(byte[] imageData)
         {
+            using var ms = new MemoryStream(imageData);
+            int sourceWidth = NpPeekPixelWidth(ms);
+
             var bitmap = new BitmapImage();
             bitmap.BeginInit();
-            using (var ms = new MemoryStream(imageData))
-            {
-                bitmap.StreamSource = ms;
-                bitmap.CacheOption = BitmapCacheOption.OnLoad;
-                bitmap.EndInit();
-            }
+            if (sourceWidth > NpMaxCoverDecodeWidth)
+                bitmap.DecodePixelWidth = NpMaxCoverDecodeWidth;
+            bitmap.StreamSource = ms;
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.EndInit();
             bitmap.Freeze();
             return bitmap;
         }
@@ -656,6 +620,10 @@ namespace AudioQualityChecker
                 var image = new BitmapImage();
                 image.BeginInit();
                 image.CacheOption = BitmapCacheOption.OnLoad;
+                // Capped like the cover decode above: this is immediately downscaled by
+                // NpCreatePerformanceBackdrop, so decoding a user-picked 6000px wallpaper at full
+                // resolution just to shrink it is wasted peak memory.
+                image.DecodePixelWidth = NpMaxCoverDecodeWidth;
                 image.UriSource = new Uri(path, UriKind.Absolute);
                 image.EndInit();
                 image.Freeze();
@@ -697,6 +665,11 @@ namespace AudioQualityChecker
         private void PreloadNextTrackData()
         {
             if (!ThemeManager.PreloadNextTrackEnabled) return;
+            // A click burst is still in flight: this prediction is about to be invalidated, and its
+            // decoder open + TagLib cover read + palette extraction would compete for the same disk
+            // and CPU as the load the user is waiting on. WarmPendingDecoder is already warming the
+            // real target; the burst's final PlayFile re-arms this prediction.
+            if (_pendingPlayRequest != null) return;
 
             _npPreloadCts?.Cancel();
             _npPreloadCts = new CancellationTokenSource();
@@ -721,18 +694,24 @@ namespace AudioQualityChecker
                 });
             }
 
-            bool needsColors = !NpColorCacheContains(hash);
-            bool needsCoverBytes = false;
+            // Cover bytes are cached by path hash; colors are keyed by cover-content hash.
+            byte[]? cachedBytes = null;
             lock (_coverBytesCacheLock)
-                needsCoverBytes = !_coverBytesCache.ContainsKey(hash);
+                _coverBytesCache.TryGetValue(hash, out cachedBytes);
 
-            if (!needsColors && !needsCoverBytes) return;
+            bool needsCoverBytes = cachedBytes == null;
+
+            // If the cover bytes are already in hand, we can resolve the cover key now and bail
+            // when its colors are already cached — nothing to preload.
+            if (!needsCoverBytes && NpColorCacheContains(NpResolveColorKey(path, cachedBytes)))
+                return;
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    byte[]? imageData = await Task.Run(() => NpReadCoverImageData(path), ct);
+                    byte[]? imageData = cachedBytes
+                        ?? await Task.Run(() => NpReadCoverImageData(path), ct);
                     if (imageData == null || ct.IsCancellationRequested) return;
 
                     // Cache cover bytes for instant loading
@@ -749,8 +728,9 @@ namespace AudioQualityChecker
                         }
                     }
 
-                    // Extract and cache colors
-                    if (needsColors)
+                    // Extract and cache colors under the cover-content key
+                    string coverKey = NpResolveColorKey(path, imageData);
+                    if (!NpColorCacheContains(coverKey))
                     {
                         var colors = await Task.Run(() =>
                         {
@@ -773,27 +753,26 @@ namespace AudioQualityChecker
                         }, ct);
 
                         if (!ct.IsCancellationRequested)
-                            StoreNpColorInCache(path, colors);
+                            StoreNpColorInCache(coverKey, colors);
                     }
                 }
                 catch { /* preload is best-effort */ }
             });
         }
 
-        private void StoreNpColorInCache(string filePath, AlbumColorExtractor.DominantColors colors)
-        {
-            if (!ThemeManager.NpColorCacheEnabled) return;
-            _npColorThemeService.StoreForFilePath(filePath, colors);
-        }
+        private void StoreNpColorInCache(string colorKey, AlbumColorExtractor.DominantColors colors)
+            => _npColorThemeService.StoreForKey(colorKey, colors);
+
+        /// <summary>
+        /// Resolves the cache key for a track's palette: the cover-content hash when the embedded
+        /// cover bytes are available (so every track sharing that exact cover shares one entry),
+        /// otherwise the file-path hash as a fallback for art-less tracks.
+        /// </summary>
+        private static string NpResolveColorKey(string filePath, byte[]? coverBytes)
+            => coverBytes != null ? ColorThemeService.HashBytes(coverBytes) : HashPath(filePath);
 
         private bool TryGetNpColorFromCache(string key, out AlbumColorExtractor.DominantColors colors)
-        {
-            colors = null!;
-            if (!ThemeManager.NpColorCacheEnabled)
-                return false;
-
-            return _npColorThemeService.TryGetByKey(key, out colors);
-        }
+            => _npColorThemeService.TryGetByKey(key, out colors);
 
         private bool NpColorCacheContains(string key)
         {
@@ -806,16 +785,10 @@ namespace AudioQualityChecker
         }
 
         private void LoadNpColorCacheFromDisk()
-        {
-            if (!ThemeManager.NpColorCachePersist && !ThemeManager.NpRememberManualColorPicks) return;
-            _npColorThemeService.LoadFromDisk(includeAutoColors: ThemeManager.NpColorCachePersist);
-        }
+            => _npColorThemeService.LoadFromDisk(includeAutoColors: true);
 
         private void SaveNpColorCacheToDisk()
-        {
-            if (!ThemeManager.NpColorCachePersist && !ThemeManager.NpRememberManualColorPicks) return;
-            _npColorThemeService.SaveToDisk(includeAutoColors: ThemeManager.NpColorCachePersist);
-        }
+            => _npColorThemeService.SaveToDisk(includeAutoColors: true);
 
         private void ApplyNpExtractedColors(AlbumColorExtractor.DominantColors colors)
         {
@@ -1076,6 +1049,10 @@ namespace AudioQualityChecker
             {
                 NpStartVisualizer();
             }
+
+            // Freeze/thaw ambient background motion (Color Drift, cover glow, particle field) in
+            // lock-step with play/pause. Edge-detected so it only acts on a real state change.
+            NpSyncAmbientMotionToPlayback();
         }
 
         private static string NpFormatTime(TimeSpan ts) =>
@@ -1482,21 +1459,25 @@ namespace AudioQualityChecker
             if (!_isMuted)
             {
                 _preMuteVolume = NpVolumeSlider.Value;
+                // Latch the mute BEFORE zeroing the sliders. Writing 0 first meant the main
+                // VolumeSlider handler ran while _isMuted was still false and persisted a volume
+                // of 0, so muting from Now Playing and closing lost the user's level.
+                _isMuted = true;
                 NpVolumeSlider.Value = 0;
                 VolumeSlider.Value = 0;
-                _isMuted = true;
             }
             else
             {
+                _isMuted = false;
                 NpVolumeSlider.Value = _preMuteVolume;
                 VolumeSlider.Value = _preMuteVolume;
-                _isMuted = false;
             }
             NpUpdateVolumeIcon();
         }
 
         private void NpUpdateVolumeIcon()
         {
+            if (NpVolumeSlider == null || NpVolumeIconPath == null) return;
             double vol = NpVolumeSlider.Value;
             string pathData;
             if (vol <= 0 || _isMuted)
@@ -1756,7 +1737,7 @@ namespace AudioQualityChecker
         {
             int dur = (int)Math.Round(NpCrossfadeDurationSlider.Value);
             ThemeManager.CrossfadeDuration = dur;
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (NpCrossfadeDurationLabel != null)
                 NpCrossfadeDurationLabel.Text = $"{dur}s";
         }
@@ -2252,12 +2233,51 @@ namespace AudioQualityChecker
         //  Keyboard Shortcuts
         // ═══════════════════════════════════════════
 
+        /// <summary>
+        /// True when keyboard focus is in a control that consumes typed characters, so the
+        /// single-key playback shortcuts below must stand down. Covers TextBox/RichTextBox (via
+        /// TextBoxBase), PasswordBox, and editable ComboBoxes.
+        /// </summary>
+        private static bool IsTextEntryFocused()
+        {
+            return Keyboard.FocusedElement is TextBoxBase
+                                            or PasswordBox
+                                            or ComboBox { IsEditable: true };
+        }
+
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
 
-            // Don't intercept keys when typing in search box
-            if (SearchBox.IsFocused) return;
+            if (e.Handled) return;
+
+            // These two run BEFORE the text-entry guard below because neither produces a character,
+            // so neither can collide with typing. Escape-to-clear in particular was unreachable
+            // under the old `if (SearchBox.IsFocused) return;` — it has never actually worked.
+            if (e.Key == Key.Escape && SearchBox.IsFocused)
+            {
+                SearchBox.Text = "";
+                FileGrid.Focus();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+            {
+                SearchBox.Focus();
+                SearchBox.SelectAll();
+                e.Handled = true;
+                return;
+            }
+
+            // Don't intercept keys while the user is typing. Checking the focused element's TYPE
+            // rather than one named control matters: WPF TextBox marks arrow keys and Delete as
+            // handled, but NOT character keys — those reach the TextBox through TextInput, so
+            // KeyDown still bubbles all the way up here. Guarding only SearchBox meant typing an
+            // 'm' or a space into the in-window prompt (ThemedDialogInput, used by ShowThemedInput
+            // for renames) muted the audio / toggled playback mid-word. A type check also covers
+            // every text input added later without another named-control exception.
+            if (IsTextEntryFocused()) return;
 
             if (e.Key == Key.Delete && FileGrid.SelectedItem is AudioFileInfo file)
             {
@@ -2269,21 +2289,9 @@ namespace AudioQualityChecker
                 PlayFile(playFile, isManualSkip: true);
                 e.Handled = true;
             }
-            else if (e.Key == Key.Space && !SearchBox.IsFocused)
+            else if (e.Key == Key.Space)
             {
                 PlayPause_Click(this, new RoutedEventArgs());
-                e.Handled = true;
-            }
-            else if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
-            {
-                SearchBox.Focus();
-                SearchBox.SelectAll();
-                e.Handled = true;
-            }
-            else if (e.Key == Key.Escape && SearchBox.IsFocused)
-            {
-                SearchBox.Text = "";
-                FileGrid.Focus();
                 e.Handled = true;
             }
             // Media playback controls
@@ -2333,7 +2341,7 @@ namespace AudioQualityChecker
                 if (_npVisible) NpVolumeSlider.Value = newVol;
                 e.Handled = true;
             }
-            else if (e.Key == Key.M)
+            else if (e.Key == Key.M && Keyboard.Modifiers == ModifierKeys.None)
             {
                 // Toggle mute
                 if (_npVisible)

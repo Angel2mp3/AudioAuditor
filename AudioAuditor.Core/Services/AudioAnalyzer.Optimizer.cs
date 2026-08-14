@@ -16,15 +16,17 @@ namespace AudioQualityChecker.Services
         //  Optimizer Detection (Platinum Notes, etc.)
         // ═══════════════════════════════════════════════════════
 
-        private static bool DetectOptimizer(AudioFileInfo info)
+        private static bool DetectOptimizer(AudioFileInfo info, SharedAudioSource? shared = null)
         {
             if (info.EffectiveFrequency == 0) return false;
             if (IsLosslessFile(info)) return false;
 
             try
             {
-                var (disposable, samples, waveFormat) = OpenAudioFile(info.FilePath);
-                using var _d = disposable;
+                using var lease = AudioLease.Open(info.FilePath, shared);
+                IDisposable disposable = lease.Reader;
+                ISampleProvider samples = lease.Samples;
+                WaveFormat waveFormat = lease.Format;
                 int sampleRate = waveFormat.SampleRate;
                 int channels = waveFormat.Channels;
 

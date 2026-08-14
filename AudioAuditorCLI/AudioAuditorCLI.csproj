@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditorCLI</AssemblyName>
-    <Version>1.8.0</Version>
+    <Version>2.0.0</Version>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <DefineConstants>CROSS_PLATFORM</DefineConstants>
     <RuntimeIdentifiers>win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
@@ -29,6 +29,14 @@
   <!-- SpectrogramGenerator has WPF-specific code behind #if guards, link separately -->
   <ItemGroup>
     <Compile Include="..\Services\SpectrogramGenerator.cs" Link="Services\SpectrogramGenerator.cs" />
+  </ItemGroup>
+
+  <!-- Bundled cambia (MIT) for the `checklog` command, run as a separate process. The binary is
+       Windows-only, so only copy it for dev builds and win publishes; on Linux/macOS FindCambia
+       finds nothing and the command reports cambia as unavailable. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' or $(RuntimeIdentifier.StartsWith('win'))">
+    <None Include="..\third-party\cambia\**\*" CopyToOutputDirectory="PreserveNewest"
+          Link="third-party\cambia\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

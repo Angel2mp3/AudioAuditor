@@ -8,7 +8,7 @@ namespace AudioQualityChecker.Services
         // ═══════════════════════════════════════════════════════
 
         private static readonly Lazy<double[][]> _oversamplingPhases = new(ComputeOversamplingPhases);
-        private static double[][] GetOversamplingPhases() => _oversamplingPhases.Value;
+        internal static double[][] GetOversamplingPhases() => _oversamplingPhases.Value;
 
         private static double[][] ComputeOversamplingPhases()
         {

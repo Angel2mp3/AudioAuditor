@@ -40,13 +40,27 @@ namespace AudioQualityChecker
             BtnZoom.IsChecked = _endZoom;
             BtnZoom.Content = _endZoom ? "End" : "Full";
 
-            Loaded += async (_, _) => await RegenerateAsync();
+            Loaded += (_, _) => StartRegenerate();
+        }
+
+        /// <summary>
+        /// Regenerates in the background. A failure has to clear the loading panel — otherwise
+        /// the window sits on "Rendering…" forever with the spectrogram hidden behind it.
+        /// </summary>
+        private void StartRegenerate()
+        {
+            RegenerateAsync().Observe(nameof(RegenerateAsync), ex =>
+            {
+                LoadingPanel.Visibility = Visibility.Visible;
+                LoadingText.Text = $"Could not generate spectrogram: {ex.Message}";
+                StatusLabel.Text = "";
+            });
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ClickCount == 2) return;
-            DragMove();
+            this.SafeDragMove();
         }
 
         private void Close_Click(object sender, RoutedEventArgs e) => Close();
@@ -98,7 +112,7 @@ namespace AudioQualityChecker
             if (sender is not System.Windows.Controls.Primitives.ToggleButton btn) return;
             _differenceChannel = btn.IsChecked == true;
             btn.Content = _differenceChannel ? "L-R" : "Mono";
-            _ = RegenerateAsync();
+            StartRegenerate();
         }
 
         private void Scale_Click(object sender, RoutedEventArgs e)
@@ -106,7 +120,7 @@ namespace AudioQualityChecker
             if (sender is not System.Windows.Controls.Primitives.ToggleButton btn) return;
             _linearScale = btn.IsChecked == true;
             btn.Content = _linearScale ? "Linear" : "Log";
-            _ = RegenerateAsync();
+            StartRegenerate();
         }
 
         private void Zoom_Click(object sender, RoutedEventArgs e)
@@ -114,7 +128,7 @@ namespace AudioQualityChecker
             if (sender is not System.Windows.Controls.Primitives.ToggleButton btn) return;
             _endZoom = btn.IsChecked == true;
             btn.Content = _endZoom ? "End" : "Full";
-            _ = RegenerateAsync();
+            StartRegenerate();
         }
 
         private void Save_Click(object sender, RoutedEventArgs e)
@@ -140,8 +154,7 @@ namespace AudioQualityChecker
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error saving:\n{ex.Message}", "Save Error",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                ErrorDialog.Show("Save Error", $"Error saving:\n{ex.Message}", this);
             }
         }
     }

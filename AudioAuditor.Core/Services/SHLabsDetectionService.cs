@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -38,8 +39,6 @@ namespace AudioQualityChecker.Services
         /// When non-empty, the proxy is bypassed entirely.
         /// </summary>
         public static string? CustomApiKey { get; set; }
-
-        private const string InstallIdKey = "InstallId";
 
         // ── Local cache file paths ──
         private static readonly string CacheDir = AppPaths.DocumentsDirectory;
@@ -462,6 +461,21 @@ namespace AudioQualityChecker.Services
             }
         }
 
+        /// <summary>
+        /// The cache file is written and read on the same machine, but the user's Windows region
+        /// can change between those two moments. Interpolating and parsing under the current
+        /// culture meant a "95.3" written on en-US failed to parse on a comma-decimal locale and
+        /// silently fell back to 0, zeroing every cached probability. Both sides are invariant.
+        ///
+        /// NumberStyles.Float, NOT .Any: .Any accepts group separators, so "95,3" would parse as
+        /// 953 rather than failing.
+        /// </summary>
+        internal static string FormatInvariant(double value)
+            => value.ToString("F1", CultureInfo.InvariantCulture);
+
+        internal static double ParseInvariant(string raw)
+            => double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0;
+
         private static void LoadCache()
         {
             try
@@ -476,8 +490,8 @@ namespace AudioQualityChecker.Services
                     {
                         FileHash = parts[0],
                         Prediction = parts[1],
-                        Probability = double.TryParse(parts[2], out var p) ? p : 0,
-                        Confidence = double.TryParse(parts[3], out var c) ? c : 0,
+                        Probability = ParseInvariant(parts[2]),
+                        Confidence = ParseInvariant(parts[3]),
                         MostLikelyAiType = parts[4],
                         ScannedUtc = long.TryParse(parts[5], out var t) ? new DateTime(t, DateTimeKind.Utc) : DateTime.UtcNow
                     };
@@ -493,7 +507,7 @@ namespace AudioQualityChecker.Services
             {
                 if (!Directory.Exists(CacheDir)) Directory.CreateDirectory(CacheDir);
                 var lines = _resultCache.Values.Select(e =>
-                    $"{e.FileHash}|{e.Prediction}|{e.Probability:F1}|{e.Confidence:F1}|{e.MostLikelyAiType}|{e.ScannedUtc.Ticks}");
+                    $"{e.FileHash}|{e.Prediction}|{FormatInvariant(e.Probability)}|{FormatInvariant(e.Confidence)}|{e.MostLikelyAiType}|{e.ScannedUtc.Ticks}");
                 System.IO.File.WriteAllLines(ResultCacheFile, lines);
             }
             catch { }

@@ -13,15 +13,25 @@ namespace AudioQualityChecker.Services
     public static class ScanCacheService
     {
         private static readonly string CacheDir = AppPaths.AppDataDirectory;
-        private static readonly string CacheFile = Path.Combine(CacheDir, "scan_cache.json");
+        private static readonly string CacheFile = Path.Combine(CacheDir, "scan_cache.json.gz");
+
+        // Pre-compression filename. Read once so an upgrading user keeps their cache, then deleted
+        // after the first successful gzipped write. Losing it would only cost one rescan, but there
+        // is no reason to make anyone pay that.
+        private static readonly string LegacyCacheFile = Path.Combine(CacheDir, "scan_cache.json");
 
         private static ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
         private static bool _loaded;
         private static bool _dirty;
         private static bool _cacheSkipped;
 
-        private const long MaxCacheSizeBytes = 100L * 1024 * 1024; // 100 MB — skip loading above this
-        private const int MaxCacheEntries = 50_000;                 // cap in-memory entries
+        // Guards against spending minutes parsing a runaway cache at startup. The compressed file
+        // is checked against a smaller bound than the JSON it expands to, because gzip takes ~90%
+        // off this data — hence two limits rather than one shared number.
+        private const long MaxCacheSizeBytes = 100L * 1024 * 1024;         // plain JSON on disk
+        private const long MaxCompressedCacheSizeBytes = 20L * 1024 * 1024; // ~200 MB decompressed
+        private const long MaxDecompressedCacheBytes = 250L * 1024 * 1024;  // hard ceiling, see below
+        private const int MaxCacheEntries = 50_000;                         // cap in-memory entries
 
         public static int EntryCount => _cache.Count;
         public static bool CacheSkipped => _cacheSkipped;
@@ -32,15 +42,18 @@ namespace AudioQualityChecker.Services
             _loaded = true;
             try
             {
-                if (!File.Exists(CacheFile)) return;
-                long fileSize = new FileInfo(CacheFile).Length;
-                if (fileSize > MaxCacheSizeBytes)
+                string source;
+                if (File.Exists(CacheFile)) source = CacheFile;
+                else if (File.Exists(LegacyCacheFile)) source = LegacyCacheFile;
+                else return;
+
+                if (IsTooLargeToLoad(source))
                 {
                     _cacheSkipped = true;
                     return;
                 }
-                var json = File.ReadAllText(CacheFile);
-                var entries = JsonSerializer.Deserialize<List<CacheEntry>>(json);
+
+                var entries = CompressedJsonStore.Load<List<CacheEntry>>(source);
                 if (entries == null) return;
                 // Keep only the last MaxCacheEntries to avoid unbounded memory use
                 foreach (var e in entries.TakeLast(MaxCacheEntries))
@@ -48,6 +61,27 @@ namespace AudioQualityChecker.Services
                         _cache[e.FilePath] = e;
             }
             catch { }
+        }
+
+        /// <summary>
+        /// True when <paramref name="path"/> is big enough that parsing it would stall startup.
+        /// A gzipped cache is judged on both its compressed size and the uncompressed size recorded
+        /// in its trailer, so a small file that expands to gigabytes (corrupt or hostile) is
+        /// rejected before a single byte is inflated.
+        /// </summary>
+        private static bool IsTooLargeToLoad(string path)
+        {
+            try
+            {
+                long onDisk = new FileInfo(path).Length;
+
+                long expanded = CompressedJsonStore.GetUncompressedSize(path);
+                if (expanded > 0)
+                    return onDisk > MaxCompressedCacheSizeBytes || expanded > MaxDecompressedCacheBytes;
+
+                return onDisk > MaxCacheSizeBytes;
+            }
+            catch { return false; }
         }
 
         public static bool TryGet(string filePath, long fileSizeBytes, DateTime lastWriteUtc, out AudioFileInfo? result)
@@ -62,7 +96,14 @@ namespace AudioQualityChecker.Services
             return TryGet(filePath, fileSizeBytes, lastWriteUtc, settingsFingerprint, out result);
         }
 
-        private static bool TryGet(string filePath, long fileSizeBytes, DateTime lastWriteUtc, string? settingsFingerprint, out AudioFileInfo? result)
+        /// <summary>
+        /// Cache lookup with a pre-computed settings fingerprint. Prefer this in batch scans:
+        /// <see cref="AnalysisSettingsSnapshot.CacheFingerprint"/> is a computed property that
+        /// builds ~20 interpolated strings and a string.Join on every read, and the value is
+        /// identical for every file in a batch — so the IAnalysisSettings overload rebuilt it
+        /// once per file, twice (lookup and store).
+        /// </summary>
+        public static bool TryGet(string filePath, long fileSizeBytes, DateTime lastWriteUtc, string? settingsFingerprint, out AudioFileInfo? result)
         {
             result = null;
             if (!_cache.TryGetValue(filePath, out var entry)) return false;
@@ -94,14 +135,36 @@ namespace AudioQualityChecker.Services
             Set(info, settingsFingerprint);
         }
 
-        private static void Set(AudioFileInfo info, string? settingsFingerprint)
+        /// <summary>Cache store with a pre-computed settings fingerprint — see the TryGet overload.</summary>
+        public static void Set(AudioFileInfo info, string? settingsFingerprint)
+        {
+            Set(info, settingsFingerprint, fileSizeBytes: null, lastWriteUtc: null);
+        }
+
+        /// <summary>
+        /// Cache store that reuses a stat the caller already took. The batch scanner stats every
+        /// file for the cache lookup, so re-running FileInfo here doubled the syscalls per file.
+        /// </summary>
+        public static void Set(AudioFileInfo info, string? settingsFingerprint, long? fileSizeBytes, DateTime? lastWriteUtc)
         {
             if (string.IsNullOrEmpty(info.FilePath)) return;
             try
             {
-                var fi = new FileInfo(info.FilePath);
-                if (!fi.Exists) return;
-                _cache[info.FilePath] = CacheEntry.FromAudioFileInfo(info, fi.Length, fi.LastWriteTimeUtc, settingsFingerprint);
+                long size;
+                DateTime written;
+                if (fileSizeBytes.HasValue && lastWriteUtc.HasValue)
+                {
+                    size = fileSizeBytes.Value;
+                    written = lastWriteUtc.Value;
+                }
+                else
+                {
+                    var fi = new FileInfo(info.FilePath);
+                    if (!fi.Exists) return;
+                    size = fi.Length;
+                    written = fi.LastWriteTimeUtc;
+                }
+                _cache[info.FilePath] = CacheEntry.FromAudioFileInfo(info, size, written, settingsFingerprint);
                 _dirty = true;
             }
             catch { }
@@ -115,11 +178,63 @@ namespace AudioQualityChecker.Services
                 if (!Directory.Exists(CacheDir))
                     Directory.CreateDirectory(CacheDir);
                 var options = new JsonSerializerOptions { WriteIndented = false, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault };
-                var json = JsonSerializer.Serialize(_cache.Values.ToList(), options);
-                File.WriteAllText(CacheFile, json);
+                if (!CompressedJsonStore.Save(CacheFile, _cache.Values.ToList(), options))
+                    return;
                 _dirty = false;
+
+                // Only now that the compressed file is safely on disk. This is pure cache — if an
+                // older build is ever run again it just rescans — so there is nothing to preserve.
+                try { if (File.Exists(LegacyCacheFile)) File.Delete(LegacyCacheFile); } catch { }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Writes the cache to <paramref name="destPath"/> as readable, indented plain JSON.
+        /// The cache file itself is gzipped and so can't be opened in a text editor — this backs
+        /// the Settings "Edit Cache" action, paired with <see cref="ImportPlainJson"/>.
+        /// </summary>
+        public static bool ExportPlainJson(string destPath)
+        {
+            EnsureLoaded();
+            try
+            {
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
+                };
+                File.WriteAllText(destPath, JsonSerializer.Serialize(_cache.Values.ToList(), options));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Replaces the cache with the contents of a plain-JSON file previously produced by
+        /// <see cref="ExportPlainJson"/>, then persists it. A file that no longer parses is
+        /// rejected outright rather than partially applied, so a bad hand-edit leaves the existing
+        /// cache intact instead of shredding it.
+        /// </summary>
+        public static bool ImportPlainJson(string srcPath)
+        {
+            try
+            {
+                var entries = CompressedJsonStore.Load<List<CacheEntry>>(srcPath);
+                if (entries == null) return false;
+
+                var replacement = new ConcurrentDictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
+                foreach (var e in entries.TakeLast(MaxCacheEntries))
+                    if (!string.IsNullOrEmpty(e.FilePath))
+                        replacement[e.FilePath] = e;
+
+                _cache = replacement;
+                _loaded = true;
+                _dirty = true;
+                SaveToDisk();
+                return true;
+            }
+            catch { return false; }
         }
 
         public static void Clear()
@@ -129,12 +244,23 @@ namespace AudioQualityChecker.Services
             _loaded = false;
             _cacheSkipped = false;
             try { if (File.Exists(CacheFile)) File.Delete(CacheFile); } catch { }
+            try { if (File.Exists(LegacyCacheFile)) File.Delete(LegacyCacheFile); } catch { }
         }
 
+        /// <summary>
+        /// On-disk size of the cache. Counts both files: mid-migration (loaded from the legacy file
+        /// but not yet saved) they coexist, and reporting only one would understate what Settings
+        /// offers to free.
+        /// </summary>
         public static long GetCacheSizeBytes()
         {
-            try { return File.Exists(CacheFile) ? new FileInfo(CacheFile).Length : 0; }
-            catch { return 0; }
+            long total = 0;
+            foreach (var path in new[] { CacheFile, LegacyCacheFile })
+            {
+                try { if (File.Exists(path)) total += new FileInfo(path).Length; }
+                catch { }
+            }
+            return total;
         }
 
         private class CacheEntry
@@ -146,19 +272,21 @@ namespace AudioQualityChecker.Services
 
             // Core analysis results
             public int Status { get; set; }
-            public string Artist { get; set; } = "";
-            public string Title { get; set; } = "";
-            public string FileName { get; set; } = "";
-            public string FolderPath { get; set; } = "";
+            public string? Artist { get; set; }
+            public string? Title { get; set; }
+            public string? FileName { get; set; }
+            public string? FolderPath { get; set; }
             public int SampleRate { get; set; }
             public int BitsPerSample { get; set; }
-            public string Duration { get; set; } = "";
+            public string? Duration { get; set; }
             public double DurationSeconds { get; set; }
-            public string FileSize { get; set; } = "";
+            public string? FileSize { get; set; }
             public int ReportedBitrate { get; set; }
             public int ActualBitrate { get; set; }
-            public string Extension { get; set; } = "";
+            public int EstimatedSourceBitrate { get; set; }
+            public string? Extension { get; set; }
             public int EffectiveFrequency { get; set; }
+            public double CutoffDropDb { get; set; }
             public int Channels { get; set; }
             public DateTime DateModified { get; set; }
             public DateTime DateCreated { get; set; }
@@ -181,26 +309,27 @@ namespace AudioQualityChecker.Services
             // MQA
             public bool IsMqa { get; set; }
             public bool IsMqaStudio { get; set; }
-            public string MqaOriginalSampleRate { get; set; } = "";
-            public string MqaEncoder { get; set; } = "";
+            public string? MqaOriginalSampleRate { get; set; }
+            public string? MqaEncoder { get; set; }
 
             // AI detection
             public bool IsAiGenerated { get; set; }
-            public string AiSource { get; set; } = "";
-            public List<string> AiSources { get; set; } = new();
+            public string? AiSource { get; set; }
+            public List<string>? AiSources { get; set; }
+            public double AiConfidence { get; set; }
             public bool ExperimentalAiSuspicious { get; set; }
             public double ExperimentalAiConfidence { get; set; }
-            public List<string> ExperimentalAiFlags { get; set; } = new();
+            public List<string>? ExperimentalAiFlags { get; set; }
             public bool SHLabsScanned { get; set; }
-            public string SHLabsPrediction { get; set; } = "";
+            public string? SHLabsPrediction { get; set; }
             public double SHLabsProbability { get; set; }
             public double SHLabsConfidence { get; set; }
-            public string SHLabsAiType { get; set; } = "";
+            public string? SHLabsAiType { get; set; }
 
             // Other
             public bool HasAlbumCover { get; set; }
             public bool IsAlac { get; set; }
-            public string ErrorMessage { get; set; } = "";
+            public string? ErrorMessage { get; set; }
 
             // Silence
             public double LeadingSilenceMs { get; set; }
@@ -215,7 +344,7 @@ namespace AudioQualityChecker.Services
 
             // Fake Stereo
             public bool IsFakeStereo { get; set; }
-            public string FakeStereoType { get; set; } = "";
+            public string? FakeStereoType { get; set; }
             public double StereoCorrelation { get; set; }
 
             // True Peak / LUFS
@@ -224,31 +353,39 @@ namespace AudioQualityChecker.Services
             public double IntegratedLufs { get; set; }
             public bool HasLufs { get; set; }
 
-            // Rip Quality
-            public string RipQuality { get; set; } = "";
-            public string RipQualityDetail { get; set; } = "";
-            public bool HasRipQuality { get; set; }
+            // CD Rip Checker (cambia score for the log next to this file)
+            //
+            // Always serialized. The serializer's DefaultIgnoreCondition is WhenWritingDefault,
+            // which compares against the TYPE default (0), not this initializer — so a genuine
+            // worst-case score of 0 was omitted and came back as -1 ("no rip log") on reload,
+            // while -1 was the only value actually written. Exactly inverted.
+            [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+            public int RipLogScore { get; set; } = -1;
+            public string? RipLogVerdict { get; set; }
+            public bool HasRipLog { get; set; }
 
             public AudioFileInfo ToAudioFileInfo()
             {
                 return new AudioFileInfo
                 {
                     Status = (AudioStatus)Status,
-                    Artist = Artist,
-                    Title = Title,
-                    FileName = FileName,
+                    Artist = Artist ?? "",
+                    Title = Title ?? "",
+                    FileName = FileName ?? "",
                     FilePath = FilePath,
-                    FolderPath = FolderPath,
+                    FolderPath = FolderPath ?? "",
                     SampleRate = SampleRate,
                     BitsPerSample = BitsPerSample,
-                    Duration = Duration,
+                    Duration = Duration ?? "",
                     DurationSeconds = DurationSeconds,
-                    FileSize = FileSize,
+                    FileSize = FileSize ?? "",
                     FileSizeBytes = FileSizeBytes,
                     ReportedBitrate = ReportedBitrate,
                     ActualBitrate = ActualBitrate,
-                    Extension = Extension,
+                    EstimatedSourceBitrate = EstimatedSourceBitrate,
+                    Extension = Extension ?? "",
                     EffectiveFrequency = EffectiveFrequency,
+                    CutoffDropDb = CutoffDropDb,
                     Channels = Channels,
                     DateModified = DateModified,
                     DateCreated = DateCreated,
@@ -265,22 +402,23 @@ namespace AudioQualityChecker.Services
                     Frequency = Frequency,
                     IsMqa = IsMqa,
                     IsMqaStudio = IsMqaStudio,
-                    MqaOriginalSampleRate = MqaOriginalSampleRate,
-                    MqaEncoder = MqaEncoder,
+                    MqaOriginalSampleRate = MqaOriginalSampleRate ?? "",
+                    MqaEncoder = MqaEncoder ?? "",
                     IsAiGenerated = IsAiGenerated,
-                    AiSource = AiSource,
+                    AiSource = AiSource ?? "",
                     AiSources = AiSources ?? new(),
+                    AiConfidence = AiConfidence,
                     ExperimentalAiSuspicious = ExperimentalAiSuspicious,
                     ExperimentalAiConfidence = ExperimentalAiConfidence,
                     ExperimentalAiFlags = ExperimentalAiFlags ?? new(),
                     SHLabsScanned = SHLabsScanned,
-                    SHLabsPrediction = SHLabsPrediction,
+                    SHLabsPrediction = SHLabsPrediction ?? "",
                     SHLabsProbability = SHLabsProbability,
                     SHLabsConfidence = SHLabsConfidence,
-                    SHLabsAiType = SHLabsAiType,
+                    SHLabsAiType = SHLabsAiType ?? "",
                     HasAlbumCover = HasAlbumCover,
                     IsAlac = IsAlac,
-                    ErrorMessage = ErrorMessage,
+                    ErrorMessage = ErrorMessage ?? "",
                     LeadingSilenceMs = LeadingSilenceMs,
                     TrailingSilenceMs = TrailingSilenceMs,
                     MidTrackSilenceGaps = MidTrackSilenceGaps,
@@ -289,20 +427,21 @@ namespace AudioQualityChecker.Services
                     DynamicRange = DynamicRange,
                     HasDynamicRange = HasDynamicRange,
                     IsFakeStereo = IsFakeStereo,
-                    FakeStereoType = FakeStereoType,
+                    FakeStereoType = FakeStereoType ?? "",
                     StereoCorrelation = StereoCorrelation,
                     TruePeakDbTP = TruePeakDbTP,
                     HasTruePeak = HasTruePeak,
                     IntegratedLufs = IntegratedLufs,
                     HasLufs = HasLufs,
-                    RipQuality = RipQuality,
-                    RipQualityDetail = RipQualityDetail,
-                    HasRipQuality = HasRipQuality,
+                    RipLogScore = RipLogScore,
+                    RipLogVerdict = RipLogVerdict ?? "",
+                    HasRipLog = HasRipLog,
                 };
             }
 
             public static CacheEntry FromAudioFileInfo(AudioFileInfo info, long sizeBytes, DateTime lastWriteUtc, string? settingsFingerprint = null)
             {
+                static string? S(string? v) => string.IsNullOrEmpty(v) ? null : v;
                 return new CacheEntry
                 {
                     FilePath = info.FilePath,
@@ -310,19 +449,21 @@ namespace AudioQualityChecker.Services
                     LastWriteUtc = lastWriteUtc,
                     SettingsFingerprint = settingsFingerprint,
                     Status = (int)info.Status,
-                    Artist = info.Artist,
-                    Title = info.Title,
-                    FileName = info.FileName,
-                    FolderPath = info.FolderPath,
+                    Artist = S(info.Artist),
+                    Title = S(info.Title),
+                    FileName = S(info.FileName),
+                    FolderPath = S(info.FolderPath),
                     SampleRate = info.SampleRate,
                     BitsPerSample = info.BitsPerSample,
-                    Duration = info.Duration,
+                    Duration = S(info.Duration),
                     DurationSeconds = info.DurationSeconds,
-                    FileSize = info.FileSize,
+                    FileSize = S(info.FileSize),
                     ReportedBitrate = info.ReportedBitrate,
                     ActualBitrate = info.ActualBitrate,
-                    Extension = info.Extension,
+                    EstimatedSourceBitrate = info.EstimatedSourceBitrate,
+                    Extension = S(info.Extension),
                     EffectiveFrequency = info.EffectiveFrequency,
+                    CutoffDropDb = info.CutoffDropDb,
                     Channels = info.Channels,
                     DateModified = info.DateModified,
                     DateCreated = info.DateCreated,
@@ -339,22 +480,23 @@ namespace AudioQualityChecker.Services
                     Frequency = info.Frequency,
                     IsMqa = info.IsMqa,
                     IsMqaStudio = info.IsMqaStudio,
-                    MqaOriginalSampleRate = info.MqaOriginalSampleRate,
-                    MqaEncoder = info.MqaEncoder,
+                    MqaOriginalSampleRate = S(info.MqaOriginalSampleRate),
+                    MqaEncoder = S(info.MqaEncoder),
                     IsAiGenerated = info.IsAiGenerated,
-                    AiSource = info.AiSource,
-                    AiSources = info.AiSources,
+                    AiSource = S(info.AiSource),
+                    AiSources = info.AiSources?.Count > 0 ? info.AiSources : null,
+                    AiConfidence = info.AiConfidence,
                     ExperimentalAiSuspicious = info.ExperimentalAiSuspicious,
                     ExperimentalAiConfidence = info.ExperimentalAiConfidence,
-                    ExperimentalAiFlags = info.ExperimentalAiFlags,
+                    ExperimentalAiFlags = info.ExperimentalAiFlags?.Count > 0 ? info.ExperimentalAiFlags : null,
                     SHLabsScanned = info.SHLabsScanned,
-                    SHLabsPrediction = info.SHLabsPrediction,
+                    SHLabsPrediction = S(info.SHLabsPrediction),
                     SHLabsProbability = info.SHLabsProbability,
                     SHLabsConfidence = info.SHLabsConfidence,
-                    SHLabsAiType = info.SHLabsAiType,
+                    SHLabsAiType = S(info.SHLabsAiType),
                     HasAlbumCover = info.HasAlbumCover,
                     IsAlac = info.IsAlac,
-                    ErrorMessage = info.ErrorMessage,
+                    ErrorMessage = S(info.ErrorMessage),
                     LeadingSilenceMs = info.LeadingSilenceMs,
                     TrailingSilenceMs = info.TrailingSilenceMs,
                     MidTrackSilenceGaps = info.MidTrackSilenceGaps,
@@ -363,15 +505,15 @@ namespace AudioQualityChecker.Services
                     DynamicRange = info.DynamicRange,
                     HasDynamicRange = info.HasDynamicRange,
                     IsFakeStereo = info.IsFakeStereo,
-                    FakeStereoType = info.FakeStereoType,
+                    FakeStereoType = S(info.FakeStereoType),
                     StereoCorrelation = info.StereoCorrelation,
                     TruePeakDbTP = info.TruePeakDbTP,
                     HasTruePeak = info.HasTruePeak,
                     IntegratedLufs = info.IntegratedLufs,
                     HasLufs = info.HasLufs,
-                    RipQuality = info.RipQuality,
-                    RipQualityDetail = info.RipQualityDetail,
-                    HasRipQuality = info.HasRipQuality,
+                    RipLogScore = info.RipLogScore,
+                    RipLogVerdict = S(info.RipLogVerdict),
+                    HasRipLog = info.HasRipLog,
                 };
             }
         }

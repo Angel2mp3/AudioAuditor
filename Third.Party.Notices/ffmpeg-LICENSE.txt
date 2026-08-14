@@ -1,0 +1,33 @@
+FFmpeg
+https://ffmpeg.org
+
+AudioAuditor bundles an FFmpeg executable and uses it ONLY by invoking it as a
+separate program (a child process). AudioAuditor does not link against, statically
+or dynamically, any FFmpeg library. Because of this separation, AudioAuditor's own
+source code remains licensed under the Apache License 2.0, while the bundled FFmpeg
+executable is licensed under the GNU Lesser General Public License, version 2.1 or
+later (LGPL-2.1+).
+
+Some FFmpeg builds may include components under the GPL; the build bundled with
+AudioAuditor is an LGPL build. If a GPL build is substituted, the bundled binary is
+then covered by the GPL.
+
+----------------------------------------------------------------------------------
+WRITTEN OFFER / SOURCE CODE
+----------------------------------------------------------------------------------
+
+The complete corresponding source code for the bundled FFmpeg, and the full text of
+the LGPL-2.1 (and GPL where applicable), are available from the FFmpeg project at:
+
+    https://ffmpeg.org/download.html
+    https://git.ffmpeg.org/ffmpeg.git
+    https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+You may replace the bundled FFmpeg executable with your own compatible build at any
+time — AudioAuditor simply locates and runs an "ffmpeg" executable.
+
+----------------------------------------------------------------------------------
+
+The full GNU Lesser General Public License v2.1 text is distributed with FFmpeg and
+is available at the URL above. This notice documents AudioAuditor's use of FFmpeg and
+the separation that keeps the application under Apache-2.0.

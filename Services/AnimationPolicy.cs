@@ -30,30 +30,17 @@ namespace AudioQualityChecker.Services
             return true;
         }
 
-        // Battery Saver removes motion in an area when its master switch is on AND
-        // (it targets the whole program OR the specific area flag is set). Disabling —
-        // not throttling — keeps every per-area checkbox meaning the same thing and
-        // gives the real power win the mode exists for.
+        // Battery Saver removes ambient motion everywhere its master switch is on.
+        // Disabling — not throttling — gives the real power win the mode exists for.
         private static bool BatterySaverSuppresses(AnimationArea area)
         {
             if (!ThemeManager.BatterySaverEnabled)
                 return false;
-            // Explicit user override: the visualizer can be kept running even when Battery Saver
-            // (incl. "Entire Program") would otherwise suppress it. Checked before the blanket
-            // EntireProgram return so it actually wins.
+            // Explicit user override: the visualizer can be kept running while everything
+            // else is suppressed. It is the only area with an escape hatch.
             if (area == AnimationArea.Visualizer && ThemeManager.BatterySaverKeepVisualizer)
                 return false;
-            if (ThemeManager.BatterySaverEntireProgram)
-                return true;
-            return area switch
-            {
-                AnimationArea.NpBackground => ThemeManager.BatterySaverNpBackground,
-                AnimationArea.Visualizer => ThemeManager.BatterySaverVisualizer,
-                AnimationArea.CoverGlow => ThemeManager.BatterySaverCoverGlow,
-                AnimationArea.Lyrics => ThemeManager.BatterySaverLyrics,
-                AnimationArea.Playbar => ThemeManager.BatterySaverPlaybar,
-                _ => false
-            };
+            return true;
         }
     }
 }

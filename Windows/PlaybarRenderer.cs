@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -15,9 +16,29 @@ namespace AudioQualityChecker
     /// Conventions: <paramref name="pct"/> is play progress 0..1; <paramref name="phaseSeconds"/>
     /// is a continuously increasing time value driving motion (0 = no animation). The played fill
     /// is a thin bar centered vertically in the overlay canvas; BarThickness controls that thickness.
+    ///
+    /// PERF: elements are POOLED per canvas, not rebuilt. This renderer is driven by three loops at
+    /// once — Visualizer_Tick (60 Hz), WaveformAnimation_Tick (30 Hz) and PlayerTimer_Tick (20 Hz) —
+    /// and it used to Children.Clear() and allocate a fresh brush + Rectangle (+ StreamGeometry,
+    /// second brush and Path for Wave) on every one of those calls. Now each canvas keeps its shapes
+    /// and only mutates Width / Canvas.Top / brush.Color / geometry, matching how the spectrogram
+    /// (Spectrogram.cs) and mini visualizer (MiniVisualizerRenderer.cs) already work. Output is
+    /// pixel-identical.
     /// </summary>
     public partial class MainWindow
     {
+        /// <summary>Pooled visuals for one playbar canvas.</summary>
+        private sealed class PlaybarVisuals
+        {
+            public PlaybarAnimationStyle Style = (PlaybarAnimationStyle)(-1); // force first build
+            public Rectangle? Bar;
+            public SolidColorBrush? BarBrush;
+            public Path? WavePath;
+            public SolidColorBrush? WaveBrush;
+        }
+
+        private readonly Dictionary<Canvas, PlaybarVisuals> _playbarVisuals = new();
+
         private void RenderPlaybar(
             Canvas canvas,
             double pct,
@@ -37,18 +58,45 @@ namespace AudioQualityChecker
             // returned canvas reads as a flicker). Only clear when there's truly nothing to draw.
             if (w < 1 || h < 1 || fillW < 1)
             {
-                if (canvas.Children.Count > 0) canvas.Children.Clear();
+                if (canvas.Children.Count > 0)
+                {
+                    canvas.Children.Clear();
+                    _playbarVisuals.Remove(canvas);
+                }
                 return;
             }
 
-            canvas.Children.Clear();
+            // Several callers clear these canvases directly (MainWindow.Waveform.cs, NpCore.cs,
+            // MiniPlayerWindow.xaml.cs) to blank the playbar on stop/hide. That would leave the pool
+            // holding elements no longer in the tree, so every later frame would mutate orphans and
+            // draw nothing. Detecting it here keeps the fix in one place instead of in every caller.
+            if (canvas.Children.Count == 0)
+                _playbarVisuals.Remove(canvas);
+
+            if (!_playbarVisuals.TryGetValue(canvas, out var visuals))
+            {
+                visuals = new PlaybarVisuals();
+                _playbarVisuals[canvas] = visuals;
+            }
+
+            // Only tear down when the STYLE changes — a style switch changes which elements exist.
+            if (visuals.Style != style)
+            {
+                canvas.Children.Clear();
+                visuals.Bar = null;
+                visuals.BarBrush = null;
+                visuals.WavePath = null;
+                visuals.WaveBrush = null;
+                visuals.Style = style;
+            }
+
             canvas.ClipToBounds = false;
 
             switch (style)
             {
-                case PlaybarAnimationStyle.Wave: RenderWave(canvas, w, fillW, h, accent, phaseSeconds); break;
+                case PlaybarAnimationStyle.Wave: RenderWave(canvas, visuals, w, fillW, h, accent, phaseSeconds); break;
                 case PlaybarAnimationStyle.Regular:
-                default: RenderRegular(canvas, fillW, h, accent); break;
+                default: RenderRegular(canvas, visuals, fillW, h, accent); break;
             }
         }
 
@@ -56,50 +104,56 @@ namespace AudioQualityChecker
         /// reads as a clean continuation of the track into the playhead dot.</summary>
         private const double BarThickness = 4.0;
 
-        private static void RenderRegular(Canvas canvas, double fillW, double h, Color accent)
+        /// <summary>Ensures the played accent bar exists and matches the current size/colour.</summary>
+        private static void UpdateBar(Canvas canvas, PlaybarVisuals visuals, double fillW, double h, Color accent)
+        {
+            double barH = Math.Min(BarThickness, h);
+            var opaque = Color.FromArgb(255, accent.R, accent.G, accent.B);
+
+            if (visuals.Bar == null)
+            {
+                // Not frozen: the colour is mutated in place each frame instead of reallocated.
+                visuals.BarBrush = new SolidColorBrush(opaque);
+                visuals.Bar = new Rectangle
+                {
+                    Fill = visuals.BarBrush,
+                    IsHitTestVisible = false
+                };
+                canvas.Children.Add(visuals.Bar);
+            }
+            else if (visuals.BarBrush!.Color != opaque)
+            {
+                visuals.BarBrush.Color = opaque;
+            }
+
+            var bar = visuals.Bar;
+            if (bar.Width != fillW) bar.Width = fillW;
+            if (bar.Height != barH)
+            {
+                bar.Height = barH;
+                bar.RadiusX = barH / 2;
+                bar.RadiusY = barH / 2;
+            }
+            Canvas.SetLeft(bar, 0);
+            Canvas.SetTop(bar, (h - barH) / 2);
+        }
+
+        private static void RenderRegular(Canvas canvas, PlaybarVisuals visuals, double fillW, double h, Color accent)
         {
             // A plain progress bar: a thin accent fill, centered on the track, with rounded ends.
             // No animation — it just grows as playback advances and connects into the playhead dot.
-            double barH = Math.Min(BarThickness, h);
-            var fill = new SolidColorBrush(Color.FromArgb(255, accent.R, accent.G, accent.B));
-            fill.Freeze();
-            var rect = new Rectangle
-            {
-                Width = fillW,
-                Height = barH,
-                RadiusX = barH / 2,
-                RadiusY = barH / 2,
-                Fill = fill,
-                IsHitTestVisible = false
-            };
-            Canvas.SetLeft(rect, 0);
-            Canvas.SetTop(rect, (h - barH) / 2);
-            canvas.Children.Add(rect);
+            UpdateBar(canvas, visuals, fillW, h, accent);
         }
 
-        private static void RenderWave(Canvas canvas, double w, double fillW, double h,
+        private static void RenderWave(Canvas canvas, PlaybarVisuals visuals, double w, double fillW, double h,
             Color accent, double phaseSeconds)
         {
             double mid = h / 2;
-            double barH = Math.Min(BarThickness, h);
 
             // Base filled progress bar FIRST, so the played area reads as a normal accent bar
             // instead of exposing the dark surface behind the transparent slider track (the
             // "black playbar" bug). The wave is then drawn on top as an accent.
-            var fill = new SolidColorBrush(Color.FromArgb(255, accent.R, accent.G, accent.B));
-            fill.Freeze();
-            var baseBar = new Rectangle
-            {
-                Width = fillW,
-                Height = barH,
-                RadiusX = barH / 2,
-                RadiusY = barH / 2,
-                Fill = fill,
-                IsHitTestVisible = false
-            };
-            Canvas.SetLeft(baseBar, 0);
-            Canvas.SetTop(baseBar, (h - barH) / 2);
-            canvas.Children.Add(baseBar);
+            UpdateBar(canvas, visuals, fillW, h, accent);
 
             // A smooth sine stroke centered vertically, in a brighter tint so it stands out over
             // the filled bar. Stroke thickness and amplitude scale to the bar height; step count
@@ -124,18 +178,31 @@ namespace AudioQualityChecker
             }
             geometry.Freeze();
 
-            var stroke = new SolidColorBrush(LightenColor(accent, 0.55));
-            stroke.Freeze();
-            canvas.Children.Add(new Path
+            // The geometry genuinely changes every frame (the sine phase moves), but the Path and
+            // its brush do not — only Data and StrokeThickness are reassigned.
+            var strokeColor = LightenColor(accent, 0.55);
+            if (visuals.WavePath == null)
             {
-                Data = geometry,
-                Stroke = stroke,
-                StrokeThickness = Math.Clamp(h * 0.3, 2, 5),
-                StrokeStartLineCap = PenLineCap.Round,
-                StrokeEndLineCap = PenLineCap.Round,
-                StrokeLineJoin = PenLineJoin.Round,
-                IsHitTestVisible = false
-            });
+                visuals.WaveBrush = new SolidColorBrush(strokeColor);
+                visuals.WavePath = new Path
+                {
+                    Stroke = visuals.WaveBrush,
+                    StrokeStartLineCap = PenLineCap.Round,
+                    StrokeEndLineCap = PenLineCap.Round,
+                    StrokeLineJoin = PenLineJoin.Round,
+                    IsHitTestVisible = false
+                };
+                canvas.Children.Add(visuals.WavePath);
+            }
+            else if (visuals.WaveBrush!.Color != strokeColor)
+            {
+                visuals.WaveBrush.Color = strokeColor;
+            }
+
+            double thickness = Math.Clamp(h * 0.3, 2, 5);
+            if (visuals.WavePath.StrokeThickness != thickness)
+                visuals.WavePath.StrokeThickness = thickness;
+            visuals.WavePath.Data = geometry;
         }
 
         /// <summary>Blends a color toward white by <paramref name="amount"/> (0..1), preserving alpha.</summary>

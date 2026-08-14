@@ -51,7 +51,7 @@ namespace AudioQualityChecker
             // Multiple files — pick a folder
             var dlg = new OpenFolderDialog { Title = "Select folder for spectrograms" };
             if (dlg.ShowDialog() == true)
-                _ = SaveSpectrogramsToFolderAsync(selected, dlg.FolderName);
+                SaveSpectrogramsToFolderAsync(selected, dlg.FolderName).Observe(nameof(SaveSpectrogramsToFolderAsync));
         }
 
         private void SpectrogramImage_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -238,7 +238,10 @@ namespace AudioQualityChecker
                             System.Globalization.CultureInfo.InvariantCulture,
                             FlowDirection.LeftToRight, labelTypeFace, 9,
                             new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)), 96);
-                        dc.DrawText(ftRef, new System.Windows.Point(leftMargin + spectWidth - ftRef.Width - 2, py - ftRef.Height - 1));
+                        // rawW, not spectWidth: the generator caps its column count to what the
+                        // audio can actually fill, so the bitmap is usually narrower than requested
+                        // and a label placed off spectWidth lands in the dB strip or off the edge.
+                        dc.DrawText(ftRef, new System.Windows.Point(leftMargin + rawW - ftRef.Width - 2, py - ftRef.Height - 1));
                     }
                 }
             }
@@ -278,7 +281,13 @@ namespace AudioQualityChecker
 
                 // Throttle to half the configured concurrency (spectrograms are memory-heavy)
                 int maxParallel = Math.Max(1, ThemeManager.MaxConcurrency / 2);
-                var spectSemaphore = new SemaphoreSlim(maxParallel);
+                using var spectSemaphore = new SemaphoreSlim(maxParallel);
+
+                // Resolved up front, single-threaded. The old inline `while (File.Exists(...))`
+                // loop only worked because the export accidentally ran one file at a time; two
+                // workers checking the same name concurrently would both see it free and one
+                // would overwrite the other.
+                var outputPaths = ResolveSpectrogramOutputPaths(filesToProcess, folder);
 
                 AnalysisProgressPanel.Visibility = Visibility.Visible;
                 AnalysisProgress.Maximum = total;
@@ -287,25 +296,18 @@ namespace AudioQualityChecker
                 _analysisStartTime = DateTime.UtcNow;
                 StatusText.Text = $"Saving spectrograms 0 / {total}...";
 
-                foreach (var file in filesToProcess)
+                // Was a `foreach` that awaited the whole body before starting the next file, so the
+                // semaphore never held more than one permit and the export ran strictly serially no
+                // matter what the concurrency setting said.
+                var exportTasks = filesToProcess.Select(async (file, index) =>
                 {
                     await spectSemaphore.WaitAsync();
                     try
                     {
                         // Wait if memory usage exceeds configured limit
                         await ThemeManager.WaitForMemoryAsync();
-                        string outPath = IOPath.Combine(folder,
-                            $"{IOPath.GetFileNameWithoutExtension(file.FileName)}_spectrogram.png");
 
-                        // Handle duplicate names
-                        int i = 1;
-                        while (File.Exists(outPath))
-                        {
-                            outPath = IOPath.Combine(folder,
-                                $"{IOPath.GetFileNameWithoutExtension(file.FileName)}_spectrogram_{i++}.png");
-                        }
-
-                        string savePath = outPath;
+                        string savePath = outputPaths[index];
                         var fileRef = file;
 
                         // Generate spectrogram on background thread (CPU-heavy)
@@ -326,8 +328,12 @@ namespace AudioQualityChecker
 
                         if (rawBitmap != null)
                         {
-                            // Render with labels on UI thread (DrawingVisual requires STA)
-                            var bitmap = RenderSpectrogramWithLabels(fileRef, 1800, 600, rawBitmap);
+                            // Render with labels on the UI thread (DrawingVisual requires STA).
+                            // Explicit marshal rather than relying on the await above resuming on
+                            // the dispatcher — that only holds while this runs from a UI context.
+                            var bitmap = await Dispatcher.InvokeAsync(
+                                () => RenderSpectrogramWithLabels(fileRef, 1800, 600, rawBitmap,
+                                    ThemeManager.SpectrogramHiFiMode, ThemeManager.SpectrogramMagmaColormap));
                             if (bitmap != null)
                             {
                                 // Save to disk on background thread
@@ -339,13 +345,13 @@ namespace AudioQualityChecker
                                     encoder.Save(stream);
                                 });
                             }
-                            else failed++;
+                            else Interlocked.Increment(ref failed);
                         }
-                        else failed++;
+                        else Interlocked.Increment(ref failed);
                     }
                     catch
                     {
-                        failed++;
+                        Interlocked.Increment(ref failed);
                     }
                     finally
                     {
@@ -353,10 +359,15 @@ namespace AudioQualityChecker
                     }
 
                     var c = Interlocked.Increment(ref completed);
-                    AnalysisProgress.Value = c;
-                    StatusText.Text = $"Saving spectrograms {c} / {total}...";
-                    UpdateAnalysisEta(c, total);
-                }
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        AnalysisProgress.Value = c;
+                        StatusText.Text = $"Saving spectrograms {c} / {total}...";
+                        UpdateAnalysisEta(c, total);
+                    });
+                });
+
+                await Task.WhenAll(exportTasks);
 
                 AnalysisProgressPanel.Visibility = Visibility.Collapsed;
                 AnalysisEtaText.Text = "";
@@ -401,6 +412,32 @@ namespace AudioQualityChecker
         //  Multi-file spectrogram export (folder)
         // ═══════════════════════════════════════════
 
+        /// <summary>
+        /// One output PNG path per input file, de-duplicated against both the folder's existing
+        /// contents and the names already claimed earlier in this batch. Resolved single-threaded
+        /// before any export starts, because <c>File.Exists</c> is not a reservation — under
+        /// parallel export two workers see the same name free and one silently overwrites the other.
+        /// </summary>
+        private static List<string> ResolveSpectrogramOutputPaths(List<AudioFileInfo> files, string folder)
+        {
+            var claimed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var paths = new List<string>(files.Count);
+
+            foreach (var file in files)
+            {
+                string stem = IOPath.GetFileNameWithoutExtension(file.FileName);
+                string candidate = IOPath.Combine(folder, $"{stem}_spectrogram.png");
+                int n = 1;
+                while (claimed.Contains(candidate) || File.Exists(candidate))
+                    candidate = IOPath.Combine(folder, $"{stem}_spectrogram_{n++}.png");
+
+                claimed.Add(candidate);
+                paths.Add(candidate);
+            }
+
+            return paths;
+        }
+
         private async Task SaveSpectrogramsToFolderAsync(List<AudioFileInfo> files, string folder)
         {
             int total = files.Count;
@@ -408,7 +445,11 @@ namespace AudioQualityChecker
             int failed = 0;
 
             int maxParallel = Math.Max(1, ThemeManager.MaxConcurrency / 2);
-            var sem = new SemaphoreSlim(maxParallel);
+            using var sem = new SemaphoreSlim(maxParallel);
+
+            // This export has always run in parallel, so its inline File.Exists loop was a race:
+            // two workers could pick the same free name and one would overwrite the other.
+            var outputPaths = ResolveSpectrogramOutputPaths(files, folder);
 
             AnalysisProgressPanel.Visibility = Visibility.Visible;
             AnalysisProgress.Maximum = total;
@@ -416,7 +457,7 @@ namespace AudioQualityChecker
             _analysisStartTime = DateTime.UtcNow;
             StatusText.Text = $"Saving spectrograms 0 / {total}...";
 
-            var tasks = files.Select(async file =>
+            var tasks = files.Select(async (file, index) =>
             {
                 await sem.WaitAsync();
                 try
@@ -424,12 +465,7 @@ namespace AudioQualityChecker
                     await ThemeManager.WaitForMemoryAsync();
                     int exportWidth  = Math.Clamp((int)(file.DurationSeconds * 60.0), 800, 16000);
                     int exportHeight = 800;
-                    string outPath = IOPath.Combine(folder,
-                        $"{IOPath.GetFileNameWithoutExtension(file.FileName)}_spectrogram.png");
-                    int n = 1;
-                    while (File.Exists(outPath))
-                        outPath = IOPath.Combine(folder,
-                            $"{IOPath.GetFileNameWithoutExtension(file.FileName)}_spectrogram_{n++}.png");
+                    string outPath = outputPaths[index];
 
                     var raw = await Task.Run(() => SpectrogramGenerator.Generate(
                         file.FilePath, exportWidth, exportHeight,
@@ -439,8 +475,11 @@ namespace AudioQualityChecker
 
                     if (raw != null)
                     {
-                        var bitmap = RenderSpectrogramWithLabels(file, exportWidth, exportHeight, raw,
-                            ThemeManager.SpectrogramHiFiMode, ThemeManager.SpectrogramMagmaColormap);
+                        // DrawingVisual requires STA — marshal explicitly rather than assuming the
+                        // await above resumed on the dispatcher.
+                        var bitmap = await Dispatcher.InvokeAsync(() =>
+                            RenderSpectrogramWithLabels(file, exportWidth, exportHeight, raw,
+                                ThemeManager.SpectrogramHiFiMode, ThemeManager.SpectrogramMagmaColormap));
                         if (bitmap != null)
                         {
                             string save = outPath;

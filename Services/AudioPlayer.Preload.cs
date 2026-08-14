@@ -21,11 +21,17 @@ namespace AudioQualityChecker.Services
         private readonly object _preopenLock = new();
         private DecoderResult? _preopenedResult;
         private string? _preopenedPath;
+        // Path currently being opened. _preopenedPath is only set AFTER TryOpen returns, so without
+        // this a second caller arriving mid-open sees "not warm yet" and starts its own duplicate
+        // open of the same file. For FLAC that open is a full-file decode, so a burst of callers
+        // could pile identical decodes onto the thread pool until the app stopped responding.
+        private string? _preopenInFlightPath;
 
         /// <summary>
         /// Pre-opens the decoder for <paramref name="filePath"/> so a subsequent Play() of the same
         /// path starts almost instantly. Safe to call repeatedly / from a background thread; a no-op
-        /// if already prepared. Preparing a different path disposes the previous one.
+        /// if already prepared or if an open for the same path is already running. Preparing a
+        /// different path disposes the previous one.
         /// </summary>
         public void PrepareNextDecoder(string filePath)
         {
@@ -35,23 +41,37 @@ namespace AudioQualityChecker.Services
             {
                 if (string.Equals(_preopenedPath, filePath, StringComparison.OrdinalIgnoreCase))
                     return; // already warm
+                if (string.Equals(_preopenInFlightPath, filePath, StringComparison.OrdinalIgnoreCase))
+                    return; // an open for this exact path is already running
+                _preopenInFlightPath = filePath;
             }
 
-            // Open OUTSIDE the lock — decoder open can be slow and we never want to stall the audio
-            // thread (which takes _preopenLock when adopting).
-            if (!AudioDecoderFactory.TryOpen(filePath, out var result))
-                return;
-
-            lock (_preopenLock)
+            try
             {
-                DisposePreopenedLocked(); // drop any stale/previous prepared decoder
-                if (_disposed)
-                {
-                    DisposeDecoderResult(result);
+                // Open OUTSIDE the lock — decoder open can be slow and we never want to stall the
+                // audio thread (which takes _preopenLock when adopting).
+                if (!AudioDecoderFactory.TryOpen(filePath, out var result))
                     return;
+
+                lock (_preopenLock)
+                {
+                    DisposePreopenedLocked(); // drop any stale/previous prepared decoder
+                    if (_disposed)
+                    {
+                        result.Dispose();
+                        return;
+                    }
+                    _preopenedResult = result;
+                    _preopenedPath = filePath;
                 }
-                _preopenedResult = result;
-                _preopenedPath = filePath;
+            }
+            finally
+            {
+                lock (_preopenLock)
+                {
+                    if (string.Equals(_preopenInFlightPath, filePath, StringComparison.OrdinalIgnoreCase))
+                        _preopenInFlightPath = null;
+                }
             }
         }
 
@@ -90,29 +110,9 @@ namespace AudioQualityChecker.Services
         private void DisposePreopenedLocked()
         {
             if (_preopenedResult is { } pre)
-                DisposeDecoderResult(pre);
+                pre.Dispose();
             _preopenedResult = null;
             _preopenedPath = null;
-        }
-
-        private static void DisposeDecoderResult(DecoderResult d)
-        {
-            // A single underlying object can appear in several slots (e.g. Opus is both
-            // WaveStreamReader and ExtraDisposable). Dispose each distinct instance once.
-            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            void Dispose(IDisposable? x)
-            {
-                if (x != null && seen.Add(x))
-                {
-                    try { x.Dispose(); } catch { }
-                }
-            }
-
-            Dispose(d.Reader);
-            Dispose(d.MfReader);
-            Dispose(d.WaveStreamReader as IDisposable);
-            Dispose(d.ExtraDisposable);
-            Dispose(d.ExtraDisposable2);
         }
     }
 }

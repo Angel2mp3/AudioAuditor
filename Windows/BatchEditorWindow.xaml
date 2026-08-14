@@ -1,0 +1,973 @@
+﻿<Window x:Class="AudioQualityChecker.BatchEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:AudioQualityChecker"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Height="760" Width="1120"
+        MinHeight="560" MinWidth="860"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBg}"
+        Foreground="{DynamicResource TextPrimary}"
+        AllowsTransparency="True">
+
+    <Window.Resources>
+        <local:CoverThumbConverter x:Key="CoverThumbConverter"/>
+
+        <!-- ══════════ Themed Scrollbar ══════════ -->
+        <!-- ══════════ Themed ComboBox ══════════ -->
+        <ControlTemplate x:Key="ComboBoxToggleButton" TargetType="ToggleButton">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="22"/>
+                </Grid.ColumnDefinitions>
+                <Border x:Name="Border" Grid.ColumnSpan="2"
+                        Background="{DynamicResource InputBg}"
+                        BorderBrush="{DynamicResource ButtonBorder}"
+                        BorderThickness="1" CornerRadius="3"/>
+                <Path x:Name="Arrow" Grid.Column="1"
+                      Data="M 0 0 L 4 4 L 8 0" Stroke="{DynamicResource TextMuted}"
+                      StrokeThickness="1.5" HorizontalAlignment="Center"
+                      VerticalAlignment="Center" IsHitTestVisible="False"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Template="{StaticResource ComboBoxToggleButton}"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                              RelativeSource={RelativeSource TemplatedParent}}"
+                                          Focusable="False" ClickMode="Press"/>
+                            <ContentPresenter IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              Margin="8,0,24,0" VerticalAlignment="Center"/>
+                            <Popup IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Placement="Bottom" AllowsTransparency="True"
+                                   Focusable="False" PopupAnimation="Slide">
+                                <Border Background="{DynamicResource GlassFloatingBg}"
+                                        BorderBrush="{DynamicResource GlassBorderBrush}"
+                                        BorderThickness="1" CornerRadius="3"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="320" Margin="0,2,0,0">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <StackPanel IsItemsHost="True"
+                                                    KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelectionBg}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RowHoverBg}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ══════════ Themed TextBox ══════════ -->
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource InputBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="2,0" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ══════════ Themed CheckBox ══════════ -->
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Background="Transparent">
+                            <Border x:Name="checkBorder" Width="16" Height="16"
+                                    Background="{DynamicResource InputBg}"
+                                    BorderBrush="{DynamicResource ButtonBorder}"
+                                    BorderThickness="1" CornerRadius="3"
+                                    VerticalAlignment="Center" Margin="0,0,6,0">
+                                <TextBlock x:Name="checkMark" Text="&#xE73E;"
+                                           FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                           Foreground="{DynamicResource AccentColor}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="Collapsed"/>
+                            </Border>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="checkMark" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="checkBorder" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="checkBorder" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ══════════ Themed RadioButton ══════════ -->
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Background="Transparent">
+                            <Grid Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center">
+                                <Ellipse x:Name="outer" Stroke="{DynamicResource ButtonBorder}"
+                                         StrokeThickness="1" Fill="{DynamicResource InputBg}"/>
+                                <Ellipse x:Name="dot" Width="8" Height="8"
+                                         Fill="{DynamicResource AccentColor}" Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="dot" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="outer" Property="Stroke" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="outer" Property="Stroke" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ══════════ Buttons ══════════ -->
+        <!-- Implicit themed button (footer secondary/tertiary, "Choose image") -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ButtonBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ButtonHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Accent primary button -->
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="18,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Flat icon button (window close) -->
+        <Style x:Key="IconButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ButtonHover}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ══════════ Themed TabControl ══════════ -->
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="bd" Background="Transparent" Padding="16,8" Margin="0,0,4,0"
+                                CornerRadius="6,6,0,0" BorderThickness="0,0,0,2" BorderBrush="Transparent">
+                            <ContentPresenter ContentSource="Header" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource GlassPanelBg}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ══════════ Themed DataGrid ══════════ -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="{DynamicResource PanelBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="RowBackground" Value="{DynamicResource GridRowBg}"/>
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource GridAltRowBg}"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="RowHeaderWidth" Value="0"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource GlassPanelBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="8,7"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+
+        <Style TargetType="DataGridCell">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource SelectionBg}"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{DynamicResource GlassFloatingBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}"
+            BorderThickness="1" CornerRadius="8">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="10"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" MouseLeftButtonDown="Header_MouseDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" FontSize="17"
+                               Foreground="{DynamicResource AccentColor}" Margin="0,0,8,0"/>
+                    <StackPanel>
+                        <TextBlock Text="Batch Editor" FontSize="19" FontWeight="Bold"
+                                   FontFamily="{DynamicResource AppFontFamily}" Foreground="{DynamicResource TextPrimary}"/>
+                        <TextBlock x:Name="FileCountText" FontSize="12" FontFamily="{DynamicResource AppFontFamily}"
+                                   Foreground="{DynamicResource TextMuted}"/>
+                    </StackPanel>
+                </StackPanel>
+                <Button Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Click="Close_Click" Style="{StaticResource IconButton}"/>
+            </Grid>
+
+            <TabControl Grid.Row="2" x:Name="Tabs"
+                        Background="Transparent" BorderThickness="0"
+                        Foreground="{DynamicResource TextPrimary}"
+                        SelectionChanged="Tabs_SelectionChanged">
+
+                <!-- ══════════ MANUAL EDIT ══════════ -->
+                <TabItem Header="Manual Edit">
+                    <Grid Margin="4,12,4,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="280"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Field editors -->
+                        <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock Text="Only checked fields are written. Others are left untouched on every file."
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                           TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <CheckBox x:Name="MeSetTitle" Grid.Row="0" Grid.Column="0" Content="Title" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeTitle" Grid.Row="0" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="MeSetArtist" Grid.Row="1" Grid.Column="0" Content="Artist" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeArtist" Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="MeSetAlbum" Grid.Row="2" Grid.Column="0" Content="Album" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeAlbum" Grid.Row="2" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="MeSetAlbumArtist" Grid.Row="3" Grid.Column="0" Content="Album artist" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeAlbumArtist" Grid.Row="3" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="MeSetYear" Grid.Row="4" Grid.Column="0" Content="Year" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeYear" Grid.Row="4" Grid.Column="1" Margin="0,0,0,8" MaxLength="4"/>
+
+                                    <CheckBox x:Name="MeSetGenre" Grid.Row="5" Grid.Column="0" Content="Genre" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeGenre" Grid.Row="5" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="MeSetComposer" Grid.Row="6" Grid.Column="0" Content="Composer" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeComposer" Grid.Row="6" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="MeSetDisc" Grid.Row="7" Grid.Column="0" Content="Disc" Margin="0,0,8,8" VerticalAlignment="Center"/>
+                                    <TextBox  x:Name="MeDisc" Grid.Row="7" Grid.Column="1" Margin="0,0,0,8"/>
+
+                                    <CheckBox x:Name="MeSetComment" Grid.Row="8" Grid.Column="0" Content="Comment" Margin="0,0,8,8" VerticalAlignment="Top"/>
+                                    <TextBox  x:Name="MeComment" Grid.Row="8" Grid.Column="1" Margin="0,0,0,8"
+                                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="48"/>
+                                </Grid>
+
+                                <!-- Track numbers -->
+                                <TextBlock Text="Track numbers" FontWeight="SemiBold" Margin="0,8,0,4"
+                                           Foreground="{DynamicResource TextPrimary}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <ComboBox x:Name="MeTrackMode" Width="220" SelectedIndex="0"
+                                              SelectionChanged="MeTrackMode_Changed">
+                                        <ComboBoxItem Content="Don't change"/>
+                                        <ComboBoxItem Content="Set all to same number"/>
+                                        <ComboBoxItem Content="Auto-number (in list order)"/>
+                                    </ComboBox>
+                                    <TextBlock x:Name="MeTrackLabel" Text="Number:" VerticalAlignment="Center"
+                                               Margin="12,0,6,0" Foreground="{DynamicResource TextSecondary}" Visibility="Collapsed"/>
+                                    <TextBox x:Name="MeTrackValue" Width="70" Visibility="Collapsed"/>
+                                </StackPanel>
+
+                                <!-- Auto-fill anything still missing, online -->
+                                <Border Background="{DynamicResource GlassPanelBg}" BorderBrush="{DynamicResource GlassBorderBrush}"
+                                        BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,14,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Fill in what's missing" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+                                        <TextBlock Text="Searches online and fills only empty fields, applying high-confidence matches automatically. Other fields are left untouched."
+                                                   Foreground="{DynamicResource TextSecondary}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="MeFillMissing" Content="Fill missing fields online"
+                                                    Click="FillMissing_Click" HorizontalAlignment="Left"/>
+                                            <Button x:Name="MePasteMetadata" Content="Paste metadata…"
+                                                    Click="PasteMetadata_Click" Margin="8,0,0,0" HorizontalAlignment="Left"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <!-- Cover panel -->
+                        <Border Grid.Column="2" Background="{DynamicResource GlassPanelBg}"
+                                BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="Album cover" FontWeight="SemiBold" Margin="0,0,0,8"
+                                           Foreground="{DynamicResource TextPrimary}"/>
+                                <RadioButton x:Name="MeCoverNone" Content="Don't change" IsChecked="True" GroupName="Cover"
+                                             Margin="0,0,0,6" Checked="MeCover_Changed"/>
+                                <RadioButton x:Name="MeCoverFile" Content="Set from image file" GroupName="Cover"
+                                             Margin="0,0,0,6" Checked="MeCover_Changed"/>
+                                <RadioButton x:Name="MeCoverOnline" Content="Fetch online (per album)" GroupName="Cover"
+                                             Margin="0,0,0,6" Checked="MeCover_Changed"/>
+                                <RadioButton x:Name="MeCoverRemove" Content="Remove covers" GroupName="Cover"
+                                             Margin="0,0,0,10" Checked="MeCover_Changed"/>
+                                <Button x:Name="MeChooseImage" Content="Choose image…" Click="ChooseImage_Click"
+                                        Margin="0,0,0,8" HorizontalAlignment="Left" IsEnabled="False"/>
+                                <Border Background="{DynamicResource PanelBg}" BorderBrush="{DynamicResource BorderColor}"
+                                        BorderThickness="1" CornerRadius="4" Width="220" Height="220"
+                                        HorizontalAlignment="Center">
+                                    <Image x:Name="MeCoverPreview" Stretch="Uniform" Margin="6"/>
+                                </Border>
+                                <TextBlock x:Name="MeCoverInfo" Text="No image selected" FontSize="11"
+                                           Foreground="{DynamicResource TextMuted}" Margin="0,6,0,0"
+                                           HorizontalAlignment="Center" TextWrapping="Wrap"/>
+                                <CheckBox x:Name="MeBackups" Content="Create backups before writing"
+                                          IsChecked="True" Margin="0,14,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </TabItem>
+
+                <!-- ══════════ AUTO-TAG ══════════ -->
+                <TabItem Header="Auto-Tag (online)">
+                    <Grid Margin="4,12,4,4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="12"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="{DynamicResource GlassPanelBg}"
+                                BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="Options" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,6"/>
+                                <WrapPanel Margin="0,0,0,8">
+                                    <CheckBox x:Name="ChkMissingOnly" Content="Missing only" IsChecked="True" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkReplaceCovers" Content="Replace existing covers" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkBackups" Content="Create backups before writing" IsChecked="True" Margin="0,0,16,6"/>
+                                </WrapPanel>
+
+                                <TextBlock Text="Sources" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" Margin="0,2,0,6"/>
+                                <WrapPanel Margin="0,0,0,8">
+                                    <CheckBox x:Name="ChkMusicBrainz" Content="MusicBrainz" IsChecked="True" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkCoverArchive" Content="Cover Art Archive" IsChecked="True" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkDeezer" Content="Deezer" IsChecked="True" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkTheAudioDb" Content="TheAudioDB" IsChecked="True" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkITunes" Content="Apple/iTunes" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkAcoustId" Content="AcoustID" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkDiscogs" Content="Discogs" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkFanart" Content="fanart.tv covers" Margin="0,0,16,6"/>
+                                </WrapPanel>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Discogs token" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,0,6,0"/>
+                                    <TextBox Grid.Column="1" x:Name="DiscogsTokenBox" FontSize="11"/>
+                                    <TextBlock Grid.Column="3" Text="fanart.tv key" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,0,6,0"/>
+                                    <TextBox Grid.Column="4" x:Name="FanartKeyBox" FontSize="11"/>
+                                </Grid>
+
+                                <TextBlock Text="Fields to fill" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" Margin="0,2,0,6"/>
+                                <WrapPanel>
+                                    <CheckBox x:Name="FldTitle" Content="Title" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldArtist" Content="Artist" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldAlbum" Content="Album" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldAlbumArtist" Content="Album artist" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldYear" Content="Year" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldTrack" Content="Track" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldDisc" Content="Disc" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldGenre" Content="Genre" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldComposer" Content="Composer" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldComment" Content="Comment" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldLyrics" Content="Lyrics" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldCopyright" Content="Copyright" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldCover" Content="Cover art" IsChecked="True" Margin="0,0,12,6"/>
+                                    <CheckBox x:Name="FldStreamingLink" Content="Streaming link → Comment" Margin="0,0,12,6"/>
+                                </WrapPanel>
+
+                                <Grid Margin="0,6,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="140"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Link platform" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,0,6,0"/>
+                                    <ComboBox Grid.Column="1" x:Name="CmbStreamingPlatform" SelectedIndex="0" Height="26">
+                                        <ComboBoxItem Content="Deezer"/>
+                                        <ComboBoxItem Content="Apple Music"/>
+                                        <ComboBoxItem Content="Spotify"/>
+                                        <ComboBoxItem Content="YouTube"/>
+                                    </ComboBox>
+                                    <TextBlock Grid.Column="3" Text="Spotify ID / secret" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,0,6,0"/>
+                                    <TextBox Grid.Column="4" x:Name="SpotifyIdBox" FontSize="11"/>
+                                    <TextBox Grid.Column="6" x:Name="SpotifySecretBox" FontSize="11"/>
+                                    <TextBox Grid.Column="8" x:Name="YouTubeKeyBox" FontSize="11"
+                                             ToolTip="YouTube Data API key"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <DataGrid Grid.Row="2" x:Name="ChangesGrid"
+                                  AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" SelectionMode="Extended">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="Apply" Binding="{Binding IsSelected, Mode=TwoWay}" Width="56"/>
+                                <DataGridTemplateColumn Header="Cover" Width="54">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Image Width="40" Height="40" Stretch="UniformToFill" Margin="2"
+                                                   Source="{Binding CoverThumb, Converter={StaticResource CoverThumbConverter}}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="170" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Field" Binding="{Binding Field}" Width="100" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Old" Binding="{Binding OldValue}" Width="160" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="New" Binding="{Binding NewValue}" Width="210" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Provider" Binding="{Binding Provider}" Width="100" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Confidence" Binding="{Binding Confidence, StringFormat={}{0:P0}}" Width="80" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="*" IsReadOnly="True"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
+
+                <!-- ══════════ RENAME ══════════ -->
+                <TabItem Header="Rename">
+                    <Grid Margin="4,12,4,4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                            <RadioButton x:Name="RbManualRename" Content="Manual pattern" IsChecked="True"
+                                         Checked="RenameOption_Changed" Margin="0,0,18,0"/>
+                            <RadioButton x:Name="RbSmartRename" Content="Smart rename"
+                                         Checked="RenameOption_Changed"/>
+                        </StackPanel>
+
+                        <StackPanel x:Name="ManualPanel" Grid.Row="1">
+                            <TextBlock Text="Rename Pattern" FontWeight="SemiBold" FontSize="12"
+                                       Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+                            <TextBox x:Name="PatternBox" FontSize="13" FontFamily="Consolas"
+                                     Text="{}{artist} - {title}" TextChanged="PatternBox_TextChanged"/>
+                            <TextBlock Foreground="{DynamicResource TextMuted}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0">
+                                <Run Text="Tokens: {artist} {title} {album} {albumartist} {year} {track} {track3} {disc} {genre}. Case modifiers: {title:upper} {title:lower} {title:title}"/>
+                            </TextBlock>
+                        </StackPanel>
+
+                        <Grid x:Name="SmartPanel" Grid.Row="1" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Smart Style" FontWeight="SemiBold" FontSize="12"
+                                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmbSmartStyle" SelectedIndex="0" SelectionChanged="RenameOption_Changed">
+                                    <ComboBoxItem Content="Album-safe (recommended)"/>
+                                    <ComboBoxItem Content="Artist - Title"/>
+                                    <ComboBoxItem Content="Title - Artist"/>
+                                    <ComboBoxItem Content="## - Artist - Title"/>
+                                    <ComboBoxItem Content="Album - Artist - Title"/>
+                                    <ComboBoxItem Content="Custom pattern…"/>
+                                </ComboBox>
+                                <TextBox x:Name="SmartCustomPattern" FontFamily="Consolas" Margin="0,6,0,0"
+                                         Visibility="Collapsed" Text="{}{track} - {artist} - {title}"
+                                         TextChanged="PatternBox_TextChanged"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Folder Output" FontWeight="SemiBold" FontSize="12"
+                                           Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmbSmartFolder" SelectedIndex="0" SelectionChanged="RenameOption_Changed">
+                                    <ComboBoxItem Content="Keep current folder"/>
+                                    <ComboBoxItem Content="Artist / Album"/>
+                                    <ComboBoxItem Content="Album"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Transforms + options -->
+                        <WrapPanel Grid.Row="2" Margin="0,10,0,0">
+                            <CheckBox x:Name="ChkOrganizeFolders" Content="Organize into {artist}/{album}/"
+                                      Margin="0,0,16,6" Checked="RenameOption_Changed" Unchecked="RenameOption_Changed"/>
+                            <CheckBox x:Name="ChkSmartIncludeTracks" Content="Include track numbers" IsChecked="True"
+                                      Margin="0,0,16,6" Visibility="Collapsed" Checked="RenameOption_Changed" Unchecked="RenameOption_Changed"
+                                      ToolTip="Uncheck to remove the leading track number (01, 1, 30…) from the file name. This only affects the file name — the track-number tag in the metadata is left untouched."/>
+                            <CheckBox x:Name="ChkSmartAppendNumbers" Content="Suffix duplicate targets"
+                                      Margin="0,0,16,6" Visibility="Collapsed" Checked="RenameOption_Changed" Unchecked="RenameOption_Changed"/>
+                            <CheckBox x:Name="ChkSmartRenameClean" Content="Rename already-clean files"
+                                      Margin="0,0,16,6" Visibility="Collapsed" Checked="RenameOption_Changed" Unchecked="RenameOption_Changed"/>
+                            <TextBlock Text="Track pad:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,4,6"/>
+                            <ComboBox x:Name="CmbTrackPad" Width="56" SelectedIndex="1" Margin="0,0,16,6"
+                                      SelectionChanged="RenameOption_Changed">
+                                <ComboBoxItem Content="1"/>
+                                <ComboBoxItem Content="2"/>
+                                <ComboBoxItem Content="3"/>
+                            </ComboBox>
+                            <TextBlock Text="Find:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,4,6"/>
+                            <TextBox x:Name="FindBox" Width="120" Margin="0,0,8,6" TextChanged="PatternBox_TextChanged"/>
+                            <TextBlock Text="Replace:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,4,6"/>
+                            <TextBox x:Name="ReplaceBox" Width="120" Margin="0,0,8,6" TextChanged="PatternBox_TextChanged"/>
+                            <TextBlock Text="Case:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,4,6"/>
+                            <ComboBox x:Name="CmbNameCase" Width="84" SelectedIndex="0" Margin="0,0,12,6"
+                                      SelectionChanged="RenameOption_Changed">
+                                <ComboBoxItem Content="As-is"/>
+                                <ComboBoxItem Content="lower"/>
+                                <ComboBoxItem Content="UPPER"/>
+                                <ComboBoxItem Content="Title"/>
+                            </ComboBox>
+                            <TextBlock Text="Spaces:" VerticalAlignment="Center" Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,4,6"/>
+                            <ComboBox x:Name="CmbSpaceMode" Width="110" SelectedIndex="0" Margin="0,0,12,6"
+                                      SelectionChanged="RenameOption_Changed">
+                                <ComboBoxItem Content="Keep"/>
+                                <ComboBoxItem Content="Underscores"/>
+                                <ComboBoxItem Content="Spaces"/>
+                            </ComboBox>
+                            <CheckBox x:Name="ChkStripFeaturing" Content="Strip (feat. …)" Margin="0,0,16,6"
+                                      Checked="RenameOption_Changed" Unchecked="RenameOption_Changed"/>
+                        </WrapPanel>
+
+                        <DataGrid Grid.Row="3" x:Name="PreviewGrid" Margin="0,10,0,0"
+                                  AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  CellEditEnding="PreviewGrid_CellEditEnding">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Current Name" Binding="{Binding CurrentName}" Width="260" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="→" Binding="{Binding Arrow}" Width="28" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="New Name (editable)" Binding="{Binding NewName}" Width="300"/>
+                                <DataGridTextColumn Header="Confidence" Binding="{Binding Confidence}" Width="80" IsReadOnly="True"/>
+                                <DataGridTextColumn Header="Reason" Binding="{Binding Reason}" Width="*" IsReadOnly="True"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
+
+                <!-- ══════════ CONVERT ══════════ -->
+                <TabItem Header="Convert">
+                    <Grid Margin="4,12,4,4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="12"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="{DynamicResource GlassPanelBg}"
+                                BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="Convert the selected files to another format. Tags and embedded cover art are carried over where the target format supports them."
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="160"/>
+                                        <ColumnDefinition Width="24"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="180"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Target format" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,8,0"/>
+                                    <ComboBox Grid.Column="1" x:Name="CmbConvertFormat" SelectedIndex="0"
+                                              SelectionChanged="ConvertFormat_Changed">
+                                        <ComboBoxItem Content="MP3"/>
+                                        <ComboBoxItem Content="FLAC"/>
+                                        <ComboBoxItem Content="WAV"/>
+                                        <ComboBoxItem Content="AAC (.m4a)"/>
+                                        <ComboBoxItem Content="OGG Vorbis"/>
+                                        <ComboBoxItem Content="Opus"/>
+                                        <ComboBoxItem Content="WMA"/>
+                                        <ComboBoxItem Content="AIFF"/>
+                                    </ComboBox>
+                                    <TextBlock Grid.Column="3" x:Name="ConvertQualityLabel" Text="Quality (VBR)" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,8,0"/>
+                                    <ComboBox Grid.Column="4" x:Name="CmbConvertQuality" SelectedIndex="0"/>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="Output folder" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,0,8,0"/>
+                                    <TextBox Grid.Column="1" x:Name="ConvertOutputBox"
+                                             ToolTip="Leave empty to write next to each source file."/>
+                                    <Button Grid.Column="3" Content="Browse…" Click="ConvertBrowse_Click"/>
+                                </Grid>
+
+                                <WrapPanel>
+                                    <CheckBox x:Name="ChkConvertKeepMetadata" Content="Keep metadata &amp; cover art" IsChecked="True" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkConvertOverwrite" Content="Overwrite existing files" Margin="0,0,16,6"/>
+                                    <CheckBox x:Name="ChkConvertDeleteOriginal" Content="Delete originals after converting" Margin="0,0,16,6"/>
+                                </WrapPanel>
+
+                                <StackPanel x:Name="ConvertFfmpegWarning" Margin="0,8,0,0" Visibility="Collapsed">
+                                    <TextBlock FontSize="12" TextWrapping="Wrap" Foreground="#FFE0A030"
+                                               Text="ffmpeg was not found, so conversion is disabled. Download an LGPL build and drop ffmpeg.exe into the folder below, then click Re-check."/>
+                                    <TextBlock x:Name="ConvertFfmpegPath" Margin="0,4,0,0" FontSize="11"
+                                               FontFamily="Consolas" TextWrapping="Wrap" Opacity="0.85"/>
+                                    <WrapPanel Margin="0,6,0,0">
+                                        <Button x:Name="BtnFfmpegDownload" Content="Get ffmpeg…" Margin="0,0,8,0"
+                                                Padding="10,4" Click="FfmpegDownload_Click"/>
+                                        <Button x:Name="BtnFfmpegFolder" Content="Open folder" Margin="0,0,8,0"
+                                                Padding="10,4" Click="FfmpegOpenFolder_Click"/>
+                                        <Button x:Name="BtnFfmpegRecheck" Content="Re-check" Padding="10,4"
+                                                Click="FfmpegRecheck_Click"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <DataGrid Grid.Row="2" x:Name="ConvertGrid"
+                                  AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="File" Binding="{Binding CurrentName}" Width="320"/>
+                                <DataGridTextColumn Header="→" Binding="{Binding Arrow}" Width="28"/>
+                                <DataGridTextColumn Header="New Name" Binding="{Binding NewName}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
+
+                <!-- ══════════ CLEAN UP ══════════ -->
+                <TabItem Header="Clean Up">
+                    <Grid Margin="4,12,4,4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="12"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="{DynamicResource GlassPanelBg}"
+                                BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="Strip download / source / sponsor junk — &quot;Downloaded from …&quot;, &quot;Ripped using …&quot;, bare website names and promo lines — from your tags. Only the junk span is removed; the rest of the text is kept, and a title is never emptied. Preview shows exactly what changes before anything is written."
+                                           Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <CheckBox x:Name="ChkCleanComment" Content="Remove junk from Comments" IsChecked="True"
+                                          Margin="0,0,0,6" Checked="CleanupOption_Changed" Unchecked="CleanupOption_Changed"/>
+                                <CheckBox x:Name="ChkCleanTitle" Content="Remove junk from Titles" IsChecked="True"
+                                          Margin="0,0,0,6" Checked="CleanupOption_Changed" Unchecked="CleanupOption_Changed"/>
+                                <CheckBox x:Name="ChkRemoveAllComments" Content="Remove ALL comments entirely (ignores junk detection)"
+                                          Margin="0,0,0,6" Checked="CleanupOption_Changed" Unchecked="CleanupOption_Changed"/>
+                                <CheckBox x:Name="ChkCleanupBackups" Content="Create backups before writing" IsChecked="True" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <DataGrid Grid.Row="2" x:Name="CleanupGrid"
+                                  AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="240">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding FileName}"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Header="Field" Binding="{Binding Field}" Width="80"/>
+                                <DataGridTextColumn Header="Old" Binding="{Binding OldValue}" Width="*">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding OldValue}"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Header="New" Binding="{Binding NewValue}" Width="*">
+                                    <DataGridTextColumn.ElementStyle>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="ToolTip" Value="{Binding NewValue}"/>
+                                        </Style>
+                                    </DataGridTextColumn.ElementStyle>
+                                </DataGridTextColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+
+            <!-- Shared footer: status + context-sensitive action buttons -->
+            <Grid Grid.Row="4" Margin="4,0,4,0">
+                <Border Background="{DynamicResource GlassPanelBg}" CornerRadius="6" Padding="10,8"
+                        BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="StatusText" VerticalAlignment="Center" FontSize="12"
+                                       Foreground="{DynamicResource TextSecondary}"/>
+                            <Button x:Name="FailureToggle" Content="⚠ View failures" Margin="12,0,0,0"
+                                    Padding="10,3" FontSize="11" Visibility="Collapsed" Click="FailureToggle_Click"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="BtnSecondary" Content="Search" Margin="0,0,8,0"
+                                    Click="BtnSecondary_Click" Visibility="Collapsed"/>
+                            <Button x:Name="BtnTertiary" Content="Select High Confidence" Margin="0,0,8,0"
+                                    Click="BtnTertiary_Click" Visibility="Collapsed"/>
+                            <Button x:Name="BtnPrimary" Content="Apply" Style="{StaticResource PrimaryButton}"
+                                    Click="BtnPrimary_Click"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Failure summary popup -->
+                <Popup x:Name="FailurePopup" PlacementTarget="{Binding ElementName=FailureToggle}"
+                       Placement="Top" StaysOpen="False" AllowsTransparency="True">
+                    <Border Background="{DynamicResource GlassFloatingBg}" BorderBrush="{DynamicResource GlassBorderBrush}"
+                            BorderThickness="1" CornerRadius="6" Padding="12" MaxWidth="560" MaxHeight="320" Margin="0,0,0,6">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Text="Files that could not be matched"
+                                       FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,8"/>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl x:Name="FailureList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12"
+                                                       Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,4"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </DockPanel>
+                    </Border>
+                </Popup>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
