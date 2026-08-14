@@ -23,7 +23,7 @@ namespace AudioQualityChecker
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ClickCount == 2) return;
-            DragMove();
+            this.SafeDragMove();
         }
 
         private void Close_Click(object sender, RoutedEventArgs e) => Close();

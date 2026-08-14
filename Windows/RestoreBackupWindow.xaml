@@ -1,0 +1,230 @@
+<Window x:Class="AudioQualityChecker.RestoreBackupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Height="560" Width="720"
+        MinHeight="380" MinWidth="520"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource WindowBg}"
+        Foreground="{DynamicResource TextPrimary}"
+        AllowsTransparency="True">
+
+    <Window.Resources>
+        <Style x:Key="RowCheckBox" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Border x:Name="CheckBorder" Width="16" Height="16"
+                                CornerRadius="3" BorderThickness="1.5"
+                                BorderBrush="{DynamicResource AccentColor}"
+                                Background="Transparent" VerticalAlignment="Center">
+                            <TextBlock x:Name="CheckMark" Text="✓" FontSize="11" FontWeight="Bold"
+                                       Foreground="White" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" Margin="0,-1,0,0"
+                                       Visibility="Collapsed"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckBorder" Property="Background" Value="{DynamicResource AccentColor}"/>
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CheckBorder" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SmallButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ButtonBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background"
+                                        Value="{DynamicResource ButtonHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush"
+                                        Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource SmallButton}">
+            <Setter Property="Background" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource SmallButton}">
+            <Setter Property="Background" Value="#44FF4444"/>
+            <Setter Property="Foreground" Value="#FFFF6666"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{DynamicResource GlassFloatingBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1" CornerRadius="6">
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="10"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="10"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="12"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" MouseLeftButtonDown="Header_MouseDown">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" FontSize="16"
+                               Foreground="{DynamicResource AccentColor}" Margin="0,0,8,0"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Text="Restore from Backup"
+                               FontSize="18" FontWeight="Bold" FontFamily="{DynamicResource AppFontFamily}"
+                               Foreground="{DynamicResource TextPrimary}"/>
+                </StackPanel>
+                <Button Content="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Click="Close_Click" Cursor="Hand"
+                        Background="Transparent" BorderBrush="Transparent"
+                        Foreground="{DynamicResource TextMuted}" Padding="6,4">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="3" Padding="6,4">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#44FF4444"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+
+            <TextBlock Grid.Row="2" x:Name="SummaryLabel" FontSize="12"
+                       FontFamily="{DynamicResource AppFontFamily}"
+                       Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"/>
+
+            <!-- Selection helpers -->
+            <StackPanel Grid.Row="3" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,6,0,0">
+                <Button Content="Select Oldest" Style="{StaticResource SmallButton}"
+                        Click="SelectOldest_Click" Margin="0,0,8,0"
+                        ToolTip="The oldest backup of a file is the one taken before the first edit — the closest thing to the untouched original."/>
+                <Button Content="Select All" Style="{StaticResource SmallButton}"
+                        Click="SelectAll_Click" Margin="0,0,8,0"/>
+                <Button Content="Select None" Style="{StaticResource SmallButton}"
+                        Click="SelectNone_Click"/>
+            </StackPanel>
+
+            <!-- Backup list -->
+            <Border Grid.Row="4" BorderBrush="{DynamicResource BorderColor}" BorderThickness="1"
+                    CornerRadius="4" Padding="1">
+                <ListBox x:Name="BackupList" Background="Transparent" BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <ContentPresenter/>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="10,7" Background="Transparent">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="12"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <CheckBox Grid.Column="0" Style="{StaticResource RowCheckBox}"
+                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="{Binding FileName}" FontSize="13"
+                                                   FontFamily="{DynamicResource AppFontFamily}"
+                                                   Foreground="{DynamicResource TextPrimary}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Detail}" FontSize="11" Margin="0,2,0,0"
+                                                   FontFamily="{DynamicResource AppFontFamily}"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+
+                                    <Border Grid.Column="3" VerticalAlignment="Center" Margin="10,0,0,0"
+                                            Background="{DynamicResource AccentColor}" CornerRadius="3"
+                                            Padding="6,2" Visibility="{Binding OldestBadgeVisibility}">
+                                        <TextBlock Text="ORIGINAL" FontSize="9" FontWeight="Bold"
+                                                   FontFamily="{DynamicResource AppFontFamily}"
+                                                   Foreground="White"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+
+            <TextBlock Grid.Row="6" x:Name="StatusText" FontSize="11"
+                       FontFamily="{DynamicResource AppFontFamily}"
+                       Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap"/>
+
+            <!-- Footer -->
+            <Grid Grid.Row="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" x:Name="BtnDelete" Content="Delete Selected Backups"
+                        Style="{StaticResource DangerButton}" Click="DeleteSelected_Click" Padding="12,6"/>
+                <Button Grid.Column="2" Content="Close" Style="{StaticResource SmallButton}"
+                        Click="Close_Click" Padding="16,6"/>
+                <Button Grid.Column="4" x:Name="BtnRestore" Content="Restore Selected"
+                        Style="{StaticResource AccentButton}" Click="RestoreSelected_Click" Padding="16,6"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

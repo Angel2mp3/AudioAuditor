@@ -93,7 +93,7 @@ namespace AudioQualityChecker
         private void Header_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Left)
-                DragMove();
+                this.SafeDragMove();
         }
 
         private void MoveUp_Click(object sender, RoutedEventArgs e)

@@ -53,7 +53,9 @@ namespace AudioQualityChecker.Services
                 int blockLen = (fileData[offset] << 16) | (fileData[offset + 1] << 8) | fileData[offset + 2];
                 offset += 3;
 
-                if (blockType == 0 && blockLen >= 34) // STREAMINFO
+                // blockLen is the *declared* length; it says nothing about how many bytes are
+                // actually present, so the buffer has to be checked before reading the 34-byte body.
+                if (blockType == 0 && blockLen >= 34 && offset + 34 <= fileData.Length) // STREAMINFO
                 {
                     _minBlockSize = (fileData[offset] << 8) | fileData[offset + 1];
                     _maxBlockSize = (fileData[offset + 2] << 8) | fileData[offset + 3];
@@ -70,7 +72,9 @@ namespace AudioQualityChecker.Services
                                     ((long)fileData[offset + 16] << 8) |
                                     fileData[offset + 17];
                 }
-                offset += blockLen;
+                // A malformed length must not push the cursor past the buffer that DecodeFrames
+                // is about to be handed.
+                offset = (int)Math.Min((long)offset + blockLen, fileData.Length);
             }
 
             if (_streamSampleRate == 0 || _streamChannels == 0 || _streamBitsPerSample == 0)
@@ -84,7 +88,16 @@ namespace AudioQualityChecker.Services
 
             var allSamples = new List<float>();
             if (_totalSamples > 0)
-                allSamples.Capacity = (int)Math.Min(_totalSamples * _streamChannels, int.MaxValue / 4);
+            {
+                // _totalSamples is a 36-bit field straight out of the header, so a tiny file can
+                // claim billions of samples and drive this reserve into the gigabytes. The frame
+                // data left in the buffer is the real ceiling: FLAC never expands beyond one
+                // sample per byte per channel, so remaining bytes bound the true sample count.
+                long remainingBytes = Math.Max(0, fileData.Length - offset);
+                long declared = _totalSamples * _streamChannels;
+                long ceiling = remainingBytes * _streamChannels;
+                allSamples.Capacity = (int)Math.Min(Math.Min(declared, ceiling), int.MaxValue / 4);
+            }
 
             DecodeFrames(fileData, offset, allSamples);
 
@@ -608,17 +621,6 @@ namespace AudioQualityChecker.Services
             if (count > 0 && (val & (1 << (count - 1))) != 0)
                 val |= ~0 << count;
             return val;
-        }
-
-        /// <summary>
-        /// Reads a unary-coded value: count of 1-bits before the terminating 0-bit.
-        /// </summary>
-        public int ReadUnary()
-        {
-            int count = 0;
-            while (ReadBits(1) == 1)
-                count++;
-            return count;
         }
 
         /// <summary>

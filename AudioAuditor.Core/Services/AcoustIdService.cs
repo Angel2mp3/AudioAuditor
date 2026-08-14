@@ -27,7 +27,7 @@ namespace AudioQualityChecker.Services
         private static readonly HttpClient _http = new()
         {
             Timeout = TimeSpan.FromSeconds(20),
-            DefaultRequestHeaders = { { "User-Agent", "AudioAuditor/1.5.0 (https://github.com)" } }
+            DefaultRequestHeaders = { { "User-Agent", AppVersion.UserAgent("acoustid") } }
         };
 
         /// <summary>

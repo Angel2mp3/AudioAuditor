@@ -8,22 +8,39 @@ namespace AudioQualityChecker.Converters
 {
     public class StatusToColorConverter : IValueConverter
     {
+        // Bound to the status column, so this runs for every visible row on every grid refresh.
+        // Allocating a fresh unfrozen brush per call churned the heap and denied WPF the
+        // freezable fast path — the other converters in this file already do it this way.
+        private static readonly SolidColorBrush Valid = new(Color.FromRgb(76, 175, 80));
+        private static readonly SolidColorBrush Fake = new(Color.FromRgb(244, 67, 54));
+        private static readonly SolidColorBrush Unknown = new(Color.FromRgb(255, 152, 0));
+        private static readonly SolidColorBrush Corrupt = new(Color.FromRgb(156, 39, 176));
+        private static readonly SolidColorBrush Optimized = new(Color.FromRgb(255, 193, 7));
+        private static readonly SolidColorBrush Analyzing = new(Color.FromRgb(100, 100, 100));
+        private static readonly SolidColorBrush None = new(Colors.Transparent);
+
+        static StatusToColorConverter()
+        {
+            Valid.Freeze(); Fake.Freeze(); Unknown.Freeze(); Corrupt.Freeze();
+            Optimized.Freeze(); Analyzing.Freeze(); None.Freeze();
+        }
+
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
             if (value is AudioStatus status)
             {
                 return status switch
                 {
-                    AudioStatus.Valid => new SolidColorBrush(Color.FromRgb(76, 175, 80)),
-                    AudioStatus.Fake => new SolidColorBrush(Color.FromRgb(244, 67, 54)),
-                    AudioStatus.Unknown => new SolidColorBrush(Color.FromRgb(255, 152, 0)),
-                    AudioStatus.Corrupt => new SolidColorBrush(Color.FromRgb(156, 39, 176)),
-                    AudioStatus.Optimized => new SolidColorBrush(Color.FromRgb(255, 193, 7)),
-                    AudioStatus.Analyzing => new SolidColorBrush(Color.FromRgb(100, 100, 100)),
-                    _ => new SolidColorBrush(Colors.Transparent)
+                    AudioStatus.Valid => Valid,
+                    AudioStatus.Fake => Fake,
+                    AudioStatus.Unknown => Unknown,
+                    AudioStatus.Corrupt => Corrupt,
+                    AudioStatus.Optimized => Optimized,
+                    AudioStatus.Analyzing => Analyzing,
+                    _ => None
                 };
             }
-            return new SolidColorBrush(Colors.Transparent);
+            return None;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
@@ -120,11 +137,10 @@ namespace AudioQualityChecker.Converters
 
     public class MqaToColorConverter : IValueConverter
     {
-        private static readonly SolidColorBrush MqaGreen = new(Color.FromRgb(76, 175, 80));
         private static readonly SolidColorBrush MqaBlue = new(Color.FromRgb(30, 144, 255));
         private static readonly SolidColorBrush NoMqa = new(Color.FromRgb(212, 212, 212));
 
-        static MqaToColorConverter() { MqaGreen.Freeze(); MqaBlue.Freeze(); NoMqa.Freeze(); }
+        static MqaToColorConverter() { MqaBlue.Freeze(); NoMqa.Freeze(); }
 
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {

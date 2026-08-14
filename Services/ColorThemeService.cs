@@ -34,9 +34,19 @@ namespace AudioQualityChecker.Services
             return Convert.ToHexString(bytes);
         }
 
-        public void StoreForFilePath(string filePath, AlbumColorExtractor.DominantColors colors)
+        /// <summary>
+        /// Content hash of an album cover's raw bytes. Used to key colors by cover identity so
+        /// every track sharing the EXACT same embedded cover resolves to the same palette/picks.
+        /// </summary>
+        public static string HashBytes(byte[] data)
         {
-            StoreByKey(HashPath(filePath), colors);
+            using var sha = SHA256.Create();
+            return Convert.ToHexString(sha.ComputeHash(data));
+        }
+
+        public void StoreForKey(string key, AlbumColorExtractor.DominantColors colors)
+        {
+            StoreByKey(key, colors);
         }
 
         public bool TryGetByKey(string key, out AlbumColorExtractor.DominantColors colors)
@@ -61,8 +71,10 @@ namespace AudioQualityChecker.Services
         }
 
         public List<MediaColor>? GetManualPicksForFilePath(string filePath)
+            => GetManualPicksByKey(HashPath(filePath));
+
+        public List<MediaColor>? GetManualPicksByKey(string key)
         {
-            string key = HashPath(filePath);
             lock (_lock)
             {
                 return _manualPicks.TryGetValue(key, out var picks)
@@ -71,9 +83,8 @@ namespace AudioQualityChecker.Services
             }
         }
 
-        public void SetManualPicksForFilePath(string filePath, IReadOnlyList<MediaColor> picks)
+        public void SetManualPicksByKey(string key, IReadOnlyList<MediaColor> picks)
         {
-            string key = HashPath(filePath);
             lock (_lock)
             {
                 if (picks.Count == 0)

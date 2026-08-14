@@ -128,7 +128,7 @@ namespace AudioQualityChecker
         {
             if (_npBgFxPopupSyncing) return;
             ThemeManager.NpBackgroundCycleSpeed = Math.Clamp(NpBgFxCycleSpeedSlider.Value, 0.25, 3.0);
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             ApplyAnimationsEnabledState();
         }
 
@@ -146,7 +146,7 @@ namespace AudioQualityChecker
             if (mode == "Rain") ThemeManager.NpRainIntensity = ThemeManager.ClampNpRainIntensity(NpBgFxDensitySlider.Value);
             else if (mode is "Snow" or "Leaves") ThemeManager.NpSnowDensity = ThemeManager.ClampNpSnowDensity(NpBgFxDensitySlider.Value);
             else ThemeManager.NpStarDensity = ThemeManager.ClampNpStarDensity(NpBgFxDensitySlider.Value);
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             ApplyAnimationsEnabledState();
         }
 
@@ -189,7 +189,7 @@ namespace AudioQualityChecker
         {
             if (_npBgFxPopupSyncing) return;
             ThemeManager.NpSnowflakeAmount = ThemeManager.ClampNpSnowflakeAmount(NpBgFxSnowflakeSlider.Value);
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             ApplyAnimationsEnabledState();
         }
     }

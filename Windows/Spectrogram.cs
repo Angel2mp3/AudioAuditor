@@ -519,6 +519,8 @@ namespace AudioQualityChecker
         private const int VizNumBars = 64;
         private readonly double[] _vizReal = new double[VizFftSize];
         private readonly double[] _vizImag = new double[VizFftSize];
+        // Reused across frames — see Visualizer_Tick (60 Hz).
+        private readonly float[] _vizSamples = new float[4096];
         private readonly double[] _vizMags = new double[VizFftSize / 2];
         private readonly double[] _vizBarValues = new double[VizNumBars];
 
@@ -593,9 +595,10 @@ namespace AudioQualityChecker
 
             int numBars = VizNumBars;
 
-            // Get recent samples and run FFT
-            var vizSnapshot = _player.GetVisualizerSnapshot(4096);
-            float[] samples = vizSnapshot.Samples;
+            // Get recent samples and run FFT. Reuses _vizSamples across frames — this runs at 60 Hz
+            // and a fresh 4096-float array per frame was ~1 MB/s of pure garbage.
+            int sampleCount = _player.GetVisualizerSnapshot(_vizSamples, out float capturedVolume);
+            float[] samples = _vizSamples;
             int fftSize = VizFftSize;
 
             // Clear and fill pre-allocated FFT buffers
@@ -603,15 +606,14 @@ namespace AudioQualityChecker
             Array.Clear(_vizImag);
 
             // Use the most recent fftSize samples from the captured buffer
-            int offset = Math.Max(0, samples.Length - fftSize);
-            for (int i = 0; i < fftSize && (offset + i) < samples.Length; i++)
+            int offset = Math.Max(0, sampleCount - fftSize);
+            for (int i = 0; i < fftSize && (offset + i) < sampleCount; i++)
             {
                 double w = 0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (fftSize - 1)));
                 _vizReal[i] = samples[offset + i] * w;
             }
 
             // Compensate for volume when VisualizerFullVolume is enabled
-            float capturedVolume = vizSnapshot.UserVolume;
             if (ThemeManager.VisualizerFullVolume && capturedVolume > 0.01f && capturedVolume < 1f)
             {
                 double gain = 1.0 / capturedVolume;

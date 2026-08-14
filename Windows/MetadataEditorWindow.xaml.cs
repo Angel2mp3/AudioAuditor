@@ -71,60 +71,55 @@ namespace AudioQualityChecker
 
             try
             {
-                using var tagFile = TagLib.File.Create(_filePath);
-                var tag = tagFile.Tag;
+                // Field mapping lives in Core (MetadataEditService) so the Avalonia editor
+                // reads and writes exactly the same tags.
+                var tags = Services.MetadataEditService.Read(_filePath);
 
-                TitleBox.Text = tag.Title ?? "";
-                ArtistBox.Text = tag.FirstPerformer ?? "";
-                AlbumBox.Text = tag.Album ?? "";
-                AlbumArtistBox.Text = tag.FirstAlbumArtist ?? "";
-                YearBox.Text = tag.Year > 0 ? tag.Year.ToString() : "";
-                TrackNumberBox.Text = tag.Track > 0 ? tag.Track.ToString() : "";
-                DiscNumberBox.Text = tag.Disc > 0 ? tag.Disc.ToString() : "";
-                GenreBox.Text = tag.FirstGenre ?? "";
-                ComposerBox.Text = tag.FirstComposer ?? "";
-                ConductorBox.Text = tag.Conductor ?? "";
-                CopyrightBox.Text = tag.Copyright ?? "";
-                CommentBox.Text = tag.Comment ?? "";
+                TitleBox.Text = tags.Title;
+                ArtistBox.Text = tags.Artist;
+                AlbumBox.Text = tags.Album;
+                AlbumArtistBox.Text = tags.AlbumArtist;
+                YearBox.Text = tags.Year;
+                TrackNumberBox.Text = tags.TrackNumber;
+                DiscNumberBox.Text = tags.DiscNumber;
+                GenreBox.Text = tags.Genre;
+                ComposerBox.Text = tags.Composer;
+                ConductorBox.Text = tags.Conductor;
+                CopyrightBox.Text = tags.Copyright;
+                CommentBox.Text = tags.Comment;
 
-                LoadCoverPreview(tagFile);
+                LoadCoverPreview();
             }
             catch (Exception ex)
             {
                 StatusText.Text = $"Error loading: {ex.Message}";
             }
+
+            _savedSnapshot = CurrentSnapshot();
         }
 
-        private void LoadCoverPreview(TagLib.File? tagFile = null)
+        private void LoadCoverPreview()
         {
             try
             {
-                bool ownFile = tagFile == null;
-                tagFile ??= TagLib.File.Create(_filePath);
-
-                var pics = tagFile.Tag.Pictures;
-                if (pics != null && pics.Length > 0)
-                {
-                    var pic = pics[0];
-                    using var ms = new MemoryStream(pic.Data.Data);
-                    var bmp = new BitmapImage();
-                    bmp.BeginInit();
-                    bmp.StreamSource = ms;
-                    bmp.CacheOption = BitmapCacheOption.OnLoad;
-                    bmp.DecodePixelWidth = 160;
-                    bmp.EndInit();
-                    bmp.Freeze();
-                    CoverPreview.Source = bmp;
-                    CoverInfoText.Text = $"{pic.Data.Count:N0} bytes";
-                }
-                else
+                var cover = Services.MetadataEditService.ReadCover(_filePath);
+                if (cover == null)
                 {
                     CoverPreview.Source = null;
                     CoverInfoText.Text = "No cover";
+                    return;
                 }
 
-                if (ownFile)
-                    tagFile.Dispose();
+                using var ms = new MemoryStream(cover.Data);
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.StreamSource = ms;
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.DecodePixelWidth = 160;
+                bmp.EndInit();
+                bmp.Freeze();
+                CoverPreview.Source = bmp;
+                CoverInfoText.Text = $"{cover.Data.Length:N0} bytes";
             }
             catch
             {
@@ -136,12 +131,39 @@ namespace AudioQualityChecker
         private void Header_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (e.ChangedButton == MouseButton.Left)
-                DragMove();
+                this.SafeDragMove();
         }
 
         private void Close_Click(object sender, RoutedEventArgs e)
         {
             Close();
+        }
+
+        // ═══ Unsaved-edit guard ═══
+
+        /// <summary>
+        /// Field values as they last stood on disk. Closing used to discard edits without a word,
+        /// which is easy to do here because the window has no implicit save.
+        /// </summary>
+        private string _savedSnapshot = "";
+
+        private string CurrentSnapshot() => string.Join("",
+            TitleBox.Text, ArtistBox.Text, AlbumBox.Text, AlbumArtistBox.Text, YearBox.Text,
+            TrackNumberBox.Text, DiscNumberBox.Text, GenreBox.Text, ComposerBox.Text,
+            ConductorBox.Text, CopyrightBox.Text, CommentBox.Text);
+
+        private bool HasUnsavedEdits() =>
+            _newCoverData != null || _coverRemoved || CurrentSnapshot() != _savedSnapshot;
+
+        protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+        {
+            base.OnClosing(e);
+            if (e.Cancel || !HasUnsavedEdits()) return;
+
+            bool discard = ErrorDialog.Confirm("Discard Changes",
+                "This file has unsaved metadata edits.\n\nClose anyway and lose them?",
+                this, severity: AlertSeverity.Warning);
+            if (!discard) e.Cancel = true;
         }
 
         private void SaveCover_Click(object sender, RoutedEventArgs e)
@@ -155,15 +177,14 @@ namespace AudioQualityChecker
                 // Otherwise extract from the original file
                 if (data == null && !_coverRemoved)
                 {
-                    using var tagFile = TagLib.File.Create(_filePath);
-                    var pics = tagFile.Tag.Pictures;
-                    if (pics == null || pics.Length == 0)
+                    var embedded = Services.MetadataEditService.ReadCover(_filePath);
+                    if (embedded == null)
                     {
                         StatusText.Text = "No album cover to save.";
                         return;
                     }
-                    data = pics[0].Data.Data;
-                    mime = pics[0].MimeType;
+                    data = embedded.Data;
+                    mime = embedded.MimeType;
                 }
 
                 if (data == null)
@@ -172,13 +193,7 @@ namespace AudioQualityChecker
                     return;
                 }
 
-                string ext = (mime ?? "image/jpeg") switch
-                {
-                    "image/png" => ".png",
-                    "image/bmp" => ".bmp",
-                    "image/gif" => ".gif",
-                    _ => ".jpg"
-                };
+                string ext = new Services.CoverArt(data, mime ?? "image/jpeg").Extension;
 
                 string defaultName = Path.GetFileNameWithoutExtension(_filePath) + "_cover" + ext;
 
@@ -214,14 +229,7 @@ namespace AudioQualityChecker
             try
             {
                 _newCoverData = File.ReadAllBytes(dialog.FileName);
-                string ext = Path.GetExtension(dialog.FileName).ToLowerInvariant();
-                _newCoverMime = ext switch
-                {
-                    ".png" => "image/png",
-                    ".bmp" => "image/bmp",
-                    ".gif" => "image/gif",
-                    _ => "image/jpeg"
-                };
+                _newCoverMime = Services.CoverArt.MimeTypeForExtension(Path.GetExtension(dialog.FileName));
                 _coverRemoved = false;
 
                 // Preview the new cover
@@ -253,47 +261,27 @@ namespace AudioQualityChecker
 
         // ═══ Search Metadata Online ═══
 
-        private void SearchMusicBrainz_Click(object sender, RoutedEventArgs e)
-        {
-            var query = BuildSearchQuery();
-            OpenUrl($"https://musicbrainz.org/search?query={Uri.EscapeDataString(query)}&type=recording");
-        }
+        // URLs and the query fallback chain live in Core (MusicServiceUrls) so both editors
+        // send the same search to the same places.
 
-        private void SearchDiscogs_Click(object sender, RoutedEventArgs e)
-        {
-            var query = BuildSearchQuery();
-            OpenUrl($"https://www.discogs.com/search/?q={Uri.EscapeDataString(query)}&type=all");
-        }
+        private void SearchMusicBrainz_Click(object sender, RoutedEventArgs e) =>
+            OpenLookup(Services.MusicServiceUrls.LookupSite.MusicBrainz);
 
-        private void SearchAllMusic_Click(object sender, RoutedEventArgs e)
-        {
-            var query = BuildSearchQuery();
-            OpenUrl($"https://www.allmusic.com/search/all/{Uri.EscapeDataString(query)}");
-        }
+        private void SearchDiscogs_Click(object sender, RoutedEventArgs e) =>
+            OpenLookup(Services.MusicServiceUrls.LookupSite.Discogs);
 
-        private void SearchRateYourMusic_Click(object sender, RoutedEventArgs e)
-        {
-            var query = BuildSearchQuery();
-            OpenUrl($"https://rateyourmusic.com/search?searchterm={Uri.EscapeDataString(query)}&searchtype=");
-        }
+        private void SearchAllMusic_Click(object sender, RoutedEventArgs e) =>
+            OpenLookup(Services.MusicServiceUrls.LookupSite.AllMusic);
 
-        private string BuildSearchQuery()
-        {
-            string artist = ArtistBox.Text.Trim();
-            string title = TitleBox.Text.Trim();
-            string album = AlbumBox.Text.Trim();
+        private void SearchRateYourMusic_Click(object sender, RoutedEventArgs e) =>
+            OpenLookup(Services.MusicServiceUrls.LookupSite.RateYourMusic);
 
-            if (!string.IsNullOrEmpty(artist) && !string.IsNullOrEmpty(title))
-                return $"{artist} {title}";
-            if (!string.IsNullOrEmpty(artist) && !string.IsNullOrEmpty(album))
-                return $"{artist} {album}";
-            if (!string.IsNullOrEmpty(title))
-                return title;
-            if (!string.IsNullOrEmpty(artist))
-                return artist;
+        private void OpenLookup(Services.MusicServiceUrls.LookupSite site) =>
+            OpenUrl(Services.MusicServiceUrls.Lookup(site, BuildSearchQuery()));
 
-            return Path.GetFileNameWithoutExtension(_filePath);
-        }
+        private string BuildSearchQuery() =>
+            Services.MusicServiceUrls.LookupQuery(ArtistBox.Text, TitleBox.Text, AlbumBox.Text)
+            ?? Path.GetFileNameWithoutExtension(_filePath);
 
         private static void OpenUrl(string url)
         {
@@ -306,25 +294,23 @@ namespace AudioQualityChecker
 
         private void StripAllMetadata_Click(object sender, RoutedEventArgs e)
         {
-            var result = MessageBox.Show(
-                "This will remove ALL metadata tags from the file including title, artist, album, cover art, and any other embedded tags.\n\nThis cannot be undone. Continue?",
-                "Strip All Metadata",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
+            bool result = ErrorDialog.Confirm("Strip All Metadata",
+                "This will remove ALL metadata tags from the file including title, artist, album, cover art, and any other embedded tags.\n\nA backup copy is saved next to the file first — use Metadata → Restore from backup to undo this. Continue?",
+                this, severity: AlertSeverity.Warning);
 
-            if (result != MessageBoxResult.Yes) return;
+            if (!result) return;
 
             try
             {
-                using var tagFile = TagLib.File.Create(_filePath);
-                tagFile.RemoveTags(TagLib.TagTypes.AllTags);
-                tagFile.Save();
+                Services.MetadataEditService.StripAll(_filePath);
 
                 MetadataChanged = true;
 
                 // Update the in-memory model
                 _fileInfo.Title = "";
                 _fileInfo.Artist = "";
+                _fileInfo.Album = "";
+                _fileInfo.HasAlbumCover = false;
 
                 StatusText.Text = "All metadata stripped successfully.";
 
@@ -345,6 +331,8 @@ namespace AudioQualityChecker
                 CoverInfoText.Text = "No cover";
                 _coverRemoved = false;
                 _newCoverData = null;
+                _newCoverMime = null;
+                _savedSnapshot = CurrentSnapshot();
             }
             catch (Exception ex)
             {
@@ -356,61 +344,49 @@ namespace AudioQualityChecker
         {
             try
             {
-                using var tagFile = TagLib.File.Create(_filePath);
-                var tag = tagFile.Tag;
-
-                tag.Title = string.IsNullOrWhiteSpace(TitleBox.Text) ? null : TitleBox.Text.Trim();
-                tag.Performers = string.IsNullOrWhiteSpace(ArtistBox.Text)
-                    ? Array.Empty<string>() : new[] { ArtistBox.Text.Trim() };
-                tag.Album = string.IsNullOrWhiteSpace(AlbumBox.Text) ? null : AlbumBox.Text.Trim();
-                tag.AlbumArtists = string.IsNullOrWhiteSpace(AlbumArtistBox.Text)
-                    ? Array.Empty<string>() : new[] { AlbumArtistBox.Text.Trim() };
-
-                if (uint.TryParse(YearBox.Text.Trim(), out uint year))
-                    tag.Year = year;
-                else
-                    tag.Year = 0;
-
-                if (uint.TryParse(TrackNumberBox.Text.Trim(), out uint track))
-                    tag.Track = track;
-                else
-                    tag.Track = 0;
-
-                if (uint.TryParse(DiscNumberBox.Text.Trim(), out uint disc))
-                    tag.Disc = disc;
-                else
-                    tag.Disc = 0;
-
-                tag.Genres = string.IsNullOrWhiteSpace(GenreBox.Text)
-                    ? Array.Empty<string>() : new[] { GenreBox.Text.Trim() };
-
-                tag.Composers = string.IsNullOrWhiteSpace(ComposerBox.Text)
-                    ? Array.Empty<string>() : new[] { ComposerBox.Text.Trim() };
-                tag.Conductor = string.IsNullOrWhiteSpace(ConductorBox.Text) ? null : ConductorBox.Text.Trim();
-                tag.Copyright = string.IsNullOrWhiteSpace(CopyrightBox.Text) ? null : CopyrightBox.Text.Trim();
-                tag.Comment = string.IsNullOrWhiteSpace(CommentBox.Text) ? null : CommentBox.Text.Trim();
-
-                // Handle cover art changes
-                if (_coverRemoved)
+                var tags = new Services.EditableTags
                 {
-                    tag.Pictures = Array.Empty<TagLib.IPicture>();
-                }
-                else if (_newCoverData != null)
-                {
-                    var pic = new TagLib.Picture(new TagLib.ByteVector(_newCoverData))
-                    {
-                        Type = TagLib.PictureType.FrontCover,
-                        MimeType = _newCoverMime ?? "image/jpeg"
-                    };
-                    tag.Pictures = new TagLib.IPicture[] { pic };
-                }
+                    Title = TitleBox.Text,
+                    Artist = ArtistBox.Text,
+                    Album = AlbumBox.Text,
+                    AlbumArtist = AlbumArtistBox.Text,
+                    Year = YearBox.Text,
+                    TrackNumber = TrackNumberBox.Text,
+                    DiscNumber = DiscNumberBox.Text,
+                    Genre = GenreBox.Text,
+                    Composer = ComposerBox.Text,
+                    Conductor = ConductorBox.Text,
+                    Copyright = CopyrightBox.Text,
+                    Comment = CommentBox.Text,
+                };
 
-                tagFile.Save();
+                var change = _coverRemoved ? Services.CoverChange.Remove
+                    : _newCoverData != null ? Services.CoverChange.Replace
+                    : Services.CoverChange.Keep;
+
+                var newCover = _newCoverData != null
+                    ? new Services.CoverArt(_newCoverData, _newCoverMime ?? "image/jpeg")
+                    : null;
+
+                Services.MetadataEditService.Write(_filePath, tags, change, newCover,
+                    createBackup: ChkBackups.IsChecked == true);
                 MetadataChanged = true;
 
-                // Update the in-memory model
-                _fileInfo.Title = tag.Title ?? Path.GetFileNameWithoutExtension(_filePath);
-                _fileInfo.Artist = tag.FirstPerformer ?? "";
+                // Mirror onto the in-memory row so the grid matches without a re-scan. Album was
+                // missing here, so the Album column kept its pre-edit value until the next scan.
+                _fileInfo.Title = string.IsNullOrWhiteSpace(tags.Title)
+                    ? Path.GetFileNameWithoutExtension(_filePath)
+                    : tags.Title.Trim();
+                _fileInfo.Artist = tags.Artist.Trim();
+                _fileInfo.Album = tags.Album.Trim();
+                if (change == Services.CoverChange.Replace) _fileInfo.HasAlbumCover = true;
+                else if (change == Services.CoverChange.Remove) _fileInfo.HasAlbumCover = false;
+
+                // What is on screen is now what is on disk.
+                _savedSnapshot = CurrentSnapshot();
+                _coverRemoved = false;
+                _newCoverData = null;
+                _newCoverMime = null;
 
                 StatusText.Text = "Saved successfully.";
             }

@@ -24,22 +24,6 @@ namespace AudioQualityChecker
         private CancellationTokenSource? _refreshCts;
         private volatile bool _isRefreshing;
 
-        // AudioFileInfo properties populated by each analysis feature. Copying only these for a
-        // just-enabled feature fills that one column without disturbing the others.
-        private static readonly Dictionary<string, string[]> FeatureFields = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["BPM"]         = new[] { nameof(AudioFileInfo.Bpm) },
-            ["DR"]          = new[] { nameof(AudioFileInfo.DynamicRange), nameof(AudioFileInfo.HasDynamicRange) },
-            ["True Peak"]   = new[] { nameof(AudioFileInfo.TruePeakDbTP), nameof(AudioFileInfo.HasTruePeak) },
-            ["LUFS"]        = new[] { nameof(AudioFileInfo.IntegratedLufs), nameof(AudioFileInfo.HasLufs) },
-            ["Rip Quality"] = new[] { nameof(AudioFileInfo.RipQuality), nameof(AudioFileInfo.RipQualityDetail), nameof(AudioFileInfo.HasRipQuality) },
-            ["Silence"]     = new[] { nameof(AudioFileInfo.LeadingSilenceMs), nameof(AudioFileInfo.TrailingSilenceMs), nameof(AudioFileInfo.MidTrackSilenceGaps), nameof(AudioFileInfo.TotalMidSilenceMs), nameof(AudioFileInfo.HasExcessiveSilence) },
-            ["Clipping"]    = new[] { nameof(AudioFileInfo.HasClipping), nameof(AudioFileInfo.ClippingPercentage), nameof(AudioFileInfo.ClippingSamples), nameof(AudioFileInfo.MaxSampleLevel), nameof(AudioFileInfo.MaxSampleLevelDb), nameof(AudioFileInfo.HasScaledClipping), nameof(AudioFileInfo.ScaledClippingPercentage) },
-            ["MQA"]         = new[] { nameof(AudioFileInfo.IsMqa), nameof(AudioFileInfo.IsMqaStudio), nameof(AudioFileInfo.MqaOriginalSampleRate), nameof(AudioFileInfo.MqaEncoder) },
-            ["AI"]          = new[] { nameof(AudioFileInfo.IsAiGenerated), nameof(AudioFileInfo.AiSource), nameof(AudioFileInfo.AiSources), nameof(AudioFileInfo.ExperimentalAiSuspicious), nameof(AudioFileInfo.ExperimentalAiConfidence), nameof(AudioFileInfo.ExperimentalAiFlags) },
-            ["Fake Stereo"] = new[] { nameof(AudioFileInfo.IsFakeStereo), nameof(AudioFileInfo.FakeStereoType), nameof(AudioFileInfo.StereoCorrelation) },
-        };
-
         /// <summary>
         /// Backfills only the column(s) for the given just-enabled analysis features across all
         /// loaded rows — re-analyzes each file but copies just those features' fields, leaving the
@@ -49,13 +33,46 @@ namespace AudioQualityChecker
         {
             if (_files.Count == 0 || _isAnalyzing || _isRefreshing) return;
 
-            var fields = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var header in featureHeaders)
-                if (FeatureFields.TryGetValue(header, out var f))
-                    foreach (var name in f) fields.Add(name);
+            // "Rip Log" isn't produced by AnalyzeFile — it comes from cambia per folder, so it gets
+            // its own backfill path rather than a re-analysis.
+            // One snapshot shared by both consumers — _files was copied twice in this method.
+            var snapshot = _files.ToList();
 
+            if (featureHeaders.Contains(AnalysisFeatureFields.RipLog, StringComparer.OrdinalIgnoreCase))
+                BackfillRipLogsAsync(snapshot).Observe(nameof(BackfillRipLogsAsync));
+
+            // Feature → property map lives in Core so Avalonia's refresh fills the same fields.
+            var fields = AnalysisFeatureFields.For(featureHeaders);
             if (fields.Count == 0) return;
-            _ = RefreshFilesAsync(_files.ToList(), fields);
+
+            RefreshFilesAsync(snapshot, fields).Observe(nameof(RefreshFilesAsync));
+        }
+
+        /// <summary>
+        /// CD Rip Checker scan auto-detect: runs cambia once per distinct folder across the given rows
+        /// and stamps the resulting score/verdict onto every file in that folder. No-op unless the
+        /// feature is enabled and the cambia binary is available. Safe to call repeatedly (idempotent).
+        /// </summary>
+        private async Task BackfillRipLogsAsync(IReadOnlyList<AudioFileInfo> files)
+        {
+            if (!ThemeManager.RipLogCheckEnabled || files.Count == 0) return;
+            if (!RipLogCheckService.IsAvailable) return;
+
+            var folders = files.Select(f => f.FolderPath)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (folders.Count == 0) return;
+
+            Dictionary<string, RipLogResult> map;
+            try { map = await Task.Run(() => RipLogCheckService.CheckFoldersAsync(folders)); }
+            catch { return; }
+            if (map.Count == 0) return;
+
+            // Back on the UI thread (no ConfigureAwait above) — safe to stamp and notify.
+            foreach (var f in files)
+                if (!string.IsNullOrEmpty(f.FolderPath) && map.TryGetValue(f.FolderPath, out var r))
+                    f.SetRipLog(r.Score, r.Verdict);
         }
 
         private async void Refresh_Click(object sender, RoutedEventArgs e)
@@ -113,11 +130,11 @@ namespace AudioQualityChecker
 
                         // Bypass the scan cache deliberately: a refresh exists to recompute rows
                         // that read wrong or are missing data, so a cached hit would defeat it.
-                        // A dedicated long-running thread + timeout keeps a hung decoder from
-                        // pinning the slot forever (mirrors AnalyzeAndAddFiles).
-                        var analysisTask = Task.Factory.StartNew(
-                            () => AudioAnalyzer.AnalyzeFile(file.FilePath, settings, ct),
-                            ct, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                        // A timeout keeps a hung decoder from pinning the slot forever (mirrors
+                        // AnalyzeAndAddFiles). Concurrency is capped by the caller's semaphore, so
+                        // this runs on the pool rather than creating an OS thread per file.
+                        var analysisTask = Task.Run(
+                            () => AudioAnalyzer.AnalyzeFile(file.FilePath, settings, ct), ct);
                         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                         var timeoutTask = Task.Delay(TimeSpan.FromSeconds(120), timeoutCts.Token);
                         if (await Task.WhenAny(analysisTask, timeoutTask) == timeoutTask)
@@ -130,7 +147,8 @@ namespace AudioQualityChecker
 
                         if (ThemeManager.ScanCacheEnabled)
                         {
-                            try { ScanCacheService.Set(fresh, settings); } catch { }
+                            try { ScanCacheService.Set(fresh, settings); }
+                            catch (Exception ex) { if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex); }
                         }
 
                         await Dispatcher.InvokeAsync(() =>
@@ -154,7 +172,11 @@ namespace AudioQualityChecker
 
                 if (ThemeManager.ScanCacheEnabled)
                 {
-                    try { await Task.Run(() => ScanCacheService.SaveToDisk(), ct); } catch { }
+                    // Cancellation is the normal path when the user starts another refresh, so it
+                    // stays silent; a genuine write failure is what needs a trace.
+                    try { await Task.Run(() => ScanCacheService.SaveToDisk(), ct); }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex) { if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex); }
                 }
             }
             catch (OperationCanceledException) { }

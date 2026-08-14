@@ -15,17 +15,24 @@ namespace AudioQualityChecker.Services
             string filePath,
             AudioFileInfo info,
             IAnalysisSettings settings,
-            CancellationToken ct)
+            CancellationToken ct,
+            SharedAudioSource? shared = null)
         {
-            var (disposable, samples, format) = OpenAudioFile(filePath);
-            if (disposable == null || samples == null || format == null) return;
+            var lease = AudioLease.Open(filePath, shared);
+            var samples = lease.Samples;
+            var format = lease.Format;
+            if (samples == null || format == null) { lease.Dispose(); return; }
 
-            using (disposable)
+            using (lease)
             {
                 int sampleRate = format.SampleRate;
                 int channels = format.Channels;
                 int blockSize = 4096;
                 float[] buffer = new float[blockSize * channels];
+                // Per-frame channel maximum, computed once per block and handed to every
+                // contributor. Silence and DR both need it; recomputing it inside each of them
+                // would walk the block twice more.
+                float[] maxAbs = new float[blockSize];
                 var contributors = CreateFullFileContributors(info, settings, sampleRate, channels);
 
                 int read;
@@ -48,17 +55,21 @@ namespace AudioQualityChecker.Services
                     for (int i = 0; i < frames; i++)
                     {
                         int offset = i * channels;
-                        float maxChannelAbs = 0;
+                        float frameMax = 0;
                         for (int ch = 0; ch < channels; ch++)
                         {
                             float abs = Math.Abs(buffer[offset + ch]);
-                            if (abs > maxChannelAbs) maxChannelAbs = abs;
+                            if (abs > frameMax) frameMax = abs;
                         }
-
-                        var frame = new FullFileFrame(buffer, offset, maxChannelAbs);
-                        for (int contributorIndex = 0; contributorIndex < contributors.Count; contributorIndex++)
-                            contributors[contributorIndex].ProcessFrame(frame);
+                        maxAbs[i] = frameMax;
                     }
+
+                    // One interface dispatch per block rather than one per frame per contributor —
+                    // at 4096 frames a block that is four orders of magnitude fewer virtual calls
+                    // over a full-length track. Each contributor walks the block in frame order, so
+                    // the arithmetic and its ordering are unchanged.
+                    for (int contributorIndex = 0; contributorIndex < contributors.Count; contributorIndex++)
+                        contributors[contributorIndex].ProcessBlock(buffer, maxAbs, frames, channels);
                 }
 
                 for (int i = 0; i < contributors.Count; i++)
@@ -83,32 +94,17 @@ namespace AudioQualityChecker.Services
                 contributors.Add(new TruePeakContributor(channels));
             if (settings.EnableLufs)
                 contributors.Add(new LufsContributor(sampleRate, channels));
-            if (settings.EnableRipQuality)
-                contributors.Add(new RipQualityContributor(info, sampleRate, channels));
             return contributors;
         }
 
-        private interface IFullFileAnalysisContributor
+        internal interface IFullFileAnalysisContributor
         {
-            void ProcessFrame(FullFileFrame frame);
+            /// <param name="buffer">Interleaved samples for the block.</param>
+            /// <param name="maxAbs">Per-frame maximum absolute sample across channels.</param>
+            /// <param name="frames">Number of valid frames in the block.</param>
+            /// <param name="channels">Channel count (the interleave stride).</param>
+            void ProcessBlock(float[] buffer, float[] maxAbs, int frames, int channels);
             void Complete(AudioFileInfo info);
-        }
-
-        private readonly struct FullFileFrame
-        {
-            private readonly float[] _buffer;
-            private readonly int _offset;
-
-            public FullFileFrame(float[] buffer, int offset, float maxChannelAbs)
-            {
-                _buffer = buffer;
-                _offset = offset;
-                MaxChannelAbs = maxChannelAbs;
-            }
-
-            public float MaxChannelAbs { get; }
-
-            public float Sample(int channel) => _buffer[_offset + channel];
         }
 
         private sealed class SilenceContributor : IFullFileAnalysisContributor
@@ -137,43 +133,48 @@ namespace AudioQualityChecker.Services
                     : 0;
             }
 
-            public void ProcessFrame(FullFileFrame frame)
+            public void ProcessBlock(float[] buffer, float[] maxAbs, int frames, int channels)
             {
-                if (!_foundAudio)
+                for (int i = 0; i < frames; i++)
                 {
-                    if (frame.MaxChannelAbs > SilenceThresholdLinear)
-                        _foundAudio = true;
-                    else
-                        _leadingSamples++;
-                }
+                    float frameMax = maxAbs[i];
 
-                if (!_foundAudio)
-                    return;
-
-                if (frame.MaxChannelAbs <= SilenceThresholdLinear)
-                {
-                    if (_runStart < 0) _runStart = _currentPosition;
-                }
-                else
-                {
-                    if (_runStart >= 0)
+                    if (!_foundAudio)
                     {
-                        long runFrames = _currentPosition - _runStart;
-                        double runMs = (double)runFrames / _sampleRate * 1000.0;
-                        if (runMs >= _minMidGapMs)
-                        {
-                            bool inEdge = _edgeFrames > 0 && (_leadingSamples + _runStart) < _edgeFrames;
-                            if (!inEdge)
-                            {
-                                _midGaps++;
-                                _totalMidSilenceMs += runMs;
-                            }
-                        }
-                        _runStart = -1;
+                        if (frameMax > SilenceThresholdLinear)
+                            _foundAudio = true;
+                        else
+                            _leadingSamples++;
                     }
-                }
 
-                _currentPosition++;
+                    if (!_foundAudio)
+                        continue;
+
+                    if (frameMax <= SilenceThresholdLinear)
+                    {
+                        if (_runStart < 0) _runStart = _currentPosition;
+                    }
+                    else
+                    {
+                        if (_runStart >= 0)
+                        {
+                            long runFrames = _currentPosition - _runStart;
+                            double runMs = (double)runFrames / _sampleRate * 1000.0;
+                            if (runMs >= _minMidGapMs)
+                            {
+                                bool inEdge = _edgeFrames > 0 && (_leadingSamples + _runStart) < _edgeFrames;
+                                if (!inEdge)
+                                {
+                                    _midGaps++;
+                                    _totalMidSilenceMs += runMs;
+                                }
+                            }
+                            _runStart = -1;
+                        }
+                    }
+
+                    _currentPosition++;
+                }
             }
 
             public void Complete(AudioFileInfo info)
@@ -190,10 +191,20 @@ namespace AudioQualityChecker.Services
             }
         }
 
+        /// <summary>
+        /// Dynamic range, following the TT DR / foobar "DR meter" method closely enough to be
+        /// comparable with it.
+        ///
+        /// The block selection is the part that matters and the part this used to get wrong: it
+        /// sorted the per-block DR *values* and averaged the highest 20%. That picks the quietest,
+        /// most dynamic passages of a track — an intro or a fade has a huge peak-to-RMS ratio — and
+        /// reported DR several points above what every other meter said. The reference algorithm
+        /// selects the loudest 20% of blocks, by RMS, and computes DR from those.
+        /// </summary>
         private sealed class DynamicRangeContributor : IFullFileAnalysisContributor
         {
             private readonly int _blockFrames;
-            private readonly List<double> _blockDrs = new();
+            private readonly List<(double Rms, double Peak)> _blocks = new();
             private double _sumSq;
             private double _peak;
             private int _frameCount;
@@ -203,44 +214,64 @@ namespace AudioQualityChecker.Services
                 _blockFrames = sampleRate * 3;
             }
 
-            public void ProcessFrame(FullFileFrame frame)
+            public void ProcessBlock(float[] buffer, float[] maxAbs, int frames, int channels)
             {
-                double max = frame.MaxChannelAbs;
-                _sumSq += max * max;
-                if (max > _peak) _peak = max;
-                _frameCount++;
-
-                if (_frameCount >= _blockFrames)
+                for (int i = 0; i < frames; i++)
                 {
-                    if (_peak >= 1e-10)
+                    double max = maxAbs[i];
+                    _sumSq += max * max;
+                    if (max > _peak) _peak = max;
+                    _frameCount++;
+
+                    if (_frameCount >= _blockFrames)
                     {
-                        double rms = Math.Sqrt(_sumSq / _frameCount);
-                        if (rms >= 1e-10)
-                            _blockDrs.Add(20.0 * Math.Log10(_peak / rms));
+                        if (_peak >= 1e-10)
+                        {
+                            double rms = Math.Sqrt(_sumSq / _frameCount);
+                            if (rms >= 1e-10)
+                                _blocks.Add((rms, _peak));
+                        }
+                        _sumSq = 0;
+                        _peak = 0;
+                        _frameCount = 0;
                     }
-                    _sumSq = 0;
-                    _peak = 0;
-                    _frameCount = 0;
                 }
             }
 
             public void Complete(AudioFileInfo info)
             {
-                if (_blockDrs.Count < 2)
+                if (_blocks.Count < 2)
                     return;
 
-                _blockDrs.Sort();
-                int topCount = Math.Max(2, _blockDrs.Count / 5);
-                double avgDr = 0;
-                for (int idx = _blockDrs.Count - topCount; idx < _blockDrs.Count; idx++)
-                    avgDr += _blockDrs[idx];
-                avgDr /= topCount;
-                info.DynamicRange = Math.Round(avgDr, 1);
+                // Loudest 20% of blocks by RMS — not the 20% with the widest peak-to-RMS spread.
+                _blocks.Sort(static (a, b) => a.Rms.CompareTo(b.Rms));
+                int topCount = Math.Max(2, _blocks.Count / 5);
+                int firstIdx = _blocks.Count - topCount;
+
+                // RMS of those blocks' RMS values (power average, not an average of dB), and the
+                // second-highest peak among them — the reference uses the 2nd peak so one stray
+                // sample cannot set the whole figure.
+                double sumSq = 0;
+                double highestPeak = 0, secondPeak = 0;
+                for (int idx = firstIdx; idx < _blocks.Count; idx++)
+                {
+                    var (rms, peak) = _blocks[idx];
+                    sumSq += rms * rms;
+                    if (peak > highestPeak) { secondPeak = highestPeak; highestPeak = peak; }
+                    else if (peak > secondPeak) { secondPeak = peak; }
+                }
+
+                double loudRms = Math.Sqrt(sumSq / topCount);
+                double refPeak = secondPeak > 1e-10 ? secondPeak : highestPeak;
+                if (loudRms < 1e-10 || refPeak < 1e-10)
+                    return;
+
+                info.DynamicRange = Math.Round(20.0 * Math.Log10(refPeak / loudRms), 1);
                 info.HasDynamicRange = true;
             }
         }
 
-        private sealed class TruePeakContributor : IFullFileAnalysisContributor
+        internal sealed class TruePeakContributor : IFullFileAnalysisContributor
         {
             private readonly int _channels;
             private readonly double[][] _phases;
@@ -256,31 +287,50 @@ namespace AudioQualityChecker.Services
                 _filterLength = _phases[0].Length;
                 _history = new double[channels][];
                 for (int ch = 0; ch < channels; ch++)
-                    _history[ch] = new double[_filterLength];
+                    // Twice the filter length: each sample is written to slot `pos` and to
+                    // `pos + filterLength`, so buffer[m] always holds ring slot m % filterLength.
+                    // That lets the tap loop read a contiguous descending window without the
+                    // per-tap integer modulo the ring index used to need — one integer division
+                    // per tap, per phase, per channel, per frame was the single hottest
+                    // instruction in the whole full-file pass.
+                    _history[ch] = new double[_filterLength * 2];
             }
 
-            public void ProcessFrame(FullFileFrame frame)
+            public void ProcessBlock(float[] buffer, float[] maxAbs, int frames, int channels)
             {
-                for (int ch = 0; ch < _channels; ch++)
-                {
-                    double sample = frame.Sample(ch);
-                    _history[ch][_historyPosition] = sample;
-                    double abs = Math.Abs(sample);
-                    if (abs > _maxTruePeak) _maxTruePeak = abs;
+                int len = _filterLength;
+                int pos = _historyPosition;
 
-                    for (int p = 1; p < 4; p++)
+                for (int i = 0; i < frames; i++)
+                {
+                    int offset = i * channels;
+                    for (int ch = 0; ch < _channels; ch++)
                     {
-                        double interp = 0;
-                        for (int k = 0; k < _filterLength; k++)
-                        {
-                            int idx = (_historyPosition - k + _filterLength * 2) % _filterLength;
-                            interp += _history[ch][idx] * _phases[p][k];
-                        }
-                        abs = Math.Abs(interp);
+                        double[] h = _history[ch];
+                        double sample = buffer[offset + ch];
+                        h[pos] = sample;
+                        h[pos + len] = sample;
+                        double abs = Math.Abs(sample);
                         if (abs > _maxTruePeak) _maxTruePeak = abs;
+
+                        for (int p = 1; p < 4; p++)
+                        {
+                            double[] ph = _phases[p];
+                            double interp = 0;
+                            // h[pos + len - k] is ring slot (pos - k) mod len — the same element,
+                            // visited in the same ascending-k order, so the accumulation is
+                            // bit-for-bit what the modulo version produced.
+                            for (int k = 0; k < len; k++)
+                                interp += h[pos + len - k] * ph[k];
+                            abs = Math.Abs(interp);
+                            if (abs > _maxTruePeak) _maxTruePeak = abs;
+                        }
                     }
+
+                    if (++pos == len) pos = 0;
                 }
-                _historyPosition = (_historyPosition + 1) % _filterLength;
+
+                _historyPosition = pos;
             }
 
             public void Complete(AudioFileInfo info)
@@ -326,33 +376,54 @@ namespace AudioQualityChecker.Services
                 _gateBuffer = new double[_blockSamples];
                 _channelWeight = new double[channels];
                 for (int ch = 0; ch < channels; ch++)
-                    _channelWeight[ch] = (channels > 2 && (ch == 3 || ch == 4)) ? 1.41 : 1.0;
+                    _channelWeight[ch] = ChannelWeight(ch, channels);
             }
 
-            public void ProcessFrame(FullFileFrame frame)
+            /// <summary>
+            /// ITU-R BS.1770-4 channel weight for an interleaved multichannel stream in WAVE order
+            /// (FL, FR, FC, LFE, BL, BR): 1.0 for left/right/centre, 1.41 for the two surrounds,
+            /// and LFE excluded outright.
+            ///
+            /// The previous rule was `ch == 3 || ch == 4 ? 1.41 : 1.0`, which weighted LFE (ch 3) at
+            /// 1.41 and gave the right surround (ch 5) only 1.0 — so every 5.1 file's Integrated
+            /// LUFS was inflated by its LFE content and under-weighted on the right surround.
+            /// </summary>
+            private static double ChannelWeight(int ch, int channels)
             {
-                double weightedSum = 0;
-                for (int ch = 0; ch < _channels; ch++)
-                {
-                    double sample = frame.Sample(ch);
-                    sample = ApplyBiquad(ref _preFilters[ch], _preCoefficients, sample);
-                    sample = ApplyBiquad(ref _rlbFilters[ch], _rlbCoefficients, sample);
-                    weightedSum += _channelWeight[ch] * sample * sample;
-                }
+                if (channels <= 2) return 1.0;       // mono / stereo: unweighted
+                if (ch == 3) return 0.0;             // LFE is excluded from the loudness sum
+                if (ch == 4 || ch == 5) return 1.41; // BL / BR surrounds
+                return 1.0;                          // FL, FR, FC (and anything beyond 5.1)
+            }
 
-                _gateBuffer[_gatePosition] = weightedSum;
-                _gatePosition = (_gatePosition + 1) % _blockSamples;
-                _gateCount = Math.Min(_gateCount + 1, _blockSamples);
-                _stepCounter++;
-                if (_stepCounter >= _stepSamples && _gateCount >= _blockSamples)
+            public void ProcessBlock(float[] buffer, float[] maxAbs, int frames, int channels)
+            {
+                for (int i = 0; i < frames; i++)
                 {
-                    _stepCounter = 0;
-                    double sum = 0;
-                    for (int k = 0; k < _blockSamples; k++)
-                        sum += _gateBuffer[k];
-                    double meanPower = sum / _blockSamples;
-                    if (meanPower > 1e-20)
-                        _blockLoudness.Add(-0.691 + 10.0 * Math.Log10(meanPower));
+                    int offset = i * channels;
+                    double weightedSum = 0;
+                    for (int ch = 0; ch < _channels; ch++)
+                    {
+                        double sample = buffer[offset + ch];
+                        sample = ApplyBiquad(ref _preFilters[ch], _preCoefficients, sample);
+                        sample = ApplyBiquad(ref _rlbFilters[ch], _rlbCoefficients, sample);
+                        weightedSum += _channelWeight[ch] * sample * sample;
+                    }
+
+                    _gateBuffer[_gatePosition] = weightedSum;
+                    _gatePosition = (_gatePosition + 1) % _blockSamples;
+                    _gateCount = Math.Min(_gateCount + 1, _blockSamples);
+                    _stepCounter++;
+                    if (_stepCounter >= _stepSamples && _gateCount >= _blockSamples)
+                    {
+                        _stepCounter = 0;
+                        double sum = 0;
+                        for (int k = 0; k < _blockSamples; k++)
+                            sum += _gateBuffer[k];
+                        double meanPower = sum / _blockSamples;
+                        if (meanPower > 1e-20)
+                            _blockLoudness.Add(-0.691 + 10.0 * Math.Log10(meanPower));
+                    }
                 }
             }
 
@@ -379,108 +450,5 @@ namespace AudioQualityChecker.Services
             }
         }
 
-        private sealed class RipQualityContributor : IFullFileAnalysisContributor
-        {
-            private const float NoiseThreshold = 0.01f;
-            private const float ClickThreshold = 0.90f;
-
-            private readonly int _sampleRate;
-            private readonly int _channels;
-            private readonly int _zeroGapFrames;
-            private readonly bool _checkBitTruncation;
-            private readonly float[] _lastSample;
-            private readonly int[] _consecutiveIdentical;
-            private readonly float[] _previousSample;
-            private long _totalFrames;
-            private long _zeroRuns;
-            private int _currentZeroRun;
-            private long _truncatedSamples;
-            private long _stickyRuns;
-            private long _popClicks;
-            private bool _first = true;
-            private double _dcSum;
-            private long _dcCount;
-            private double _noiseSumSq;
-            private long _noiseCount;
-
-            public RipQualityContributor(AudioFileInfo info, int sampleRate, int channels)
-            {
-                _sampleRate = sampleRate;
-                _channels = channels;
-                _zeroGapFrames = sampleRate;
-                _checkBitTruncation = info.BitsPerSample == 16 && IsLosslessFile(info);
-                _lastSample = new float[channels];
-                _consecutiveIdentical = new int[channels];
-                _previousSample = new float[channels];
-            }
-
-            public void ProcessFrame(FullFileFrame frame)
-            {
-                _totalFrames++;
-                bool allZero = true;
-                for (int ch = 0; ch < _channels; ch++)
-                {
-                    float sample = frame.Sample(ch);
-                    if (Math.Abs(sample) >= 1e-7f) allZero = false;
-
-                    _dcSum += sample;
-                    _dcCount++;
-
-                    float abs = Math.Abs(sample);
-                    if (abs < NoiseThreshold)
-                    {
-                        _noiseSumSq += sample * sample;
-                        _noiseCount++;
-                    }
-
-                    if (sample == _lastSample[ch] && abs > 0.05f)
-                    {
-                        _consecutiveIdentical[ch]++;
-                        if (_consecutiveIdentical[ch] == 250) _stickyRuns++;
-                    }
-                    else
-                    {
-                        _consecutiveIdentical[ch] = 0;
-                    }
-                    _lastSample[ch] = sample;
-
-                    if (!_first && abs > 0.02f)
-                    {
-                        float diff = Math.Abs(sample - _previousSample[ch]);
-                        if (diff > ClickThreshold && diff > abs * 2.0f)
-                            _popClicks++;
-                    }
-                    _previousSample[ch] = sample;
-                }
-                _first = false;
-
-                if (allZero)
-                {
-                    _currentZeroRun++;
-                }
-                else
-                {
-                    if (_currentZeroRun >= _zeroGapFrames) _zeroRuns++;
-                    _currentZeroRun = 0;
-                }
-
-                if (_checkBitTruncation)
-                {
-                    float firstSample = frame.Sample(0);
-                    int intVal = (int)(firstSample * 32768f);
-                    if ((intVal & 0xFF) == 0 && Math.Abs(intVal) > 256)
-                        _truncatedSamples++;
-                }
-            }
-
-            public void Complete(AudioFileInfo info)
-            {
-                if (_currentZeroRun >= _zeroGapFrames) _zeroRuns++;
-                float dcOffset = _dcCount > 0 ? (float)(_dcSum / _dcCount) : 0;
-                float noiseRms = _noiseCount > 0 ? (float)Math.Sqrt(_noiseSumSq / _noiseCount) : 0;
-                FinalizeRipQuality(info, _sampleRate, _channels, _totalFrames, _zeroRuns, _stickyRuns,
-                    _popClicks, _truncatedSamples, dcOffset, noiseRms);
-            }
-        }
     }
 }

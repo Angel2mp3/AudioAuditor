@@ -58,7 +58,6 @@ public interface IAnalysisSettings
 {
     bool EnableBpmDetection { get; }
     bool EnableExperimentalAi { get; }
-    bool EnableRipQuality { get; }
     bool EnableSilenceDetection { get; }
     bool EnableFakeStereoDetection { get; }
     bool EnableDynamicRange { get; }

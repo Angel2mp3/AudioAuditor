@@ -219,6 +219,7 @@ namespace AudioQualityChecker
             NpLayoutArtistXSlider.Value = _npArtistOffsetX;
             NpLayoutArtistYSlider.Value = _npArtistOffsetY;
             NpLayoutVizYSlider.Value = _npVizOffsetY;
+            if (NpTitleWrapCheck != null) NpTitleWrapCheck.IsChecked = ThemeManager.NpTitleWrapEnabled;
             _npLayoutPopupInit = false;
         }
 
@@ -258,6 +259,7 @@ namespace AudioQualityChecker
             NpSeedLayoutSliders(fs);
             NpRefreshLayoutProfilesList();
             NpRefreshButtonCustomizeList();
+            NpRefreshSongInfoCustomizeList();
             NpLayoutPopup.IsOpen = true;
             NpLayoutPopup.Closed -= NpLayoutPopup_Closed;
             NpLayoutPopup.Closed += NpLayoutPopup_Closed;
@@ -368,6 +370,15 @@ namespace AudioQualityChecker
                 NpApplyCoverGlowBrushes(_npAlbumPrimary, _npAlbumSecondary);
             if (_npCoverGlowMotionEnabled && IsNowPlayingUiActive())
                 NpStartGlowPulse();
+            NpSavePreferences();
+        }
+
+        private void NpTitleWrap_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_npLayoutPopupInit || !IsLoaded) return;
+            ThemeManager.NpTitleWrapEnabled = NpTitleWrapCheck.IsChecked == true;
+            // Re-apply the title layout immediately. The envelope is unchanged, so nothing shifts.
+            NpApplyFullscreenScaling(WindowState == WindowState.Maximized);
             NpSavePreferences();
         }
 
@@ -775,6 +786,14 @@ namespace AudioQualityChecker
             NpBigTitle.FontSize = titleSz;
             NpBigTitle.MaxWidth = titleMaxW;
             if (NpBigTitleBorder.Child is Viewbox vb) vb.MaxHeight = titleViewboxH;
+
+            // Optional title wrap. The envelope (border/viewbox MaxHeight) is deliberately left
+            // unchanged so the layout never shifts; the Viewbox's DownOnly shrink absorbs the extra
+            // line, so a long title wraps within the same space instead of being squished onto one.
+            // (WPF's TextBlock has no MaxLines; the fixed-height Viewbox bounds the rendered size.)
+            NpBigTitle.TextWrapping = ThemeManager.NpTitleWrapEnabled
+                ? TextWrapping.Wrap
+                : TextWrapping.NoWrap;
 
             // Artist / Up-next label
             NpNextTrackLabel.FontSize = subSz;

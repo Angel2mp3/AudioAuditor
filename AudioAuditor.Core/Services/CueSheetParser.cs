@@ -26,8 +26,6 @@ namespace AudioQualityChecker.Services
 
     public static class CueSheetParser
     {
-        private static readonly Regex QuotedString = new(@"""([^""]*)""|(\S+)", RegexOptions.Compiled);
-
         /// <summary>
         /// Parse a .cue file and resolve the referenced audio file path.
         /// Returns null if the cue file is invalid or the audio file can't be found.
@@ -75,8 +73,8 @@ namespace AudioQualityChecker.Services
                     sheet.AudioFileName = val;
 
                     // Resolve relative to cue file location
-                    string resolved = Path.Combine(cueDir, val);
-                    if (File.Exists(resolved))
+                    string? resolved = ResolveInsideCueDir(cueDir, val);
+                    if (resolved != null && File.Exists(resolved))
                         sheet.AudioFilePath = resolved;
                     else
                     {
@@ -84,8 +82,8 @@ namespace AudioQualityChecker.Services
                         string baseName = Path.GetFileNameWithoutExtension(val);
                         foreach (var ext in new[] { ".flac", ".wav", ".ape", ".wv", ".mp3", ".ogg", ".m4a" })
                         {
-                            string candidate = Path.Combine(cueDir, baseName + ext);
-                            if (File.Exists(candidate))
+                            string? candidate = ResolveInsideCueDir(cueDir, baseName + ext);
+                            if (candidate != null && File.Exists(candidate))
                             {
                                 sheet.AudioFilePath = candidate;
                                 break;
@@ -147,6 +145,32 @@ namespace AudioQualityChecker.Services
             }
 
             return TimeSpan.Zero;
+        }
+
+        /// <summary>
+        /// Resolves a FILE reference against the cue's own folder, rejecting anything that lands
+        /// outside it. The name comes from the cue body, and Path.Combine silently discards the
+        /// base directory when handed an absolute path — so a cue shipped alongside a download
+        /// could otherwise aim the analyzer at any file on disk.
+        /// </summary>
+        private static string? ResolveInsideCueDir(string cueDir, string relative)
+        {
+            if (string.IsNullOrWhiteSpace(relative)) return null;
+            try
+            {
+                string root = Path.GetFullPath(string.IsNullOrEmpty(cueDir) ? "." : cueDir);
+                string full = Path.GetFullPath(Path.Combine(root, relative));
+
+                string rootWithSep = root.EndsWith(Path.DirectorySeparatorChar)
+                    ? root
+                    : root + Path.DirectorySeparatorChar;
+
+                return full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase) ? full : null;
+            }
+            catch
+            {
+                return null; // malformed path characters, too long, etc.
+            }
         }
 
         private static string ExtractQuoted(string line, int offset)

@@ -18,8 +18,92 @@ namespace AudioQualityChecker.Services
         // off-hot-path stats save on track transitions) without two writers tearing the file.
         private static readonly object _savePlayOptionsLock = new();
 
+        /// <summary>
+        /// Splits one built "Key=Value" line for <see cref="OptionsFileStore.Merge"/>. Splits on the
+        /// FIRST '=' only — values legitimately contain more of them (service URLs, ColumnLayout).
+        /// </summary>
+        private static KeyValuePair<string, string?> SplitOptionLine(string line)
+        {
+            int eq = line.IndexOf('=');
+            return eq <= 0
+                ? new KeyValuePair<string, string?>(line, "")
+                : new KeyValuePair<string, string?>(line[..eq], line[(eq + 1)..]);
+        }
+
+        // ─── Debounced save ───
+        //
+        // SavePlayOptions is expensive: it builds ~300 interpolated strings, then Merge does a full
+        // read-modify-write of options.txt via a temp file + File.Move, then the DPAPI block
+        // encrypts and writes a second file. Continuous controls (volume, EQ, crossfade and the Now
+        // Playing sliders) used to call it on EVERY ValueChanged, i.e. once per pixel of drag, all
+        // synchronously on the UI thread. Those callers now go through SavePlayOptionsDebounced and
+        // the real write happens once the user stops moving.
+        //
+        // FlushPendingPlayOptions() runs on app exit / main-window close so a drag followed by an
+        // immediate quit still persists. One-shot controls (checkboxes, pickers) keep calling
+        // SavePlayOptions directly — there is nothing to coalesce there.
+        private const int SaveDebounceMs = 500;
+        private static System.Threading.Timer? _saveDebounceTimer;
+        private static readonly object _saveDebounceLock = new();
+        private static bool _savePending;
+
+        /// <summary>
+        /// Bumped every time a settings write is requested. MainWindow pre-builds a SettingsWindow
+        /// ahead of the user clicking Settings, and that window loads its entire control state in
+        /// its constructor — so a pre-built instance goes stale the moment a setting changes from
+        /// anywhere else (Now Playing toggles, the feature-config overlay, column hide/show).
+        /// Comparing this counter tells the caller whether its pre-built window is still good.
+        /// Anything that persists a setting goes through here, so it stays correct by default.
+        /// </summary>
+        public static int SettingsRevision => System.Threading.Volatile.Read(ref _settingsRevision);
+        private static int _settingsRevision;
+
+        private static void BumpSettingsRevision() =>
+            System.Threading.Interlocked.Increment(ref _settingsRevision);
+
+        /// <summary>
+        /// Requests a settings save once the caller stops changing values. Safe to call at slider
+        /// tick rate. See <see cref="FlushPendingPlayOptions"/> for the shutdown flush.
+        /// </summary>
+        public static void SavePlayOptionsDebounced()
+        {
+            // Bump on the *request*, not on the eventual write — the value has already changed in
+            // memory, so anything caching a view of the settings is stale from this moment.
+            BumpSettingsRevision();
+            lock (_saveDebounceLock)
+            {
+                _savePending = true;
+                if (_saveDebounceTimer == null)
+                {
+                    _saveDebounceTimer = new System.Threading.Timer(_ => FlushPendingPlayOptions(),
+                        null, SaveDebounceMs, System.Threading.Timeout.Infinite);
+                }
+                else
+                {
+                    _saveDebounceTimer.Change(SaveDebounceMs, System.Threading.Timeout.Infinite);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Writes immediately if a debounced save is still pending; otherwise a no-op. Call on app
+        /// exit and main-window close so nothing is lost between the last tick and shutdown.
+        /// </summary>
+        public static void FlushPendingPlayOptions()
+        {
+            lock (_saveDebounceLock)
+            {
+                if (!_savePending) return;
+                _savePending = false;
+                _saveDebounceTimer?.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+            }
+            SavePlayOptions();
+        }
+
         public static void SavePlayOptions()
         {
+            BumpSettingsRevision();
+            bool credentialsSaved = SaveSensitiveData();
             try
             {
                 EnsureDir();
@@ -93,7 +177,7 @@ namespace AudioQualityChecker.Services
                     $"NpSearchCustomUrl6={NpSearchCustomServiceUrls[5]}",
                     $"NpSearchCustomIcon6={NpSearchCustomServiceIcons[5]}",
                     $"EqualizerEnabled={EqualizerEnabled}",
-                    $"EqualizerGains={string.Join(";", EqualizerGains.Select(g => g.ToString("F1")))}",
+                    $"EqualizerGains={string.Join(";", EqualizerGains.Select(g => g.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)))}",
                     $"DiscordRpc={DiscordRpcEnabled}",
                     $"DiscordRpcDisplayMode={DiscordRpcDisplayMode}",
                     $"DiscordRpcShowElapsed={DiscordRpcShowElapsed}",
@@ -101,7 +185,7 @@ namespace AudioQualityChecker.Services
                     $"ExportFormat={ExportFormat}",
                     $"SpatialAudio={SpatialAudioEnabled}",
                     $"ExperimentalAiDetection={ExperimentalAiDetection}",
-                    $"RipQualityEnabled={RipQualityEnabled}",
+                    $"RipLogCheckEnabled={RipLogCheckEnabled}",
                     $"SilenceDetectionEnabled={SilenceDetectionEnabled}",
                     $"FakeStereoDetectionEnabled={FakeStereoDetectionEnabled}",
                     $"DynamicRangeEnabled={DynamicRangeEnabled}",
@@ -114,11 +198,10 @@ namespace AudioQualityChecker.Services
                     $"ScanPerformanceDefaultsVersion={ScanPerformanceDefaultsVersion}",
                     $"SHLabsAiDetection={SHLabsAiDetection}",
                     $"SHLabsPrivacyAccepted={SHLabsPrivacyAccepted}",
-                    $"SHLabsCustomApiKey={SHLabsCustomApiKey}",
                     $"AiConfigDismissed={AiConfigDismissed}",
                     $"FeatureConfigVersion={FeatureConfigVersion}",
                     $"VisualizerFullVolume={VisualizerFullVolume}",
-                    $"Volume={Volume:0.##}",
+                    $"Volume={Volume.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}",
                     $"ColumnLayout={ColumnLayout}",
                     $"HiddenColumns={HiddenColumns}",
                     $"ShowFavoritesColumn={ShowFavoritesColumn}",
@@ -131,19 +214,13 @@ namespace AudioQualityChecker.Services
                     $"FeedbackActiveUsageSeconds={FeedbackActiveUsageSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
                     $"FirstScanDate={FirstScanDate:O}",
                     $"TotalFilesScannedLifetime={TotalFilesScannedLifetime}",
-                    $"TotalListeningSecondsLifetime={TotalListeningSecondsLifetime}",
+                    $"TotalListeningSecondsLifetime={TotalListeningSecondsLifetime.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
                     $"FooterSupportDismissed={FooterSupportDismissed}",
                     $"CloseToTray={CloseToTray}",
                     $"PreloadNextTrackEnabled={PreloadNextTrackEnabled}",
                     $"CheckForUpdates={CheckForUpdates}",
                     $"AnimationsEnabled={AnimationsEnabled}",
                     $"BatterySaverEnabled={BatterySaverEnabled}",
-                    $"BatterySaverEntireProgram={BatterySaverEntireProgram}",
-                    $"BatterySaverNpBackground={BatterySaverNpBackground}",
-                    $"BatterySaverVisualizer={BatterySaverVisualizer}",
-                    $"BatterySaverCoverGlow={BatterySaverCoverGlow}",
-                    $"BatterySaverLyrics={BatterySaverLyrics}",
-                    $"BatterySaverPlaybar={BatterySaverPlaybar}",
                     $"BatterySaverKeepVisualizer={BatterySaverKeepVisualizer}",
                     $"GpuRenderMode={GpuRenderMode}",
                     $"ScanCacheEnabled={ScanCacheEnabled}",
@@ -161,129 +238,7 @@ namespace AudioQualityChecker.Services
                     $"SpectrogramMagmaColormap={SpectrogramMagmaColormap}",
                     $"FrequencyCutoffAllowEnabled={FrequencyCutoffAllowEnabled}",
                     $"FrequencyCutoffAllowHz={FrequencyCutoffAllowHz}",
-                    $"NpVisualizerEnabled={NpVisualizerEnabled}",
-                    $"NpColorMatchEnabled={NpColorMatchEnabled}",
-                    $"NpColorCacheEnabled={NpColorCacheEnabled}",
-                    $"NpColorCachePersist={NpColorCachePersist}",
-                    $"NpRememberManualColorPicks={NpRememberManualColorPicks}",
-                    $"NpColorPickerMaxColors={NpColorPickerMaxColors}",
-                    $"NpAlbumBackdropEnabled={NpAlbumBackdropEnabled}",
-                    $"NpBackgroundMode={NpBackgroundMode}",
-                    $"NpCustomBackgroundImagePath={NpCustomBackgroundImagePath}",
-                    $"NpCustomBackgroundColors={NpCustomBackgroundColors}",
-                    $"NpBackgroundBlur={NpBackgroundBlur.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpBackgroundOpacity={NpBackgroundOpacity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpBackgroundHorizontalPosition={NpBackgroundHorizontalPosition.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpBackgroundVerticalPosition={NpBackgroundVerticalPosition.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpBackgroundZoom={NpBackgroundZoom.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpBackgroundBrightness={NpBackgroundBrightness.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpBackgroundAnimationMode={NpBackgroundAnimationMode}",
-                    $"NpColorDriftBackgroundEnabled={NpColorDriftBackgroundEnabled}",
-                    $"NpBackgroundUseAlbumColors={NpBackgroundUseAlbumColors}",
-                    $"NpBackgroundCycleEnabled={NpBackgroundCycleEnabled}",
-                    $"NpBackgroundCycleSpeed={NpBackgroundCycleSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpBackgroundCycleOnSongChange={NpBackgroundCycleOnSongChange}",
-                    $"NpStarDensity={NpStarDensity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpShootingStarDensity={NpShootingStarDensity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpShootingStarsEnabled={NpShootingStarsEnabled}",
-                    $"NpRainIntensity={NpRainIntensity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpRainLightningEnabled={NpRainLightningEnabled}",
-                    $"NpRainLightningPromptShown={NpRainLightningPromptShown}",
-                    $"NpRainLightningAmount={NpRainLightningAmount.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpSnowDensity={NpSnowDensity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpSnowflakeAmount={NpSnowflakeAmount.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpUnderwaterBubbleDensity={NpUnderwaterBubbleDensity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpUnderwaterCausticIntensity={NpUnderwaterCausticIntensity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpUnderwaterFishEnabled={NpUnderwaterFishEnabled}",
-                    $"NpUnderwaterSeaweedEnabled={NpUnderwaterSeaweedEnabled}",
-                    $"NpBackgroundAnimationSpeed={NpBackgroundAnimationSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"MainBackgroundImagePath={MainBackgroundImagePath}",
-                    $"MainBackgroundOpacity={MainBackgroundOpacity.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"MainBackgroundBlur={MainBackgroundBlur.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpCoverShapeMode={NpCoverShapeMode}",
-                    $"MiniCoverShapeMode={MiniCoverShapeMode}",
-                    $"MiniPlayerAlwaysOnTop={MiniPlayerAlwaysOnTop}",
-                    $"MiniVisualizerStyle={MiniVisualizerStyle}",
-                    $"MiniColorMatchEnabled={MiniColorMatchEnabled}",
-                    $"MiniPlayerLeft={MiniPlayerLeft.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"MiniPlayerTop={MiniPlayerTop.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"MiniPlayerWidth={MiniPlayerWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"MiniPlayerBaseHeight={MiniPlayerBaseHeight.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"ShowWrappedButton={ShowWrappedButton}",
-                    $"ShowMiniPlayerButton={ShowMiniPlayerButton}",
-                    $"ShowMusicServiceButtons={ShowMusicServiceButtons}",
-                    $"NpLyricsHidden={NpLyricsHidden}",
-                    $"NpTranslateEnabled={NpTranslateEnabled}",
-                    $"NpAutoSaveLyricsEnabled={NpAutoSaveLyricsEnabled}",
-                    $"NpKaraokeEnabled={NpKaraokeEnabled}",
-                    $"NpLyricMode={NpLyricMode}",
-                    $"NpFocusedLyricsBlurRadius={NpFocusedLyricsBlurRadius.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpCoverGlowMotionEnabled={NpCoverGlowMotionEnabled}",
-                    $"NpGlowMotionMode={NpGlowMotionMode}",
-                    $"NpVisualizerStyle={NpVisualizerStyle}",
-                    $"NpVizPlacement={NpVizPlacement}",
-                    $"RegionAwareSearchEnabled={RegionAwareSearchEnabled}",
                     $"StreamingRegion={StreamingRegion}",
-                    $"NpSubCoverShowArtist={NpSubCoverShowArtist}",
-                    $"NpButtonOrder={NpButtonOrder}",
-                    $"NpButtonHidden={NpButtonHidden}",
-                    $"NpTransportOrder={NpTransportOrder}",
-                    $"NpCoverSize={NpCoverSize}",
-                    $"NpTitleSize={NpTitleSize}",
-                    $"NpSubTextSize={NpSubTextSize}",
-                    $"NpLyricsSize={NpLyricsSize}",
-                    $"NpVizSize={NpVizSize}",
-                    $"NpCoverGlowSize={NpCoverGlowSize.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-                    $"NpLyricsOffsetX={NpLyricsOffsetX}",
-                    $"NpCoverOffsetX={NpCoverOffsetX}",
-                    $"NpCoverOffsetY={NpCoverOffsetY}",
-                    $"NpTitleOffsetX={NpTitleOffsetX}",
-                    $"NpTitleOffsetY={NpTitleOffsetY}",
-                    $"NpArtistOffsetX={NpArtistOffsetX}",
-                    $"NpArtistOffsetY={NpArtistOffsetY}",
-                    $"NpVizOffsetY={NpVizOffsetY}",
-                    $"NpFullscreenCoverSize={NpFullscreenCoverSize}",
-                    $"NpFullscreenTitleSize={NpFullscreenTitleSize}",
-                    $"NpFullscreenSubTextSize={NpFullscreenSubTextSize}",
-                    $"NpFullscreenLyricsSize={NpFullscreenLyricsSize}",
-                    $"NpFullscreenVizSize={NpFullscreenVizSize}",
-                    $"NpFullscreenLyricsOffsetX={NpFullscreenLyricsOffsetX}",
-                    $"NpFullscreenCoverOffsetX={NpFullscreenCoverOffsetX}",
-                    $"NpFullscreenCoverOffsetY={NpFullscreenCoverOffsetY}",
-                    $"NpFullscreenTitleOffsetX={NpFullscreenTitleOffsetX}",
-                    $"NpFullscreenTitleOffsetY={NpFullscreenTitleOffsetY}",
-                    $"NpFullscreenArtistOffsetX={NpFullscreenArtistOffsetX}",
-                    $"NpFullscreenArtistOffsetY={NpFullscreenArtistOffsetY}",
-                    $"NpFullscreenVizOffsetY={NpFullscreenVizOffsetY}",
-                    $"NpFullscreenVizPlacement={NpFullscreenVizPlacement}",
-                    $"NpVizOnCoverSize={NpVizOnCoverSize}",
-                    $"NpVizOnTitleSize={NpVizOnTitleSize}",
-                    $"NpVizOnSubTextSize={NpVizOnSubTextSize}",
-                    $"NpVizOnLyricsSize={NpVizOnLyricsSize}",
-                    $"NpVizOnVizSize={NpVizOnVizSize}",
-                    $"NpVizOnLyricsOffsetX={NpVizOnLyricsOffsetX}",
-                    $"NpVizOnCoverOffsetX={NpVizOnCoverOffsetX}",
-                    $"NpVizOnCoverOffsetY={NpVizOnCoverOffsetY}",
-                    $"NpVizOnTitleOffsetX={NpVizOnTitleOffsetX}",
-                    $"NpVizOnTitleOffsetY={NpVizOnTitleOffsetY}",
-                    $"NpVizOnArtistOffsetX={NpVizOnArtistOffsetX}",
-                    $"NpVizOnArtistOffsetY={NpVizOnArtistOffsetY}",
-                    $"NpVizOnVizOffsetY={NpVizOnVizOffsetY}",
-                    $"NpVizOnPlacement={NpVizOnPlacement}",
-                    $"NpFullscreenVizOnCoverSize={NpFullscreenVizOnCoverSize}",
-                    $"NpFullscreenVizOnTitleSize={NpFullscreenVizOnTitleSize}",
-                    $"NpFullscreenVizOnSubTextSize={NpFullscreenVizOnSubTextSize}",
-                    $"NpFullscreenVizOnLyricsSize={NpFullscreenVizOnLyricsSize}",
-                    $"NpFullscreenVizOnVizSize={NpFullscreenVizOnVizSize}",
-                    $"NpFullscreenVizOnLyricsOffsetX={NpFullscreenVizOnLyricsOffsetX}",
-                    $"NpFullscreenVizOnCoverOffsetX={NpFullscreenVizOnCoverOffsetX}",
-                    $"NpFullscreenVizOnCoverOffsetY={NpFullscreenVizOnCoverOffsetY}",
-                    $"NpFullscreenVizOnTitleOffsetX={NpFullscreenVizOnTitleOffsetX}",
-                    $"NpFullscreenVizOnTitleOffsetY={NpFullscreenVizOnTitleOffsetY}",
-                    $"NpFullscreenVizOnArtistOffsetX={NpFullscreenVizOnArtistOffsetX}",
-                    $"NpFullscreenVizOnArtistOffsetY={NpFullscreenVizOnArtistOffsetY}",
-                    $"NpFullscreenVizOnVizOffsetY={NpFullscreenVizOnVizOffsetY}",
-                    $"NpFullscreenVizOnPlacement={NpFullscreenVizOnPlacement}",
                     $"LoopMode={LoopMode}",
                     $"RenamePatternIndex={RenamePatternIndex}",
                     $"SmartRenameStyleIndex={SmartRenameStyleIndex}",
@@ -291,16 +246,23 @@ namespace AudioQualityChecker.Services
                     $"SmartRenameIncludeTrackNumbers={SmartRenameIncludeTrackNumbers}",
                     $"SmartRenameAppendDuplicateNumbers={SmartRenameAppendDuplicateNumbers}",
                     $"SmartRenameRenameCleanFiles={SmartRenameRenameCleanFiles}",
+                    $"SmartRenameNameCaseIndex={SmartRenameNameCaseIndex}",
+                    $"SmartRenameSpaceModeIndex={SmartRenameSpaceModeIndex}",
+                    $"SmartRenameStripFeaturing={SmartRenameStripFeaturing}",
+                    $"StreamingLinkPlatformIndex={StreamingLinkPlatformIndex}",
                     $"DefaultCopyFolder={DefaultCopyFolder}",
                     $"DefaultMoveFolder={DefaultMoveFolder}",
                     $"DefaultPlaylistFolder={DefaultPlaylistFolder}",
                     $"MainColorMatchEnabled={MainColorMatchEnabled}",
+                    $"MainColorMatchTargets={MainColorMatchTargets}",
+                    $"AppFontFamily={AppFontFamily}",
                     $"WelcomeVersionSeen={WelcomeVersionSeen}",
                     $"OfflineModeEnabled={OfflineModeEnabled}",
                     $"LyricsAvoidCensored={LyricsAvoidCensored}",
                     $"LibreFmEnabled={LibreFmEnabled}",
                     $"ListenBrainzEnabled={ListenBrainzEnabled}",
                     $"MalojaEnabled={MalojaEnabled}",
+                    $"SystemMediaControlsEnabled={SystemMediaControlsEnabled}",
                     $"PauseScrobbling={PauseScrobbling}",
                     $"ScrobbleAtPercent={ScrobbleAtPercent}",
                     $"ScrobbleAtSeconds={ScrobbleAtSeconds}",
@@ -308,8 +270,17 @@ namespace AudioQualityChecker.Services
                     $"ScrobbleBlacklist={ScrobbleBlacklist}",
                     $"LastSettingsTab={LastSettingsTab}"
                 };
+                // Merge rather than rewrite. A whole-file write deletes every key this build does
+                // not know about, so an older release — or a future one, after a rollback — silently
+                // drops the other's settings. Merge also writes atomically via a temp file, so an
+                // interrupted save cannot truncate options.txt.
+                lines.AddRange(NowPlayingSettings.SaveLines());
+                IEnumerable<KeyValuePair<string, string?>> optionUpdates = lines.Select(SplitOptionLine);
+                if (credentialsSaved)
+                    optionUpdates = optionUpdates.Concat(CredentialStore.Keys.Select(key =>
+                        new KeyValuePair<string, string?>(key, null)));
                 lock (_savePlayOptionsLock)
-                    File.WriteAllLines(OptionsFile, lines);
+                    OptionsFileStore.Merge(OptionsFile, optionUpdates);
             }
             catch (Exception ex)
             {
@@ -317,7 +288,10 @@ namespace AudioQualityChecker.Services
                 if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
             }
 
-            // Save sensitive Last.fm data to Documents (DPAPI-encrypted)
+        }
+
+        private static bool SaveSensitiveData()
+        {
             try
             {
                 var sensitiveDir = Path.GetDirectoryName(SensitiveFile)!;
@@ -340,14 +314,39 @@ namespace AudioQualityChecker.Services
                     $"MalojaApiKey={MalojaApiKey}",
                     $"MalojaUsername={MalojaUsername}",
                     $"DiscordRpcClientId={DiscordRpcClientId}",
-                    $"AcoustIdApiKey={AcoustIdApiKey}"
+                    $"AcoustIdApiKey={AcoustIdApiKey}",
+                    $"DiscogsToken={DiscogsToken}",
+                    $"FanartTvApiKey={FanartTvApiKey}",
+                    $"SpotifyClientId={SpotifyClientId}",
+                    $"SpotifyClientSecret={SpotifyClientSecret}",
+                    $"YouTubeApiKey={YouTubeApiKey}",
+                    $"SHLabsCustomApiKey={SHLabsCustomApiKey}"
                 };
                 var plaintext = System.Text.Encoding.UTF8.GetBytes(string.Join("\n", sensitiveLines));
                 var encrypted = System.Security.Cryptography.ProtectedData.Protect(
                     plaintext, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
-                File.WriteAllBytes(SensitiveFile, encrypted);
+                string temp = SensitiveFile + "." + Environment.ProcessId + "."
+                            + Guid.NewGuid().ToString("N")[..8] + ".tmp";
+                try
+                {
+                    File.WriteAllBytes(temp, encrypted);
+                    File.Move(temp, SensitiveFile, overwrite: true);
+                }
+                catch
+                {
+                    try { File.Delete(temp); } catch { }
+                    throw;
+                }
+                return true;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Same reasoning as the options write above: this block holds every scrobbler
+                // session key and API token, so swallowing a DPAPI or disk failure silently drops
+                // all of them and the user just sees "it forgot my Last.fm login" with no trace.
+                if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+                return false;
+            }
         }
 
         private static void LoadPlayOptions()
@@ -360,10 +359,12 @@ namespace AudioQualityChecker.Services
             MusicServiceSlots[4] = "Amazon Music";
             MusicServiceSlots[5] = "Apple Music";
 
-            bool hasNpFullscreenLayout = false;
-            bool hasNpVizOnLayout = false;
-            bool hasNpFullscreenVizOnLayout = false;
-            bool hasNpFullscreenVizPlacement = false;
+            // Legacy Battery Saver per-area mode, read only so the one surviving choice can be
+            // migrated after the loop. Both default to the old property defaults.
+            bool legacyBatteryEntireProgram = true;
+            bool legacyBatteryVisualizer = true;
+
+            var npSeen = new NowPlayingSettings.LayoutSeen();
 
             try
             {
@@ -388,7 +389,7 @@ namespace AudioQualityChecker.Services
                         case "Crossfade": Crossfade = bool.TryParse(val, out var b3) && b3; break;
                         case "GaplessEnabled": GaplessEnabled = bool.TryParse(val, out var bGap) && bGap; break;
                         case "CrossfadeDuration":
-                            if (int.TryParse(val, out var dur) && dur >= 1 && dur <= 30)
+                            if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var dur) && dur >= 1 && dur <= 30)
                                 CrossfadeDuration = dur;
                             break;
                         case "CrossfadeCurve":
@@ -431,7 +432,7 @@ namespace AudioQualityChecker.Services
                         case "SpectrogramDifferenceChannel": SpectrogramDifferenceChannel = bool.TryParse(val, out var bsd) && bsd; break;
                         case "RainbowVisualizer": RainbowVisualizerEnabled = bool.TryParse(val, out var brv) && brv; break;
                         case "VisualizerStyle":
-                            if (int.TryParse(val, out var vs) && vs >= 0 && vs <= 5)
+                            if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var vs) && vs >= 0 && vs <= 5)
                             {
                                 // Migrate old Abstract style (index 5 was removed; 5 is now VU Meter)
                                 // Old index 5 (Abstract) → 0 (Bars), old 6 (VU) → 5 (VU)
@@ -439,7 +440,7 @@ namespace AudioQualityChecker.Services
                             }
                             break;
                         case "VisualizerCycleSpeed":
-                            if (int.TryParse(val, out var vcs) && vcs >= 5 && vcs <= 60) VisualizerCycleSpeed = vcs;
+                            if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var vcs) && vcs >= 5 && vcs <= 60) VisualizerCycleSpeed = vcs;
                             break;
                         case "VisualizerCycleList":
                             VisualizerCycleList = val;
@@ -497,7 +498,7 @@ namespace AudioQualityChecker.Services
                         case "EqualizerGains":
                             var parts2 = val.Split(';');
                             for (int i = 0; i < Math.Min(parts2.Length, 10); i++)
-                                if (float.TryParse(parts2[i], out var g)) EqualizerGains[i] = g;
+                                if (float.TryParse(parts2[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var g)) EqualizerGains[i] = g;
                             break;
                         case "DiscordRpc": DiscordRpcEnabled = bool.TryParse(val, out var bdr) && bdr; break;
                         case "DiscordRpcDisplayMode":
@@ -509,10 +510,11 @@ namespace AudioQualityChecker.Services
                         case "LibreFmEnabled": LibreFmEnabled = bool.TryParse(val, out var blibre) && blibre; break;
                         case "ListenBrainzEnabled": ListenBrainzEnabled = bool.TryParse(val, out var blbz) && blbz; break;
                         case "MalojaEnabled": MalojaEnabled = bool.TryParse(val, out var bmlj) && bmlj; break;
+                        case "SystemMediaControlsEnabled": SystemMediaControlsEnabled = !(bool.TryParse(val, out var bsmtc) && !bsmtc); break;
                         case "PauseScrobbling": PauseScrobbling = bool.TryParse(val, out var bps) && bps; break;
-                        case "ScrobbleAtPercent": if (int.TryParse(val, out var sap) && sap >= 0 && sap <= 100) ScrobbleAtPercent = sap; break;
-                        case "ScrobbleAtSeconds": if (int.TryParse(val, out var sas) && sas >= 0 && sas <= 7200) ScrobbleAtSeconds = sas; break;
-                        case "MinScrobbleTrackSeconds": if (int.TryParse(val, out var msts) && msts >= 0 && msts <= 3600) MinScrobbleTrackSeconds = msts; break;
+                        case "ScrobbleAtPercent": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var sap) && sap >= 0 && sap <= 100) ScrobbleAtPercent = sap; break;
+                        case "ScrobbleAtSeconds": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var sas) && sas >= 0 && sas <= 7200) ScrobbleAtSeconds = sas; break;
+                        case "MinScrobbleTrackSeconds": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var msts) && msts >= 0 && msts <= 3600) MinScrobbleTrackSeconds = msts; break;
                         case "ScrobbleBlacklist": ScrobbleBlacklist = val; break;
                         case "ExportFormat":
                             if (new[] { "csv", "txt", "pdf", "xlsx", "docx" }.Contains(val))
@@ -520,7 +522,7 @@ namespace AudioQualityChecker.Services
                             break;
                         case "SpatialAudio": SpatialAudioEnabled = bool.TryParse(val, out var bsa) && bsa; break;
                         case "ExperimentalAiDetection": ExperimentalAiDetection = bool.TryParse(val, out var bea) && bea; AudioAnalyzer.EnableExperimentalAi = ExperimentalAiDetection; break;
-                        case "RipQualityEnabled": RipQualityEnabled = bool.TryParse(val, out var brq) && brq; AudioAnalyzer.EnableRipQuality = RipQualityEnabled; break;
+                        case "RipLogCheckEnabled": RipLogCheckEnabled = bool.TryParse(val, out var brq) && brq; break;
                         case "SilenceDetectionEnabled": SilenceDetectionEnabled = bool.TryParse(val, out var bSilDet) && bSilDet; AudioAnalyzer.EnableSilenceDetection = SilenceDetectionEnabled; break;
                         case "FakeStereoDetectionEnabled": FakeStereoDetectionEnabled = !(bool.TryParse(val, out var bFsDet) && !bFsDet); AudioAnalyzer.EnableFakeStereoDetection = FakeStereoDetectionEnabled; break;
                         case "DynamicRangeEnabled": DynamicRangeEnabled = bool.TryParse(val, out var bDrEn) && bDrEn; AudioAnalyzer.EnableDynamicRange = DynamicRangeEnabled; break;
@@ -548,32 +550,31 @@ namespace AudioQualityChecker.Services
                         case "ShowFavoritesColumn": ShowFavoritesColumn = bool.TryParse(val, out var bsfc) && bsfc; break;
                         case "UserShownColumns": SetUserShownColumns(val); break;
                         case "MaxConcurrency":
-                            if (int.TryParse(val, out var mc) && mc >= 0 && mc <= Environment.ProcessorCount)
+                            if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var mc) && mc >= 0 && mc <= Environment.ProcessorCount)
                                 _maxConcurrency = mc;
                             break;
                         case "MaxMemoryMB":
-                            if (int.TryParse(val, out var mm) && mm >= 0 && mm <= (int)Math.Min(TotalSystemMemoryMB, 65536))
+                            if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var mm) && mm >= 0 && mm <= (int)Math.Min(TotalSystemMemoryMB, 65536))
                                 _maxMemoryMB = mm;
                             break;
                         case "DonationDismissed": DonationDismissed = bool.TryParse(val, out var bdd) && bdd; break;
                         case "Donation30DayShown": Donation30DayShown = bool.TryParse(val, out var d30) && d30; break;
                         case "FeedbackOneHourShown": FeedbackOneHourShown = bool.TryParse(val, out var f1h) && f1h; break;
-                        case "FeedbackActiveUsageSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var faus)) FeedbackActiveUsageSeconds = Math.Clamp(faus, 0, 3600); break;
-                        case "FirstScanDate": if (DateTime.TryParse(val, out var fsd)) FirstScanDate = fsd; break;
-                        case "TotalFilesScannedLifetime": if (int.TryParse(val, out var tfsl)) TotalFilesScannedLifetime = tfsl; break;
-                        case "TotalListeningSecondsLifetime": if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tlsl)) TotalListeningSecondsLifetime = tlsl; break;
+                        case "FeedbackActiveUsageSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var faus)) FeedbackActiveUsageSeconds = Math.Clamp(faus, 0, 3600); break;
+                        case "FirstScanDate": if (DateTime.TryParse(val, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var fsd)) FirstScanDate = fsd; break;
+                        case "TotalFilesScannedLifetime": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var tfsl)) TotalFilesScannedLifetime = tfsl; break;
+                        case "TotalListeningSecondsLifetime": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tlsl)) TotalListeningSecondsLifetime = tlsl; break;
                         case "FooterSupportDismissed": FooterSupportDismissed = bool.TryParse(val, out var bfs) && bfs; break;
                         case "CloseToTray": CloseToTray = bool.TryParse(val, out var bct) && bct; break;
                         case "PreloadNextTrackEnabled": PreloadNextTrackEnabled = !bool.TryParse(val, out var bpte) || bpte; break; // default true
                         case "CheckForUpdates": CheckForUpdates = !bool.TryParse(val, out var bcu) || bcu; break; // default true
                         case "AnimationsEnabled": AnimationsEnabled = !bool.TryParse(val, out var bae) || bae; break; // default true
                         case "BatterySaverEnabled": BatterySaverEnabled = bool.TryParse(val, out var bbse) && bbse; break; // default false
-                        case "BatterySaverEntireProgram": BatterySaverEntireProgram = !bool.TryParse(val, out var bbsep) || bbsep; break; // default true
-                        case "BatterySaverNpBackground": BatterySaverNpBackground = !bool.TryParse(val, out var bbsnb) || bbsnb; break; // default true
-                        case "BatterySaverVisualizer": BatterySaverVisualizer = !bool.TryParse(val, out var bbsv) || bbsv; break; // default true
-                        case "BatterySaverCoverGlow": BatterySaverCoverGlow = !bool.TryParse(val, out var bbscg) || bbscg; break; // default true
-                        case "BatterySaverLyrics": BatterySaverLyrics = !bool.TryParse(val, out var bbsl) || bbsl; break; // default true
-                        case "BatterySaverPlaybar": BatterySaverPlaybar = !bool.TryParse(val, out var bbsp) || bbsp; break; // default true
+                        // Retired per-area Battery Saver keys. Only these two feed the migration
+                        // below; NpBackground/CoverGlow/Lyrics/Playbar have no equivalent now and
+                        // fall through as unknown keys.
+                        case "BatterySaverEntireProgram": legacyBatteryEntireProgram = !bool.TryParse(val, out var bbsep) || bbsep; break;
+                        case "BatterySaverVisualizer": legacyBatteryVisualizer = !bool.TryParse(val, out var bbsv) || bbsv; break;
                         case "BatterySaverKeepVisualizer": BatterySaverKeepVisualizer = bool.TryParse(val, out var bbskv) && bbskv; break; // default false
                         case "GpuRenderMode": GpuRenderMode = ParseGpuRenderMode(val); break; // default Auto
                         case "ScanCacheEnabled": ScanCacheEnabled = bool.TryParse(val, out var bsce) && bsce; break;
@@ -581,230 +582,44 @@ namespace AudioQualityChecker.Services
                         case "RestoreSessionCacheNoticeShown": RestoreSessionCacheNoticeShown = bool.TryParse(val, out var brsn) && brsn; break;
                         case "FocusNewlyAddedFilesEnabled": FocusNewlyAddedFilesEnabled = !bool.TryParse(val, out var bfnaf) || bfnaf; break;
                         case "SilenceMinGapEnabled": SilenceMinGapEnabled = bool.TryParse(val, out var bsmg) && bsmg; AudioAnalyzer.SilenceMinGapEnabled = SilenceMinGapEnabled; break;
-                        case "SilenceMinGapSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var smgs) && smgs > 0) { SilenceMinGapSeconds = smgs; AudioAnalyzer.SilenceMinGapSeconds = smgs; } break;
+                        case "SilenceMinGapSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var smgs) && smgs > 0) { SilenceMinGapSeconds = smgs; AudioAnalyzer.SilenceMinGapSeconds = smgs; } break;
                         case "SilenceSkipEdgesEnabled": SilenceSkipEdgesEnabled = bool.TryParse(val, out var bsse) && bsse; AudioAnalyzer.SilenceSkipEdgesEnabled = SilenceSkipEdgesEnabled; break;
-                        case "SilenceSkipEdgeSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var sses) && sses > 0) { SilenceSkipEdgeSeconds = sses; AudioAnalyzer.SilenceSkipEdgeSeconds = sses; } break;
+                        case "SilenceSkipEdgeSeconds": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var sses) && sses > 0) { SilenceSkipEdgeSeconds = sses; AudioAnalyzer.SilenceSkipEdgeSeconds = sses; } break;
                         case "CrashLoggingEnabled": CrashLoggingEnabled = !bool.TryParse(val, out var bcl) || bcl; break;
                         case "StatsCollectionEnabled": StatsCollectionEnabled = bool.TryParse(val, out var bsc) && bsc; break;
                         case "AlwaysFullAnalysis": AlwaysFullAnalysis = bool.TryParse(val, out var bafa) && bafa; AudioAnalyzer.AlwaysFullAnalysis = AlwaysFullAnalysis; break;
                         case "SpectrogramHiFiMode": SpectrogramHiFiMode = bool.TryParse(val, out var bshf) && bshf; break;
                         case "SpectrogramMagmaColormap": SpectrogramMagmaColormap = bool.TryParse(val, out var bsmc) && bsmc; break;
                         case "FrequencyCutoffAllowEnabled": FrequencyCutoffAllowEnabled = bool.TryParse(val, out var bfca) && bfca; AudioAnalyzer.FrequencyCutoffAllowEnabled = FrequencyCutoffAllowEnabled; break;
-                        case "FrequencyCutoffAllowHz": if (int.TryParse(val, out var fcah) && fcah > 0) { FrequencyCutoffAllowHz = fcah; AudioAnalyzer.FrequencyCutoffAllowHz = fcah; } break;
-                        case "NpVisualizerEnabled": NpVisualizerEnabled = bool.TryParse(val, out var bNpViz) && bNpViz; break;
-                        case "NpColorMatchEnabled": NpColorMatchEnabled = bool.TryParse(val, out var bNpCm) && bNpCm; break;
-                        case "NpColorCacheEnabled": NpColorCacheEnabled = bool.TryParse(val, out var bNpCc) && bNpCc; break;
-                        case "NpColorCachePersist": NpColorCachePersist = bool.TryParse(val, out var bNpCp) && bNpCp; break;
-                        case "NpRememberManualColorPicks": NpRememberManualColorPicks = !bool.TryParse(val, out var bNpRmcp) || bNpRmcp; break;
-                        case "NpColorPickerMaxColors": if (int.TryParse(val, out var iNpCpmc)) NpColorPickerMaxColors = iNpCpmc; break;
-                        case "NpAlbumBackdropEnabled": NpAlbumBackdropEnabled = bool.TryParse(val, out var bNpAbe) && bNpAbe; break;
-                        case "NpBackgroundMode": NpBackgroundMode = string.IsNullOrWhiteSpace(val) ? "AlbumArt" : val; break;
-                        case "NpCustomBackgroundImagePath": NpCustomBackgroundImagePath = val; break;
-                        case "NpCustomBackgroundColors": NpCustomBackgroundColors = val; break;
-                        case "NpBackgroundBlur":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var npbb))
-                                NpBackgroundBlur = Math.Clamp(npbb, 0, 48);
-                            break;
-                        case "NpBackgroundOpacity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var npbo))
-                                NpBackgroundOpacity = Math.Clamp(npbo, 0, 0.8);
-                            break;
-                        case "NpBackgroundHorizontalPosition":
-                        case "NpBackgroundFocusX":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var npbfx))
-                                NpBackgroundHorizontalPosition = Math.Clamp(npbfx, 0, 1);
-                            break;
-                        case "NpBackgroundVerticalPosition":
-                        case "NpBackgroundFocusY":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var npbfy))
-                                NpBackgroundVerticalPosition = Math.Clamp(npbfy, 0, 1);
-                            break;
-                        case "NpBackgroundZoom":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var npbz))
-                                NpBackgroundZoom = Math.Clamp(npbz, 1, 2.5);
-                            break;
-                        case "NpBackgroundBrightness":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var npbr))
-                                NpBackgroundBrightness = Math.Clamp(npbr, 0.35, 1.6);
-                            break;
-                        case "NpBackgroundAnimationMode": NpBackgroundAnimationMode = NormalizeNpBackgroundAnimationMode(val); break;
-                        case "NpColorDriftBackgroundEnabled": NpColorDriftBackgroundEnabled = bool.TryParse(val, out var ncdbe) && ncdbe; break;
-                        case "NpBackgroundUseAlbumColors": NpBackgroundUseAlbumColors = bool.TryParse(val, out var nbbac) && nbbac; break;
-                        case "NpBackgroundCycleEnabled": NpBackgroundCycleEnabled = bool.TryParse(val, out var nbce) && nbce; break;
-                        case "NpBackgroundCycleSpeed":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nbcs))
-                                NpBackgroundCycleSpeed = Math.Clamp(nbcs, 0.25, 3.0);
-                            break;
-                        case "NpBackgroundCycleOnSongChange": NpBackgroundCycleOnSongChange = bool.TryParse(val, out var nbcosc) && nbcosc; break;
-                        case "NpStarDensity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nsd))
-                                NpStarDensity = ClampNpStarDensity(nsd);
-                            break;
-                        case "NpShootingStarDensity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nssd))
-                                NpShootingStarDensity = ClampNpShootingStarDensity(nssd);
-                            break;
-                        case "NpShootingStarsEnabled": NpShootingStarsEnabled = !bool.TryParse(val, out var nsse) || nsse; break;
-                        case "NpRainIntensity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nri))
-                                NpRainIntensity = ClampNpRainIntensity(nri);
-                            break;
-                        case "NpRainLightningEnabled": NpRainLightningEnabled = bool.TryParse(val, out var nrle) && nrle; break;
-                        case "NpRainLightningPromptShown": NpRainLightningPromptShown = bool.TryParse(val, out var nrlps) && nrlps; break;
-                        case "NpRainLightningAmount":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nrla))
-                                NpRainLightningAmount = ClampNpRainLightningAmount(nrla);
-                            break;
-                        case "NpSnowDensity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nsdn))
-                                NpSnowDensity = ClampNpSnowDensity(nsdn);
-                            break;
-                        case "NpSnowflakeAmount":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nsfa))
-                                NpSnowflakeAmount = ClampNpSnowflakeAmount(nsfa);
-                            break;
-                        case "NpUnderwaterBubbleDensity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nubd))
-                                NpUnderwaterBubbleDensity = ClampNpUnderwaterBubbleDensity(nubd);
-                            break;
-                        case "NpUnderwaterCausticIntensity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nuci))
-                                NpUnderwaterCausticIntensity = ClampNpUnderwaterCausticIntensity(nuci);
-                            break;
-                        case "NpUnderwaterFishEnabled": NpUnderwaterFishEnabled = !bool.TryParse(val, out var nufe) || nufe; break;
-                        case "NpUnderwaterSeaweedEnabled": NpUnderwaterSeaweedEnabled = !bool.TryParse(val, out var nuse) || nuse; break;
-                        case "NpBackgroundAnimationSpeed":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nbas))
-                                NpBackgroundAnimationSpeed = ClampNpBackgroundAnimationSpeed(nbas);
-                            break;
-                        case "MainBackgroundImagePath": MainBackgroundImagePath = val; break;
-                        case "MainBackgroundOpacity":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mbo))
-                                MainBackgroundOpacity = Math.Clamp(mbo, 0, 0.8);
-                            break;
-                        case "MainBackgroundBlur":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mbb))
-                                MainBackgroundBlur = Math.Clamp(mbb, 0, 48);
-                            break;
-                        case "NpCoverShapeMode": NpCoverShapeMode = NormalizeCoverShapeMode(val); break;
-                        case "MiniCoverShapeMode": MiniCoverShapeMode = NormalizeCoverShapeMode(val) == "Default" ? "Rounded" : NormalizeCoverShapeMode(val); break;
-                        case "MiniPlayerAlwaysOnTop": MiniPlayerAlwaysOnTop = !bool.TryParse(val, out var miniAlwaysOnTop) || miniAlwaysOnTop; break;
-                        case "MiniVisualizerStyle": if (int.TryParse(val, out var mvs) && mvs is >= -1 and <= 4) MiniVisualizerStyle = mvs; break;
-                        case "MiniColorMatchEnabled": MiniColorMatchEnabled = bool.TryParse(val, out var mcme) && mcme; break;
-                        case "MiniPlayerLeft": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mpl)) MiniPlayerLeft = mpl; break;
-                        case "MiniPlayerTop": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mpt)) MiniPlayerTop = mpt; break;
-                        case "MiniPlayerWidth": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mpw)) MiniPlayerWidth = mpw; break;
-                        case "MiniPlayerBaseHeight": if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mpbh)) MiniPlayerBaseHeight = mpbh; break;
-                        case "ShowWrappedButton": ShowWrappedButton = !bool.TryParse(val, out var bSwb) || bSwb; break; // default true
-                        case "ShowMiniPlayerButton": ShowMiniPlayerButton = !bool.TryParse(val, out var bSmpb) || bSmpb; break; // default true
-                        case "ShowMusicServiceButtons": ShowMusicServiceButtons = !bool.TryParse(val, out var bSmsb) || bSmsb; break; // default true
-                        case "NpLyricsHidden": NpLyricsHidden = bool.TryParse(val, out var bNpLh) && bNpLh; break;
-                        case "NpTranslateEnabled": NpTranslateEnabled = bool.TryParse(val, out var bNpTr) && bNpTr; break;
-                        case "NpAutoSaveLyricsEnabled": NpAutoSaveLyricsEnabled = bool.TryParse(val, out var bNpAs) && bNpAs; break;
-                        case "NpKaraokeEnabled": NpKaraokeEnabled = bool.TryParse(val, out var bNpKa) && bNpKa; break;
-                        // "Uniform" was removed as an option — migrate any saved Uniform to Standard.
-                        case "NpLyricMode": if (System.Enum.TryParse<NpLyricDisplayMode>(val, out var nlm)) NpLyricMode = nlm == NpLyricDisplayMode.Uniform ? NpLyricDisplayMode.Standard : nlm; break;
-                        // Legacy (pre-3-mode) key: a saved "on" focused-lyrics flag maps to Blur mode.
-                        case "NpFocusedLyricsEnabled": if (bool.TryParse(val, out var bNpFl) && bNpFl) NpLyricMode = NpLyricDisplayMode.Blur; break;
-                        case "NpFocusedLyricsBlurRadius":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var nflb)
-                                && nflb >= 0 && nflb <= 16.0)
-                                NpFocusedLyricsBlurRadius = nflb;
-                            break;
-                        case "NpCoverGlowMotionEnabled": NpCoverGlowMotionEnabled = !bool.TryParse(val, out var bNpGm) || bNpGm; break;
-                        case "NpGlowMotionMode": if (Enum.TryParse<GlowMotionMode>(val, true, out var bNpGmm)) NpGlowMotionMode = bNpGmm; break;
-                        case "NpVisualizerStyle":
-                            if (int.TryParse(val, out var nvs) && nvs >= 0 && nvs <= 5)
-                            {
-                                // Migrate old Abstract style (index 5 was removed; 5 is now VU Meter)
-                                NpVisualizerStyle = nvs == 5 ? 0 : nvs;
-                            }
-                            break;
-                        case "NpVizPlacement":
-                            if (int.TryParse(val, out var nvp) && nvp >= 0 && nvp <= 1) NpVizPlacement = nvp;
-                            break;
-                        case "RegionAwareSearchEnabled": RegionAwareSearchEnabled = !(bool.TryParse(val, out var bra) && !bra); break; // default true
+                        case "FrequencyCutoffAllowHz": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var fcah) && fcah > 0) { FrequencyCutoffAllowHz = fcah; AudioAnalyzer.FrequencyCutoffAllowHz = fcah; } break;
                         case "StreamingRegion": StreamingRegion = string.IsNullOrWhiteSpace(val) ? "us" : val; break;
-                        case "NpSubCoverShowArtist": NpSubCoverShowArtist = !bool.TryParse(val, out var bNpSca) || bNpSca; break; // default true
-                        case "NpButtonOrder": NpButtonOrder = val ?? ""; break;
-                        case "NpButtonHidden": NpButtonHidden = val ?? ""; break;
-                        case "NpTransportOrder": NpTransportOrder = val ?? ""; break;
-                        case "NpCoverSize": if (int.TryParse(val, out var ncs) && ncs >= 0 && ncs <= 900) NpCoverSize = ncs; break;
-                        case "NpTitleSize": if (int.TryParse(val, out var nts) && nts >= 0 && nts <= 72) NpTitleSize = nts; break;
-                        case "NpSubTextSize": if (int.TryParse(val, out var nss) && nss >= 0 && nss <= 36) NpSubTextSize = nss; break;
-                        case "NpLyricsSize": if (int.TryParse(val, out var nls) && nls >= 0 && nls <= 72) NpLyricsSize = nls; break;
-                        case "NpVizSize": if (int.TryParse(val, out var nvz) && nvz >= 0 && nvz <= 400) NpVizSize = nvz; break;
-                        case "NpCoverGlowSize":
-                            if (double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ncgs)
-                                && ncgs >= 0 && ncgs <= 2.0)
-                                NpCoverGlowSize = ncgs;
-                            break;
-                        case "NpLyricsOffsetX": if (int.TryParse(val, out var nlx) && nlx >= 0 && nlx <= 500) NpLyricsOffsetX = nlx; break;
-                        case "NpCoverOffsetX": if (int.TryParse(val, out var ncox) && ncox >= -200 && ncox <= 200) NpCoverOffsetX = ncox; break;
-                        case "NpCoverOffsetY": if (int.TryParse(val, out var ncoy) && ncoy >= -200 && ncoy <= 200) NpCoverOffsetY = ncoy; break;
-                        case "NpTitleOffsetX": if (int.TryParse(val, out var ntox) && ntox >= -200 && ntox <= 200) NpTitleOffsetX = ntox; break;
-                        case "NpTitleOffsetY": if (int.TryParse(val, out var ntoy) && ntoy >= -200 && ntoy <= 200) NpTitleOffsetY = ntoy; break;
-                        case "NpArtistOffsetX": if (int.TryParse(val, out var naox) && naox >= -200 && naox <= 200) NpArtistOffsetX = naox; break;
-                        case "NpArtistOffsetY": if (int.TryParse(val, out var naoy) && naoy >= -200 && naoy <= 200) NpArtistOffsetY = naoy; break;
-                        case "NpVizOffsetY": if (int.TryParse(val, out var nvoy) && nvoy >= -200 && nvoy <= 200) NpVizOffsetY = nvoy; break;
-                        case "NpFullscreenCoverSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfcs) && nfcs >= 0 && nfcs <= 900) NpFullscreenCoverSize = nfcs; break;
-                        case "NpFullscreenTitleSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfts) && nfts >= 0 && nfts <= 72) NpFullscreenTitleSize = nfts; break;
-                        case "NpFullscreenSubTextSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfss) && nfss >= 0 && nfss <= 36) NpFullscreenSubTextSize = nfss; break;
-                        case "NpFullscreenLyricsSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfls) && nfls >= 0 && nfls <= 72) NpFullscreenLyricsSize = nfls; break;
-                        case "NpFullscreenVizSize": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfvz) && nfvz >= 0 && nfvz <= 400) NpFullscreenVizSize = nfvz; break;
-                        case "NpFullscreenLyricsOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nflx) && nflx >= 0 && nflx <= 500) NpFullscreenLyricsOffsetX = nflx; break;
-                        case "NpFullscreenCoverOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfcox) && nfcox >= -200 && nfcox <= 200) NpFullscreenCoverOffsetX = nfcox; break;
-                        case "NpFullscreenCoverOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfcoy) && nfcoy >= -200 && nfcoy <= 200) NpFullscreenCoverOffsetY = nfcoy; break;
-                        case "NpFullscreenTitleOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nftox) && nftox >= -200 && nftox <= 200) NpFullscreenTitleOffsetX = nftox; break;
-                        case "NpFullscreenTitleOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nftoy) && nftoy >= -200 && nftoy <= 200) NpFullscreenTitleOffsetY = nftoy; break;
-                        case "NpFullscreenArtistOffsetX": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfaox) && nfaox >= -200 && nfaox <= 200) NpFullscreenArtistOffsetX = nfaox; break;
-                        case "NpFullscreenArtistOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfaoy) && nfaoy >= -200 && nfaoy <= 200) NpFullscreenArtistOffsetY = nfaoy; break;
-                        case "NpFullscreenVizOffsetY": hasNpFullscreenLayout = true; if (int.TryParse(val, out var nfvoy) && nfvoy >= -200 && nfvoy <= 200) NpFullscreenVizOffsetY = nfvoy; break;
-                        case "NpFullscreenVizPlacement": hasNpFullscreenLayout = true; hasNpFullscreenVizPlacement = true; if (int.TryParse(val, out var nfvp) && nfvp >= 0 && nfvp <= 1) NpFullscreenVizPlacement = nfvp; break;
-                        case "NpVizOnCoverSize": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvocs) && nvocs >= 0 && nvocs <= 900) NpVizOnCoverSize = nvocs; break;
-                        case "NpVizOnTitleSize": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvots) && nvots >= 0 && nvots <= 72) NpVizOnTitleSize = nvots; break;
-                        case "NpVizOnSubTextSize": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvoss) && nvoss >= 0 && nvoss <= 36) NpVizOnSubTextSize = nvoss; break;
-                        case "NpVizOnLyricsSize": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvols) && nvols >= 0 && nvols <= 72) NpVizOnLyricsSize = nvols; break;
-                        case "NpVizOnVizSize": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvovz) && nvovz >= 0 && nvovz <= 400) NpVizOnVizSize = nvovz; break;
-                        case "NpVizOnLyricsOffsetX": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvolx) && nvolx >= 0 && nvolx <= 500) NpVizOnLyricsOffsetX = nvolx; break;
-                        case "NpVizOnCoverOffsetX": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvocox) && nvocox >= -200 && nvocox <= 200) NpVizOnCoverOffsetX = nvocox; break;
-                        case "NpVizOnCoverOffsetY": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvocoy) && nvocoy >= -200 && nvocoy <= 200) NpVizOnCoverOffsetY = nvocoy; break;
-                        case "NpVizOnTitleOffsetX": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvotox) && nvotox >= -200 && nvotox <= 200) NpVizOnTitleOffsetX = nvotox; break;
-                        case "NpVizOnTitleOffsetY": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvotoy) && nvotoy >= -200 && nvotoy <= 200) NpVizOnTitleOffsetY = nvotoy; break;
-                        case "NpVizOnArtistOffsetX": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvoaox) && nvoaox >= -200 && nvoaox <= 200) NpVizOnArtistOffsetX = nvoaox; break;
-                        case "NpVizOnArtistOffsetY": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvoaoy) && nvoaoy >= -200 && nvoaoy <= 200) NpVizOnArtistOffsetY = nvoaoy; break;
-                        case "NpVizOnVizOffsetY": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvovoy) && nvovoy >= -200 && nvovoy <= 200) NpVizOnVizOffsetY = nvovoy; break;
-                        case "NpVizOnPlacement": hasNpVizOnLayout = true; if (int.TryParse(val, out var nvop) && nvop >= 0 && nvop <= 1) NpVizOnPlacement = nvop; break;
-                        case "NpFullscreenVizOnCoverSize": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvocs) && nfvocs >= 0 && nfvocs <= 900) NpFullscreenVizOnCoverSize = nfvocs; break;
-                        case "NpFullscreenVizOnTitleSize": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvots) && nfvots >= 0 && nfvots <= 72) NpFullscreenVizOnTitleSize = nfvots; break;
-                        case "NpFullscreenVizOnSubTextSize": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvoss) && nfvoss >= 0 && nfvoss <= 36) NpFullscreenVizOnSubTextSize = nfvoss; break;
-                        case "NpFullscreenVizOnLyricsSize": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvols) && nfvols >= 0 && nfvols <= 72) NpFullscreenVizOnLyricsSize = nfvols; break;
-                        case "NpFullscreenVizOnVizSize": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvovz) && nfvovz >= 0 && nfvovz <= 400) NpFullscreenVizOnVizSize = nfvovz; break;
-                        case "NpFullscreenVizOnLyricsOffsetX": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvolx) && nfvolx >= 0 && nfvolx <= 500) NpFullscreenVizOnLyricsOffsetX = nfvolx; break;
-                        case "NpFullscreenVizOnCoverOffsetX": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvocox) && nfvocox >= -200 && nfvocox <= 200) NpFullscreenVizOnCoverOffsetX = nfvocox; break;
-                        case "NpFullscreenVizOnCoverOffsetY": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvocoy) && nfvocoy >= -200 && nfvocoy <= 200) NpFullscreenVizOnCoverOffsetY = nfvocoy; break;
-                        case "NpFullscreenVizOnTitleOffsetX": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvotox) && nfvotox >= -200 && nfvotox <= 200) NpFullscreenVizOnTitleOffsetX = nfvotox; break;
-                        case "NpFullscreenVizOnTitleOffsetY": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvotoy) && nfvotoy >= -200 && nfvotoy <= 200) NpFullscreenVizOnTitleOffsetY = nfvotoy; break;
-                        case "NpFullscreenVizOnArtistOffsetX": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvoaox) && nfvoaox >= -200 && nfvoaox <= 200) NpFullscreenVizOnArtistOffsetX = nfvoaox; break;
-                        case "NpFullscreenVizOnArtistOffsetY": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvoaoy) && nfvoaoy >= -200 && nfvoaoy <= 200) NpFullscreenVizOnArtistOffsetY = nfvoaoy; break;
-                        case "NpFullscreenVizOnVizOffsetY": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvovoy) && nfvovoy >= -200 && nfvovoy <= 200) NpFullscreenVizOnVizOffsetY = nfvovoy; break;
-                        case "NpFullscreenVizOnPlacement": hasNpFullscreenVizOnLayout = true; if (int.TryParse(val, out var nfvop) && nfvop >= 0 && nfvop <= 1) NpFullscreenVizOnPlacement = nfvop; break;
                         case "LoopMode": if (Enum.TryParse<LoopMode>(val, out var lm)) LoopMode = lm; break;
-                        case "RenamePatternIndex": if (int.TryParse(val, out var rpi) && rpi >= 0 && rpi <= 2) RenamePatternIndex = rpi; break;
-                        case "SmartRenameStyleIndex": if (int.TryParse(val, out var srsi) && srsi >= 0 && srsi <= 4) SmartRenameStyleIndex = srsi; break;
-                        case "SmartRenameFolderIndex": if (int.TryParse(val, out var srfi) && srfi >= 0 && srfi <= 2) SmartRenameFolderIndex = srfi; break;
+                        case "RenamePatternIndex": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var rpi) && rpi >= 0 && rpi <= 2) RenamePatternIndex = rpi; break;
+                        // 0-5: the Batch Editor's style combo ends at 5 ("Custom"), which SaveSmartSettings
+                        // writes. A <= 4 bound here silently dropped Custom back to the default on restart.
+                        case "SmartRenameStyleIndex": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var srsi) && srsi >= 0 && srsi <= 5) SmartRenameStyleIndex = srsi; break;
+                        case "SmartRenameFolderIndex": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var srfi) && srfi >= 0 && srfi <= 2) SmartRenameFolderIndex = srfi; break;
                         case "SmartRenameIncludeTrackNumbers": SmartRenameIncludeTrackNumbers = !(bool.TryParse(val, out var sritn) && !sritn); break;
                         case "SmartRenameAppendDuplicateNumbers": SmartRenameAppendDuplicateNumbers = bool.TryParse(val, out var sradn) && sradn; break;
                         case "SmartRenameRenameCleanFiles": SmartRenameRenameCleanFiles = bool.TryParse(val, out var srrcf) && srrcf; break;
+                        case "SmartRenameNameCaseIndex": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var srnci) && srnci >= 0 && srnci <= 3) SmartRenameNameCaseIndex = srnci; break;
+                        case "SmartRenameSpaceModeIndex": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var srsmi) && srsmi >= 0 && srsmi <= 2) SmartRenameSpaceModeIndex = srsmi; break;
+                        case "SmartRenameStripFeaturing": SmartRenameStripFeaturing = bool.TryParse(val, out var srsf) && srsf; break;
+                        case "StreamingLinkPlatformIndex": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var slpi) && slpi >= 0 && slpi <= 3) StreamingLinkPlatformIndex = slpi; break;
                         case "DefaultCopyFolder": DefaultCopyFolder = val; break;
                         case "DefaultMoveFolder": DefaultMoveFolder = val; break;
                         case "DefaultPlaylistFolder": DefaultPlaylistFolder = val; break;
                         case "MainColorMatchEnabled": MainColorMatchEnabled = bool.TryParse(val, out var bcm) && bcm; break;
+                        case "MainColorMatchTargets": MainColorMatchTargets = Enum.TryParse<ColorMatchTarget>(val, out var mainCmt) ? mainCmt : ColorMatchTarget.All; break;
+                        case "AppFontFamily": AppFontFamily = string.IsNullOrWhiteSpace(val) ? "Segoe UI" : val; break;
                         case "OfflineModeEnabled": OfflineModeEnabled = bool.TryParse(val, out var bom) && bom; break;
                         case "LyricsAvoidCensored": LyricsAvoidCensored = bool.TryParse(val, out var blac) && blac; break;
-                        case "LastSettingsTab": if (int.TryParse(val, out var lst) && lst >= 0 && lst <= 7) LastSettingsTab = lst; break;
+                        case "LastSettingsTab": if (int.TryParse(val, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var lst) && lst >= 0 && lst <= 7) LastSettingsTab = lst; break;
                         case "CrossfadeOnManualSkip": CrossfadeOnManualSkip = !(bool.TryParse(val, out var bcoms) && !bcoms); break; // default true
 
+                        // Every Now Playing / background / mini-player key is owned by Core so both
+                        // builds parse it identically. Unrecognised keys still fall through untouched.
+                        default: NowPlayingSettings.TryLoad(key, val, ref npSeen); break;
                     }
                 }
             }
@@ -813,72 +628,16 @@ namespace AudioQualityChecker.Services
                 if (CrashLoggingEnabled) LocalCrashLogger.Write(ex);
             }
 
-            // Migration: "Color Drift" is no longer a mutually-exclusive background mode — it's now
-            // controlled solely by the NpColorDriftBackgroundEnabled toggle (which can run under any
-            // effect). Convert a legacy saved mode of "Color Drift" to Off + drift glow enabled.
-            if (NormalizeNpBackgroundAnimationMode(NpBackgroundAnimationMode) == "Color Drift")
-            {
-                NpBackgroundAnimationMode = "Off";
-                NpColorDriftBackgroundEnabled = true;
-            }
+            // Legacy "Color Drift" background mode and the per-context layout bundles an older
+            // options.txt did not carry are both reconciled in Core, shared with the Avalonia build.
+            NowPlayingSettings.ApplyPostLoadMigrations(in npSeen);
 
-            if (!hasNpFullscreenLayout)
-            {
-                NpFullscreenCoverSize = NpCoverSize;
-                NpFullscreenTitleSize = NpTitleSize;
-                NpFullscreenSubTextSize = NpSubTextSize;
-                NpFullscreenLyricsSize = NpLyricsSize;
-                NpFullscreenVizSize = NpVizSize;
-                NpFullscreenLyricsOffsetX = NpLyricsOffsetX;
-                NpFullscreenCoverOffsetX = NpCoverOffsetX;
-                NpFullscreenCoverOffsetY = NpCoverOffsetY;
-                NpFullscreenTitleOffsetX = NpTitleOffsetX;
-                NpFullscreenTitleOffsetY = NpTitleOffsetY;
-                NpFullscreenArtistOffsetX = NpArtistOffsetX;
-                NpFullscreenArtistOffsetY = NpArtistOffsetY;
-                NpFullscreenVizOffsetY = NpVizOffsetY;
-                NpFullscreenVizPlacement = NpVizPlacement;
-            }
-            else if (!hasNpFullscreenVizPlacement)
-            {
-                NpFullscreenVizPlacement = NpVizPlacement;
-            }
-
-            if (!hasNpVizOnLayout)
-            {
-                NpVizOnCoverSize = NpCoverSize;
-                NpVizOnTitleSize = NpTitleSize;
-                NpVizOnSubTextSize = NpSubTextSize;
-                NpVizOnLyricsSize = NpLyricsSize;
-                NpVizOnVizSize = NpVizSize;
-                NpVizOnLyricsOffsetX = NpLyricsOffsetX;
-                NpVizOnCoverOffsetX = NpCoverOffsetX;
-                NpVizOnCoverOffsetY = NpCoverOffsetY;
-                NpVizOnTitleOffsetX = NpTitleOffsetX;
-                NpVizOnTitleOffsetY = NpTitleOffsetY;
-                NpVizOnArtistOffsetX = NpArtistOffsetX;
-                NpVizOnArtistOffsetY = NpArtistOffsetY;
-                NpVizOnVizOffsetY = NpVizOffsetY;
-                NpVizOnPlacement = NpVizPlacement;
-            }
-
-            if (!hasNpFullscreenVizOnLayout)
-            {
-                NpFullscreenVizOnCoverSize = NpFullscreenCoverSize;
-                NpFullscreenVizOnTitleSize = NpFullscreenTitleSize;
-                NpFullscreenVizOnSubTextSize = NpFullscreenSubTextSize;
-                NpFullscreenVizOnLyricsSize = NpFullscreenLyricsSize;
-                NpFullscreenVizOnVizSize = NpFullscreenVizSize;
-                NpFullscreenVizOnLyricsOffsetX = NpFullscreenLyricsOffsetX;
-                NpFullscreenVizOnCoverOffsetX = NpFullscreenCoverOffsetX;
-                NpFullscreenVizOnCoverOffsetY = NpFullscreenCoverOffsetY;
-                NpFullscreenVizOnTitleOffsetX = NpFullscreenTitleOffsetX;
-                NpFullscreenVizOnTitleOffsetY = NpFullscreenTitleOffsetY;
-                NpFullscreenVizOnArtistOffsetX = NpFullscreenArtistOffsetX;
-                NpFullscreenVizOnArtistOffsetY = NpFullscreenArtistOffsetY;
-                NpFullscreenVizOnVizOffsetY = NpFullscreenVizOffsetY;
-                NpFullscreenVizOnPlacement = NpFullscreenVizPlacement;
-            }
+            // Battery Saver collapsed from master + "entire program" + 5 per-area flags down to
+            // master + a visualizer override. A user who ran per-area mode with the visualizer
+            // deliberately left animating keeps that; the other four areas have no equivalent
+            // now and lose their exemption.
+            if (BatterySaverEnabled && !legacyBatteryEntireProgram && !legacyBatteryVisualizer)
+                BatterySaverKeepVisualizer = true;
 
             // Existing config from before NP search had its own slots: copy the
             // user's main-window services across once so NP isn't blank.
@@ -886,7 +645,31 @@ namespace AudioQualityChecker.Services
 
             // Load sensitive Last.fm data from Documents
             LoadSensitiveData();
+            RepairInflatedListeningTotal();
             ApplyScanPerformanceDefaultsMigration();
+        }
+
+        /// <summary>
+        /// Repairs lifetime listening totals corrupted by the pre-2.0 culture mismatch: the value was
+        /// written in the current culture but read back as invariant, so on a comma-decimal locale
+        /// (pt-BR, de-DE, fr-FR…) "12345,67" was parsed as the thousands-grouped 1234567 and the stat
+        /// inflated roughly 100x on every launch. Both sides are invariant now, but an options file
+        /// written by an older build can still hold the bad number.
+        ///
+        /// The bound is a fact rather than a guess: you cannot have listened for more seconds than
+        /// have elapsed since you first ran the app, so anything above that is corruption. Legitimate
+        /// totals are always below the ceiling and pass through untouched.
+        /// </summary>
+        private static void RepairInflatedListeningTotal()
+        {
+            if (TotalListeningSecondsLifetime <= 0) return;
+            if (FirstScanDate == default) return; // no anchor to measure against — leave it alone
+
+            double elapsedSeconds = (DateTime.Now - FirstScanDate).TotalSeconds;
+            if (elapsedSeconds <= 0) return;
+
+            if (TotalListeningSecondsLifetime > elapsedSeconds)
+                TotalListeningSecondsLifetime = elapsedSeconds;
         }
 
         private static void ApplyScanPerformanceDefaultsMigration()
@@ -906,14 +689,13 @@ namespace AudioQualityChecker.Services
                 TruePeakEnabled = false;
                 LufsEnabled = false;
                 BpmDetectionEnabled = false;
-                RipQualityEnabled = false;
+                RipLogCheckEnabled = false;
 
                 AudioAnalyzer.EnableSilenceDetection = false;
                 AudioAnalyzer.EnableDynamicRange = false;
                 AudioAnalyzer.EnableTruePeak = false;
                 AudioAnalyzer.EnableLufs = false;
                 AudioAnalyzer.EnableBpmDetection = false;
-                AudioAnalyzer.EnableRipQuality = false;
             }
 
             SyncHiddenColumnsWithAnalysisOptions(applyDefaultHiddenColumns: string.IsNullOrWhiteSpace(HiddenColumns));

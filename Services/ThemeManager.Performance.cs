@@ -25,19 +25,13 @@ namespace AudioQualityChecker.Services
         }
 
         // ─── Battery Saver ───
-        // Manual perf mode. The master toggle gates everything; EntireProgram (the
-        // default when enabled) suppresses every animated area, otherwise the
-        // per-area flags decide. All consulted through AnimationPolicy, never raw.
+        // Manual perf mode. The master toggle suppresses every animated area; the
+        // visualizer override is the single escape hatch. Both consulted through
+        // AnimationPolicy, never raw.
         public static bool BatterySaverEnabled { get; set; }
-        public static bool BatterySaverEntireProgram { get; set; } = true;
-        public static bool BatterySaverNpBackground { get; set; } = true;
-        public static bool BatterySaverVisualizer { get; set; } = true;
-        public static bool BatterySaverCoverGlow { get; set; } = true;
-        public static bool BatterySaverLyrics { get; set; } = true;
-        public static bool BatterySaverPlaybar { get; set; } = true;
 
         // Explicit override: keep the visualizer animating even when Battery Saver would
-        // otherwise suppress it (including "Entire Program" mode). Honored by AnimationPolicy.
+        // otherwise suppress it. Honored by AnimationPolicy.
         public static bool BatterySaverKeepVisualizer { get; set; }
 
         // ─── GPU acceleration ───

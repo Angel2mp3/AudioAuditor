@@ -150,16 +150,14 @@ EXAMPLES:
                 if (!WillApply(item)) continue;
                 try
                 {
-                    if (string.Equals(item.FilePath, item.TargetPath, StringComparison.OrdinalIgnoreCase)) continue;
-                    string? dir = Path.GetDirectoryName(item.TargetPath);
-                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                    if (File.Exists(item.TargetPath))
+                    var outcome = FileRenamer.Rename(item.FilePath, item.TargetPath);
+                    if (outcome == RenameOutcome.TargetExists)
                     {
                         Console.Error.WriteLine($"  Skip (target exists): {item.NewName}");
                         failed++;
                         continue;
                     }
-                    File.Move(item.FilePath, item.TargetPath);
+                    if (outcome == RenameOutcome.Unchanged) continue;
                     done++;
                 }
                 catch (Exception ex)
@@ -356,10 +354,121 @@ Note: on Linux/macOS the 'fpcalc' tool (chromaprint) must be on your PATH.
         static int RunMetadataEnrich(string path, string[] args)
             => RunMetadataEnrichAsync(path, args).GetAwaiter().GetResult();
 
+        /// <summary>
+        /// Lists or applies the <c>.audioauditor-backup-*</c> copies taken before past tag writes.
+        /// The GUI equivalent is Windows/RestoreBackupWindow; both go through FileRenamer so they
+        /// agree on which copy counts as "the original".
+        /// </summary>
+        static int RunMetadataRestore(string path, bool listOnly, string[] args)
+        {
+            bool recursive = true, dryRun = false, assumeYes = false, newest = false;
+            for (int i = 0; i < args.Length; i++)
+            {
+                switch (args[i].ToLowerInvariant())
+                {
+                    case "--dry-run": dryRun = true; break;
+                    case "--yes" or "-y": assumeYes = true; break;
+                    case "--newest": newest = true; break;
+                    case "--no-recursive": recursive = false; break;
+                    case "--recursive" or "-r": recursive = true; break;
+                }
+            }
+
+            var files = CollectFiles(new List<string> { path }, recursive);
+            if (files.Count == 0) return Error("No supported audio files found.");
+
+            // One entry per file: the backup that would be restored, plus how many exist.
+            var candidates = new List<(string file, string backup, int total)>();
+            foreach (string file in files)
+            {
+                var backups = FileRenamer.FindBackups(file);
+                if (backups.Count == 0) continue;
+                // FindBackups is oldest first; the oldest predates every edit, so it is the default.
+                candidates.Add((file, newest ? backups[^1] : backups[0], backups.Count));
+            }
+
+            if (candidates.Count == 0)
+            {
+                Console.WriteLine($"  No backups found for {files.Count} file(s).");
+                Console.WriteLine("  Backups are only written when the --backup flag (or the GUI's " +
+                                  "\"Back up first\" box) was used for the edit.");
+                return 0;
+            }
+
+            Console.WriteLine($"  {candidates.Count} file(s) with backups:");
+            foreach (var (file, backup, total) in candidates)
+            {
+                string stamp = BackupTimestamp(backup);
+                string extra = total > 1 ? $"  ({total} backups, using the {(newest ? "newest" : "oldest")})" : "";
+                Console.WriteLine($"    {Path.GetFileName(file)}  <-  {stamp}{extra}");
+            }
+
+            if (listOnly) return 0;
+
+            if (dryRun)
+            {
+                Console.WriteLine("  [DRY RUN] No files changed.");
+                return 0;
+            }
+
+            if (!assumeYes)
+            {
+                Console.Write($"  Overwrite {candidates.Count} file(s) with these backups? [y/N] ");
+                string? ans = Console.ReadLine()?.Trim().ToLowerInvariant();
+                if (ans != "y" && ans != "yes")
+                {
+                    Console.WriteLine("  Cancelled.");
+                    return 0;
+                }
+            }
+
+            int restored = 0, failed = 0;
+            foreach (var (file, backup, _) in candidates)
+            {
+                try
+                {
+                    var outcome = FileRenamer.Restore(backup, file);
+                    if (outcome == RestoreOutcome.Restored) { restored++; continue; }
+
+                    failed++;
+                    Console.Error.WriteLine($"    {Path.GetFileName(file)}: {outcome}");
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    Console.Error.WriteLine($"    {Path.GetFileName(file)}: {ex.Message}");
+                }
+            }
+
+            Console.WriteLine($"  Restored {restored} file(s)" + (failed > 0 ? $", {failed} failed" : "") + ".");
+            Console.WriteLine("  The backup copies were kept.");
+            return failed > 0 ? 1 : 0;
+        }
+
+        /// <summary>The UTC stamp embedded in a backup's name, or its filename when unparseable.</summary>
+        static string BackupTimestamp(string backupPath)
+        {
+            string name = Path.GetFileName(backupPath);
+            int at = name.LastIndexOf(FileRenamer.BackupSuffix, StringComparison.OrdinalIgnoreCase);
+            if (at < 0) return name;
+
+            string stamp = name[(at + FileRenamer.BackupSuffix.Length)..];
+            return DateTime.TryParseExact(stamp, "yyyyMMddHHmmss",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal |
+                    System.Globalization.DateTimeStyles.AdjustToUniversal, out var parsed)
+                ? parsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                : name;
+        }
+
         static async Task<int> RunMetadataEnrichAsync(string path, string[] args)
         {
             bool recursive = true, dryRun = false, all = false, useAcoustId = false, assumeYes = false;
-            string? apiKey = null;
+            bool useDeezer = false, useTheAudioDb = false;
+            // Match the GUI: only high-confidence matches are written unless the user opts in.
+            bool includeUncertain = false, backup = false;
+            string? apiKey = null, discogsToken = null, fanartKey = null;
+            string? streamingLink = null, spotifyId = null, spotifySecret = null, youTubeKey = null;
             for (int i = 0; i < args.Length; i++)
             {
                 switch (args[i].ToLowerInvariant())
@@ -368,7 +477,17 @@ Note: on Linux/macOS the 'fpcalc' tool (chromaprint) must be on your PATH.
                     case "--all": all = true; break;
                     case "--acoustid": useAcoustId = true; break;
                     case "--api-key" when i + 1 < args.Length: apiKey = args[++i]; break;
+                    case "--deezer": useDeezer = true; break;
+                    case "--theaudiodb": useTheAudioDb = true; break;
+                    case "--discogs-token" when i + 1 < args.Length: discogsToken = args[++i]; break;
+                    case "--fanarttv-key" when i + 1 < args.Length: fanartKey = args[++i]; break;
+                    case "--streaming-link" when i + 1 < args.Length: streamingLink = args[++i]; break;
+                    case "--spotify-id" when i + 1 < args.Length: spotifyId = args[++i]; break;
+                    case "--spotify-secret" when i + 1 < args.Length: spotifySecret = args[++i]; break;
+                    case "--youtube-key" when i + 1 < args.Length: youTubeKey = args[++i]; break;
                     case "--yes" or "-y": assumeYes = true; break;
+                    case "--include-uncertain": includeUncertain = true; break;
+                    case "--backup": backup = true; break;
                     case "--no-recursive": recursive = false; break;
                     case "--recursive" or "-r": recursive = true; break;
                 }
@@ -386,6 +505,8 @@ Note: on Linux/macOS the 'fpcalc' tool (chromaprint) must be on your PATH.
             var service = new MetadataEnrichmentService();
             var options = MetadataEnrichmentOptions.CreateDefault();
             options.MissingOnly = !all;
+            options.UseDeezer = useDeezer;
+            options.UseTheAudioDb = useTheAudioDb;
             if (useAcoustId)
             {
                 apiKey ??= Environment.GetEnvironmentVariable("ACOUSTID_API_KEY");
@@ -395,8 +516,85 @@ Note: on Linux/macOS the 'fpcalc' tool (chromaprint) must be on your PATH.
                 options.AcoustIdApiKey = apiKey;
             }
 
-            Console.WriteLine("Searching online metadata (MusicBrainz, Cover Art Archive)...");
-            var previews = await service.PreviewAsync(results, options);
+            discogsToken ??= Environment.GetEnvironmentVariable("DISCOGS_TOKEN");
+            if (!string.IsNullOrWhiteSpace(discogsToken))
+            {
+                options.UseDiscogs = true;
+                options.DiscogsToken = discogsToken;
+            }
+            fanartKey ??= Environment.GetEnvironmentVariable("FANARTTV_API_KEY");
+            if (!string.IsNullOrWhiteSpace(fanartKey))
+            {
+                options.UseFanartTv = true;
+                options.FanartTvApiKey = fanartKey;
+            }
+
+            // Streaming link → Comment is opt-in via --streaming-link <platform>; otherwise leave it off.
+            if (string.IsNullOrWhiteSpace(streamingLink))
+            {
+                options.EnabledFields.Remove(MetadataEnrichmentField.StreamingLink);
+            }
+            else
+            {
+                options.StreamingLinkPlatform = streamingLink.Trim().ToLowerInvariant() switch
+                {
+                    "apple" or "applemusic" or "itunes" => StreamingLinkPlatform.Apple,
+                    "spotify" => StreamingLinkPlatform.Spotify,
+                    "youtube" or "yt" => StreamingLinkPlatform.YouTube,
+                    _ => StreamingLinkPlatform.Deezer
+                };
+                options.SpotifyClientId = spotifyId ?? Environment.GetEnvironmentVariable("SPOTIFY_CLIENT_ID") ?? "";
+                options.SpotifyClientSecret = spotifySecret ?? Environment.GetEnvironmentVariable("SPOTIFY_CLIENT_SECRET") ?? "";
+                options.YouTubeApiKey = youTubeKey ?? Environment.GetEnvironmentVariable("YOUTUBE_API_KEY") ?? "";
+            }
+
+            var sources = new List<string> { "MusicBrainz", "Cover Art Archive" };
+            if (options.UseDeezer) sources.Add("Deezer");
+            if (options.UseTheAudioDb) sources.Add("TheAudioDB");
+            if (options.UseITunes) sources.Add("Apple/iTunes");
+            if (options.UseAcoustId) sources.Add("AcoustID");
+            if (options.UseDiscogs) sources.Add("Discogs");
+            if (options.UseFanartTv) sources.Add("fanart.tv");
+            Console.WriteLine($"Searching online metadata ({string.Join(", ", sources)})...");
+            Console.WriteLine();
+
+            // Live per-file result lines as each file finishes (serialised so they don't interleave).
+            var consoleLock = new object();
+            var failures = new List<string>();
+            // Not Progress<T>: with no SynchronizationContext (there never is one in a console app)
+            // it queues each callback to the thread pool, so these per-file lines raced the main
+            // thread and printed *after* the "No metadata to add." summary. Reporting inline keeps
+            // the transcript in order; consoleLock still serialises the concurrent workers.
+            var progress = new InlineProgress<EnrichmentProgress>(p =>
+            {
+                lock (consoleLock)
+                {
+                    switch (p.Outcome)
+                    {
+                        case EnrichmentOutcome.Matched: SetColor(ConsoleColor.Green); Console.Write("  ✓ "); break;
+                        case EnrichmentOutcome.LowConfidence: SetColor(ConsoleColor.Yellow); Console.Write("  ~ "); break;
+                        case EnrichmentOutcome.NoMatch: SetColor(ConsoleColor.DarkGray); Console.Write("  ✗ "); break;
+                        default: SetColor(ConsoleColor.Red); Console.Write("  ! "); break;
+                    }
+                    ResetColor();
+                    Console.WriteLine($"[{p.Done}/{p.Total}] {p.FileName} — {p.Message}");
+                    if (p.Outcome is EnrichmentOutcome.NoMatch or EnrichmentOutcome.Error)
+                        failures.Add($"{p.FileName} — {p.Message}");
+                }
+            });
+
+            var previews = await service.PreviewAsync(results, options, progress);
+
+            Console.WriteLine();
+            if (failures.Count > 0)
+            {
+                SetColor(ConsoleColor.Yellow);
+                Console.WriteLine($"  {failures.Count} file(s) could not be matched:");
+                ResetColor();
+                foreach (var f in failures)
+                    Console.WriteLine($"    - {f}");
+                Console.WriteLine();
+            }
 
             var toApply = new List<MetadataEnrichmentChange>();
             int filesWithChanges = 0;
@@ -408,7 +606,11 @@ Note: on Linux/macOS the 'fpcalc' tool (chromaprint) must be on your PATH.
                 SetColor(ConsoleColor.Cyan);
                 Console.WriteLine($"  {p.File.FileName}  [{p.Status}]");
                 ResetColor();
-                bool confident = p.Confidence >= MetadataEnrichmentService.ReviewConfidenceThreshold;
+                // Same bar as the GUI's "Apply High-Confidence". This used to sit at the review
+                // threshold, so `aa tag` wrote matches the GUI would have held back for a human.
+                bool confident = p.Confidence >= (includeUncertain
+                    ? MetadataEnrichmentService.ReviewConfidenceThreshold
+                    : MetadataEnrichmentService.HighConfidenceThreshold);
                 foreach (var ch in p.Changes)
                 {
                     string oldV = string.IsNullOrEmpty(ch.OldValue) ? "(empty)" : ch.OldValue;
@@ -439,6 +641,8 @@ Note: on Linux/macOS the 'fpcalc' tool (chromaprint) must be on your PATH.
             if (toApply.Count == 0)
             {
                 Console.WriteLine("  Nothing confident enough to apply automatically.");
+                if (!includeUncertain)
+                    Console.WriteLine("  Re-run with --include-uncertain to also write matches that need review.");
                 CleanupTempDirs();
                 return 0;
             }
@@ -454,13 +658,26 @@ Note: on Linux/macOS the 'fpcalc' tool (chromaprint) must be on your PATH.
                 }
             }
 
-            var summary = await service.ApplyAsync(toApply, createBackups: false);
+            var summary = await service.ApplyAsync(toApply, createBackups: backup);
             Console.WriteLine($"  Applied {summary.ChangesApplied} change(s) to {summary.FilesChanged} file(s)" +
                 (summary.FailedFiles > 0 ? $", {summary.FailedFiles} failed" : "") + ".");
             foreach (var e in summary.Errors)
                 Console.Error.WriteLine($"    {e}");
             CleanupTempDirs();
             return 0;
+        }
+
+        /// <summary>
+        /// <see cref="IProgress{T}"/> that runs the handler on the thread that reported, instead of
+        /// posting it to the thread pool the way <see cref="Progress{T}"/> does when no
+        /// <see cref="System.Threading.SynchronizationContext"/> exists. Console output has to stay
+        /// in the order it was written.
+        /// </summary>
+        private sealed class InlineProgress<T> : IProgress<T>
+        {
+            private readonly Action<T> _handler;
+            public InlineProgress(Action<T> handler) => _handler = handler;
+            public void Report(T value) => _handler(value);
         }
     }
 }

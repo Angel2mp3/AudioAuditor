@@ -71,7 +71,10 @@ namespace AudioQualityChecker.Services
         {
             try
             {
-                var (disposable, samples, waveFormat) = AudioAnalyzer.OpenAudioFile(filePath);
+                // ct, not just the column loop below: on an ffmpeg-decoded format this call decodes
+                // the entire file before returning, and the preview path holds a 1-slot semaphore
+                // across it — an uncancellable open there stalls every later selection.
+                var (disposable, samples, waveFormat) = AudioAnalyzer.OpenAudioFile(filePath, ct);
                 using var _ = disposable;
                 int sampleRate = waveFormat.SampleRate;
                 int channels = waveFormat.Channels;
@@ -208,7 +211,7 @@ namespace AudioQualityChecker.Services
                             }
                         }
 
-                        FFT(real, imag);
+                        FFT(real, imag, fftSize);
 
                         for (int i = 0; i < spectrumSize; i++)
                         {
@@ -234,6 +237,10 @@ namespace AudioQualityChecker.Services
                 double minDb = globalMax - dynamicRange;
                 byte[] pixels = new byte[columns * rows * 3];
 
+                // rows comes from the caller, so a 1-pixel-tall request would make the
+                // `row / (rows - 1)` mapping below divide by zero and fill the image with NaN.
+                double rowSpan = rows > 1 ? rows - 1 : 1;
+
                 if (linearScale)
                 {
                     double nyquist = sampleRate / 2.0;
@@ -242,7 +249,7 @@ namespace AudioQualityChecker.Services
                         var colData = specData[col];
                         for (int row = 0; row < rows; row++)
                         {
-                            double t = 1.0 - (double)row / (rows - 1);
+                            double t = 1.0 - row / rowSpan;
                             double freq = t * nyquist;
                             double bin = freq / sampleRate * fftSize;
                             int b0 = Math.Clamp((int)bin, 0, spectrumSize - 1);
@@ -268,7 +275,7 @@ namespace AudioQualityChecker.Services
                         var colData = specData[col];
                         for (int row = 0; row < rows; row++)
                         {
-                            double t = 1.0 - (double)row / (rows - 1);
+                            double t = 1.0 - row / rowSpan;
                             double freq = Math.Pow(10, logMin + t * logRange);
                             double bin = freq / sampleRate * fftSize;
                             int b0 = Math.Clamp((int)bin, 0, spectrumSize - 1);
@@ -380,9 +387,15 @@ namespace AudioQualityChecker.Services
         //  FFT (Cooley-Tukey radix-2, forward only)
         // ═══════════════════════════════════════════════════════
 
-        private static void FFT(double[] real, double[] imag)
+        /// <summary>
+        /// In-place radix-2 FFT over the first <paramref name="n"/> elements. <paramref name="n"/>
+        /// is explicit rather than taken from real.Length because the buffers come from
+        /// ArrayPool.Rent, which guarantees only *at least* the requested size — using .Length
+        /// would run the transform over uncleared tail garbage with a non-power-of-two length,
+        /// which ReverseBits silently turns into a wrong result instead of an exception.
+        /// </summary>
+        private static void FFT(double[] real, double[] imag, int n)
         {
-            int n = real.Length;
             int bits = (int)Math.Log2(n);
 
             for (int i = 0; i < n; i++)

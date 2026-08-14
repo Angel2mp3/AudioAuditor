@@ -3,12 +3,45 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None"
         ResizeMode="NoResize"
-        Height="200" Width="420"
+        Width="420" MinHeight="200" MaxHeight="480"
+        SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         AllowsTransparency="True"
         Background="Transparent">
 
-    <Border Background="#FF1A1010" BorderBrush="#FFAA2222" BorderThickness="1.5" CornerRadius="8">
+    <Window.Resources>
+        <!-- Colours come from the code-behind (ApplySeverity) via TemplateBinding, so one
+             template covers error / warning / info / question without four XAML variants. -->
+        <Style x:Key="AlertButton" TargetType="Button">
+            <Setter Property="Width" Value="90"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="3" Padding="12,6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.75"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="bd" Property="BorderThickness" Value="2"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <!-- Surface, glyph, title, body and button brushes are all applied by ApplySeverity. -->
+    <Border x:Name="Surface" BorderThickness="1.5" CornerRadius="8">
         <Grid Margin="20,16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -19,10 +52,10 @@
             <!-- Header -->
             <Grid Grid.Row="0" MouseLeftButtonDown="Header_MouseDown">
                 <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE783;" FontFamily="Segoe MDL2 Assets" FontSize="18"
-                               Foreground="#FFFF4444" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock x:Name="GlyphText" Text="&#xE783;" FontFamily="Segoe MDL2 Assets" FontSize="18"
+                               VerticalAlignment="Center" Margin="0,0,10,0"/>
                     <TextBlock x:Name="TitleText" Text="Error" FontSize="16" FontWeight="Bold"
-                               FontFamily="Segoe UI" Foreground="#FFFF6666" VerticalAlignment="Center"/>
+                               FontFamily="{DynamicResource AppFontFamily}" VerticalAlignment="Center"/>
                 </StackPanel>
             </Grid>
 
@@ -30,32 +63,18 @@
             <ScrollViewer Grid.Row="1" Margin="0,12,0,12" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <TextBlock x:Name="MessageText" TextWrapping="Wrap"
-                           FontSize="13" FontFamily="Segoe UI"
-                           Foreground="#FFCCAAAA" LineHeight="20"/>
+                           FontSize="13" FontFamily="{DynamicResource AppFontFamily}"
+                           LineHeight="20"/>
             </ScrollViewer>
 
-            <!-- OK Button -->
-            <Button Grid.Row="2" Content="OK" Width="90" HorizontalAlignment="Right"
-                    Click="OK_Click" Padding="12,6" Cursor="Hand"
-                    FontFamily="Segoe UI" FontSize="13">
-                <Button.Template>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="bd" Background="#FF3A2020" BorderBrush="#FF882222"
-                                BorderThickness="1" CornerRadius="3" Padding="12,6">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="#FF552222"/>
-                                <Setter TargetName="bd" Property="BorderBrush" Value="#FFCC3333"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Button.Template>
-                <Button.Foreground>
-                    <SolidColorBrush Color="#FFDDAAAA"/>
-                </Button.Foreground>
-            </Button>
+            <!-- CancelButton stays collapsed unless this is a confirm dialog. -->
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="No" Margin="0,0,8,0"
+                        Visibility="Collapsed" IsCancel="True"
+                        Style="{StaticResource AlertButton}" Click="Cancel_Click"/>
+                <Button x:Name="OkButton" Content="OK" IsDefault="True"
+                        Style="{StaticResource AlertButton}" Click="OK_Click"/>
+            </StackPanel>
         </Grid>
     </Border>
 </Window>

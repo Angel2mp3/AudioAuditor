@@ -195,7 +195,7 @@ namespace AudioQualityChecker
             if (eq != null)
                 eq.UpdateBand(idx, gain);
 
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
         }
 
         private void EqToggle_Click(object sender, RoutedEventArgs e)

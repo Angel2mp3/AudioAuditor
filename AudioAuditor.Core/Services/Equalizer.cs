@@ -124,6 +124,16 @@ namespace AudioQualityChecker.Services
 
             if (!_enabled || read <= 0) return read;
 
+            // A flat curve has to be bit-transparent. Without this the loop below still ran the
+            // soft-clipper over every sample, so switching the EQ on with all ten sliders at 0
+            // audibly dropped the level.
+            bool anyGain = false;
+            for (int b = 0; b < _bands.Length; b++)
+            {
+                if (_bands[b].Gain != 0f) { anyGain = true; break; }
+            }
+            if (!anyGain) return read;
+
             int samples = read;
             for (int n = 0; n < samples; n++)
             {
@@ -144,11 +154,30 @@ namespace AudioQualityChecker.Services
                     }
                 }
 
-                // Soft clip using tanh for smooth, musical limiting
-                buffer[offset + n] = MathF.Tanh(sample);
+                buffer[offset + n] = SoftClip(sample);
             }
 
             return read;
+        }
+
+        /// <summary>Level below which the soft-clipper is bypassed entirely.</summary>
+        private const float ClipKnee = 0.7f;
+
+        /// <summary>
+        /// Soft limiter that is unity below <see cref="ClipKnee"/> and tanh-shaped above it,
+        /// asymptotic to ±1.0 and continuous at the knee.
+        ///
+        /// A bare <c>MathF.Tanh</c> is not unity at any level (tanh(0.5) = 0.462), so applying it
+        /// to every sample attenuated the whole signal and added harmonic distortion the moment a
+        /// single band left 0 dB. Only material actually pushed past the knee is shaped now.
+        /// </summary>
+        private static float SoftClip(float sample)
+        {
+            float magnitude = MathF.Abs(sample);
+            if (magnitude <= ClipKnee) return sample;
+
+            float over = (magnitude - ClipKnee) / (1f - ClipKnee);
+            return MathF.Sign(sample) * (ClipKnee + (1f - ClipKnee) * MathF.Tanh(over));
         }
     }
 

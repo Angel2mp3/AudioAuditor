@@ -45,21 +45,36 @@ namespace AudioQualityChecker
             new("provider",   "Lyrics source",   w => w.NpProviderBtn),
             new("savelyrics", "Save lyrics",     w => w.NpSaveLyricsBtn),
             new("search",     "Look up song",    w => w.NpSearchBtn),
+            new("sheetmusic", "Find sheet music",w => w.NpSheetMusicBtn),
             new("queue",      "Queue",           w => w.NpQueueBtn),
             new("settings",   "Settings",        w => w.NpSettingsBtn),
             new("layout",     "Customize layout",w => w.NpLayoutBtn),
         };
 
-        // Transport buttons — reorderable but NOT removable (CanRemove: false). Default order matches
-        // the XAML layout of NpTransportBar.
-        private static readonly NpOptButton[] NpTransportButtonDefs =
+        // Transport buttons split into two render groups:
+        //  • SIDE (shuffle/loop) — live in NpTransportSideBar, hang to the left of the core.
+        //    Reorderable within the group AND hideable (CanRemove: true).
+        //  • CORE (prev/play/next) — live in the centered NpTransportBar. Reorderable within the
+        //    group but never removable, so play/pause stays locked on the bar midpoint.
+        // Both groups share the NpTransportOrder CSV; visibility for the side group reuses the
+        // NpButtonHidden CSV (ids are globally unique).
+        private static readonly NpOptButton[] NpTransportSideDefs =
         {
-            new("t_shuffle", "Shuffle",      w => w.NpShuffleBtn,    CanRemove: false),
-            new("t_loop",    "Loop",         w => w.NpLoopBtn,       CanRemove: false),
+            new("t_shuffle", "Shuffle",      w => w.NpShuffleBtn,    CanRemove: true),
+            new("t_loop",    "Loop",         w => w.NpLoopBtn,       CanRemove: true),
+        };
+
+        private static readonly NpOptButton[] NpTransportCoreDefs =
+        {
             new("t_prev",    "Previous",     w => w.NpPrevBtn,       CanRemove: false),
             new("t_play",    "Play / Pause", w => w.NpPlayPauseBtn,  CanRemove: false),
             new("t_next",    "Next",         w => w.NpNextBtn,       CanRemove: false),
         };
+
+        // Combined (side + core), in default display order — used for order resolution + the
+        // customize list. Matches the historical default order.
+        private static readonly NpOptButton[] NpTransportButtonDefs =
+            NpTransportSideDefs.Concat(NpTransportCoreDefs).ToArray();
 
         // ─── Order/hidden resolution ───
 
@@ -72,10 +87,12 @@ namespace AudioQualityChecker
                 .Where(known.Contains)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            // Append any known buttons not in the saved order (e.g. newly added ones) at the end.
-            foreach (var id in known)
-                if (!saved.Contains(id, StringComparer.OrdinalIgnoreCase))
-                    saved.Add(id);
+            // Prepend any known buttons not in the saved order (newly introduced in an app update,
+            // or otherwise un-positioned) so a fresh button lands at the LEFT edge of its group —
+            // nearest the previous-track button — instead of the trailing edge, where it could crowd
+            // the locked center prev/play/next cluster. Users can still drag it anywhere afterward.
+            var missing = known.Where(id => !saved.Contains(id, StringComparer.OrdinalIgnoreCase)).ToList();
+            if (missing.Count > 0) saved.InsertRange(0, missing);
             return saved;
         }
 
@@ -106,11 +123,20 @@ namespace AudioQualityChecker
                 NpCleanupSeparators(NpOptionsBar);
             }
 
+            // Transport renders into two panels from the one shared order. NpReorderPanel only
+            // touches buttons whose ids appear in the defs it's given, so passing the full order
+            // to each call lets it pick out just its own group.
+            var transportOrder = NpResolveTransportOrder();
+            if (NpTransportSideBar != null)
+            {
+                var hidden = NpResolveHiddenButtons();
+                NpReorderPanel(NpTransportSideBar, NpTransportSideDefs, transportOrder,
+                    id => hidden.Contains(id));
+            }
             if (NpTransportBar != null)
             {
-                // Transport is never hidden.
-                NpReorderPanel(NpTransportBar, NpTransportButtonDefs, NpResolveTransportOrder(),
-                    _ => false);
+                // Core (prev/play/next) is never hidden.
+                NpReorderPanel(NpTransportBar, NpTransportCoreDefs, transportOrder, _ => false);
             }
         }
 
@@ -200,8 +226,9 @@ namespace AudioQualityChecker
 
         private void NpSetButtonHidden(string id, bool hide)
         {
-            // Only optional buttons can be hidden; transport entries are protected.
-            if (NpTransportButtonDefs.Any(d => d.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) return;
+            // Core transport buttons (prev/play/next) are protected; everything else (optional
+            // buttons + the side transport shuffle/loop) can be hidden.
+            if (NpTransportCoreDefs.Any(d => d.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) return;
             var hidden = NpResolveHiddenButtons();
             if (hide) hidden.Add(id); else hidden.Remove(id);
             ThemeManager.NpButtonHidden = string.Join(",", hidden);
@@ -212,18 +239,47 @@ namespace AudioQualityChecker
         private void NpMoveButton(string id, int direction)
         {
             bool isTransport = NpTransportButtonDefs.Any(d => d.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
-            var order = isTransport ? NpResolveTransportOrder() : NpResolveButtonOrder();
+            if (isTransport)
+            {
+                NpMoveTransportButton(id, direction);
+                return;
+            }
 
+            var order = NpResolveButtonOrder();
             int idx = order.FindIndex(x => x.Equals(id, StringComparison.OrdinalIgnoreCase));
             if (idx < 0) return;
             int target = idx + Math.Sign(direction);
             if (target < 0 || target >= order.Count) return;
             (order[idx], order[target]) = (order[target], order[idx]);
 
-            if (isTransport)
-                ThemeManager.NpTransportOrder = string.Join(",", order);
-            else
-                ThemeManager.NpButtonOrder = string.Join(",", order);
+            ThemeManager.NpButtonOrder = string.Join(",", order);
+            PersistNpButtonBar();
+        }
+
+        /// <summary>
+        /// Moves a transport button within its own render group (side: shuffle/loop, core:
+        /// prev/play/next). The two groups live in separate panels, so a cross-group swap would be
+        /// a confusing no-op — we clamp the move to the button's subgroup and persist the order as
+        /// side ++ core.
+        /// </summary>
+        private void NpMoveTransportButton(string id, int direction)
+        {
+            bool isSide = NpTransportSideDefs.Any(d => d.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            var full = NpResolveTransportOrder();
+            bool InGroup(string x, NpOptButton[] defs) =>
+                defs.Any(d => d.Id.Equals(x, StringComparison.OrdinalIgnoreCase));
+
+            var side = full.Where(x => InGroup(x, NpTransportSideDefs)).ToList();
+            var core = full.Where(x => InGroup(x, NpTransportCoreDefs)).ToList();
+            var group = isSide ? side : core;
+
+            int idx = group.FindIndex(x => x.Equals(id, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) return;
+            int target = idx + Math.Sign(direction);
+            if (target < 0 || target >= group.Count) return;
+            (group[idx], group[target]) = (group[target], group[idx]);
+
+            ThemeManager.NpTransportOrder = string.Join(",", side.Concat(core));
             PersistNpButtonBar();
         }
 
@@ -263,16 +319,21 @@ namespace AudioQualityChecker
 
             var rows = new List<NpButtonRow>();
 
-            // Transport group first — reorderable, not removable.
-            var transportNameById = NpTransportButtonDefs.ToDictionary(d => d.Id, d => d.DisplayName, StringComparer.OrdinalIgnoreCase);
+            // Transport group first — reorderable. Side buttons (shuffle/loop) are removable;
+            // core buttons (prev/play/next) are protected.
+            var transportById = NpTransportButtonDefs.ToDictionary(d => d.Id, d => d, StringComparer.OrdinalIgnoreCase);
             rows.AddRange(NpResolveTransportOrder()
-                .Where(transportNameById.ContainsKey)
-                .Select(id => new NpButtonRow
+                .Where(transportById.ContainsKey)
+                .Select(id =>
                 {
-                    Id = id,
-                    DisplayName = transportNameById[id],
-                    Visible = true,
-                    CanRemove = false,
+                    var def = transportById[id];
+                    return new NpButtonRow
+                    {
+                        Id = id,
+                        DisplayName = def.DisplayName,
+                        Visible = def.CanRemove ? !hidden.Contains(id) : true,
+                        CanRemove = def.CanRemove,
+                    };
                 }));
 
             // Optional group — reorderable and removable.

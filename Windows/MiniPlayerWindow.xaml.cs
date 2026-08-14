@@ -888,10 +888,11 @@ namespace AudioQualityChecker
                 if (tagFile.Tag.Pictures.Length > 0)
                 {
                     var pic = tagFile.Tag.Pictures[0];
+                    using var ms = new MemoryStream(pic.Data.Data);
                     var bmp = new BitmapImage();
                     bmp.BeginInit();
                     bmp.CacheOption = BitmapCacheOption.OnLoad;
-                    bmp.StreamSource = new MemoryStream(pic.Data.Data);
+                    bmp.StreamSource = ms;
                     bmp.EndInit();
                     bmp.Freeze();
                     SetCover(bmp);
@@ -1007,6 +1008,10 @@ namespace AudioQualityChecker
         {
             if (_player != null)
                 _player.Volume = (float)(VolumeSlider.Value / 100.0);
+            // Raising the volume is an unmute — otherwise the next mute click "restores" the stale
+            // pre-mute level instead of muting.
+            if (_isMuted && VolumeSlider.Value > 0)
+                _isMuted = false;
             UpdateVolumeIcon();
         }
 
@@ -1015,13 +1020,13 @@ namespace AudioQualityChecker
             if (!_isMuted)
             {
                 _preMuteVolume = VolumeSlider.Value;
-                VolumeSlider.Value = 0;
                 _isMuted = true;
+                VolumeSlider.Value = 0;
             }
             else
             {
-                VolumeSlider.Value = _preMuteVolume;
                 _isMuted = false;
+                VolumeSlider.Value = _preMuteVolume;
             }
             UpdateVolumeIcon();
         }

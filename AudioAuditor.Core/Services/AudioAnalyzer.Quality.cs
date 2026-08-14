@@ -27,8 +27,15 @@ namespace AudioQualityChecker.Services
         //  a clear line where content abruptly stops.
         // ═══════════════════════════════════════════════════════
 
-        private static int FindCutoffFrequency(double[] spectrum, int sampleRate)
+        /// <param name="wallDropDb">
+        /// How steeply the spectrum falls across the returned cutoff, in dB. Left at 0 on every
+        /// path that does not locate a discrete cutoff, so callers can treat a non-zero value as
+        /// "a real transition was measured here" without re-checking which branch produced it.
+        /// </param>
+        internal static int FindCutoffFrequency(double[] spectrum, int sampleRate, out double wallDropDb)
         {
+            wallDropDb = 0.0;
+
             int specLen = spectrum.Length;
             double binHz = (double)sampleRate / (2 * specLen);
 
@@ -159,8 +166,9 @@ namespace AudioQualityChecker.Services
                     // Even lower frequencies have no content — file is basically silent
                     return 0;
                 }
-                // Otherwise, content extends to Nyquist
-                return sampleRate / 2;
+                // Otherwise, content extends to Nyquist — unless a wall hides above the
+                // level scan's reach (see FindSpectralWall).
+                return FallBackToWall(dB, binHz, specLen, sampleRate, out wallDropDb);
             }
 
             // Additional validation: a codec cutoff should show a significant difference
@@ -224,7 +232,7 @@ namespace AudioQualityChecker.Services
             {
                 // Very low cutoff — require strong evidence on BOTH checks
                 if (dropAcrossCutoff < 20.0 || sharpDrop < 10.0)
-                    return sampleRate / 2;
+                    return FallBackToWall(dB, binHz, specLen, sampleRate, out wallDropDb);
             }
             else
             {
@@ -232,11 +240,199 @@ namespace AudioQualityChecker.Services
                 bool broadDropOk = dropAcrossCutoff >= 15.0;
                 bool sharpDropOk = sharpDrop >= 8.0;
                 if (!broadDropOk && !sharpDropOk)
-                    return sampleRate / 2;
+                    return FallBackToWall(dB, binHz, specLen, sampleRate, out wallDropDb);
             }
+
+            // Hand back the steeper of the two measurements. A codec lowpass scores high on at
+            // least one of them; natural rolloff scores low on both. This is the only evidence
+            // that separates a 20.5 kHz LAME 320 wall from a genuinely dull master, since the
+            // two are indistinguishable by cutoff frequency alone.
+            wallDropDb = Math.Max(dropAcrossCutoff, sharpDrop);
 
             return Math.Min(freq, sampleRate / 2);
         }
+
+        // ═══════════════════════════════════════════════════════
+        //  Spectral Wall Scan (fallback)
+        //
+        //  The level scan above picks its threshold from the file's own 2-8 kHz
+        //  median, 25 dB down. On music whose top end legitimately sits 60-90 dB
+        //  below the body, that threshold is crossed thousands of Hz below the
+        //  real edge; the sharpness check then correctly rejects the bogus
+        //  cutoff, and the whole function reports "full band".
+        //
+        //  That is how a 320 kbps MP3 decoded into a lossless container passed
+        //  as genuine: its wall at ~20.5 kHz was never located at all, so there
+        //  was nothing for the verdict to judge.
+        //
+        //  So when the level scan gives up, look for the wall directly — the
+        //  steepest sustained drop, measured on the RAW dB curve. The ±500 Hz
+        //  smoothing the level scan uses would blur the very edge being sought,
+        //  which is why this reads dB[] rather than smooth[].
+        // ═══════════════════════════════════════════════════════
+
+        /// <summary>Guard band skipped either side of a candidate edge, so the transition
+        /// itself is excluded from both comparison bands.</summary>
+        private const double WallGuardHz = 200.0;
+
+        /// <summary>Width of the comparison band taken above and below a candidate edge.</summary>
+        private const double WallBandHz = 1300.0;
+
+        /// <summary>
+        /// Wraps <see cref="FindSpectralWall"/> for the give-up paths of
+        /// <see cref="FindCutoffFrequency"/>: reports the wall if one is found, otherwise
+        /// preserves the historical "content reaches Nyquist" answer.
+        /// </summary>
+        private static int FallBackToWall(double[] dB, double binHz, int specLen, int sampleRate, out double wallDropDb)
+        {
+            int wall = FindSpectralWall(dB, binHz, specLen, out wallDropDb);
+            if (wall > 0) return Math.Min(wall, sampleRate / 2);
+
+            wallDropDb = 0.0;
+            return sampleRate / 2;
+        }
+
+        /// <summary>
+        /// Finds the steepest sustained drop in the spectrum above 10 kHz. Returns the edge
+        /// frequency in Hz, or 0 when nothing reaches <see cref="LossyWallDropDb"/> — below that
+        /// the caller keeps its existing answer, so only files with a genuinely deep wall are
+        /// affected by this scan at all.
+        /// </summary>
+        internal static int FindSpectralWall(double[] dB, double binHz, int specLen, out double dropDb)
+        {
+            dropDb = 0.0;
+
+            int guard = Math.Max(2, (int)(WallGuardHz / binHz));
+            int band = Math.Max(8, (int)(WallBandHz / binHz));
+            int first = Math.Max(band + guard, (int)(10000.0 / binHz));
+            int last = specLen - guard - band - 1;
+            if (last <= first) return 0;
+
+            int bestBin = 0;
+            double bestDrop = 0.0;
+
+            for (int c = first; c <= last; c++)
+            {
+                double below = 0;
+                for (int i = c - guard - band; i < c - guard; i++) below += dB[i];
+                below /= band;
+
+                double above = 0;
+                for (int i = c + guard; i < c + guard + band; i++) above += dB[i];
+                above /= band;
+
+                double drop = below - above;
+                if (drop > bestDrop)
+                {
+                    bestDrop = drop;
+                    bestBin = c;
+                }
+            }
+
+            if (bestDrop < LossyWallDropDb) return 0;
+
+            dropDb = bestDrop;
+            return (int)(bestBin * binHz);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        //  Full-Band Gate
+        //
+        //  A lossless container proves nothing on its own — anyone can decode
+        //  an MP3 into a WAV/AIFF/FLAC. The question is whether the audio
+        //  inside ever had full bandwidth.
+        //
+        //  Cutoff frequency alone cannot answer that. LAME at 320 kbps CBR
+        //  lowpasses at ~20.5 kHz, which is close enough to 22.05 kHz that any
+        //  tolerance loose enough to spare genuinely dull masters also spares
+        //  the transcode. What separates them is the SHAPE of the ending:
+        //  a mastering rolloff decays gradually, an encoder lowpass is a
+        //  brick wall dropping tens of dB inside a few hundred Hz.
+        // ═══════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Minimum drop across the cutoff (dB) before a sub-Nyquist cutoff is read as an encoder
+        /// lowpass rather than natural rolloff. Calibrated against measured transcodes — see the
+        /// wall-depth tests. Raising it makes the scanner more forgiving, never less.
+        /// </summary>
+        private const double LossyWallDropDb = 25.0;
+
+        /// <summary>How close to a sample rate's Nyquist a wall may sit before it counts as "at" it.</summary>
+        private const int WallMarginHz = 700;
+
+        /// <summary>
+        /// True when a lossless-container file's spectrum is consistent with a genuinely
+        /// full-bandwidth source.
+        ///
+        /// Below <see cref="LossyWallDropDb"/> this is byte-for-byte the frequency-only test the
+        /// scanner has always used, so no file that passes today can start failing unless a hard
+        /// wall is actually measured.
+        /// </summary>
+        internal static bool IsFullBandLossless(int cutoffHz, double wallDropDb, int sampleRate)
+        {
+            int nyquist = sampleRate / 2;
+
+            // Content at 20 kHz+ can't be from a sub-320 kbps transcode. Using both a percentage
+            // and an absolute floor prevents hi-res files (96/192 kHz) from false-flagging for
+            // merely having no ultrasonic content.
+            bool lenientPass = cutoffHz >= (int)(nyquist * 0.90) || cutoffHz >= 20000;
+
+            // Gradual ending — no wall was measured, so frequency is all we have to go on.
+            if (wallDropDb < LossyWallDropDb) return lenientPass;
+
+            // A wall sitting at the file's own Nyquist is where the spectrum has to end anyway.
+            if (cutoffHz >= nyquist - WallMarginHz) return true;
+
+            // A wall at 22.05/24 kHz inside a hi-res file is the fingerprint of an upsample from
+            // CD or 48 kHz, not of a lossy source. That is a different (and milder) problem, so
+            // it is not called fake lossless here.
+            if (IsStandardSourceNyquist(cutoffHz)) return true;
+
+            // Brick wall well below Nyquist: an encoder lowpass.
+            return false;
+        }
+
+        private static bool IsStandardSourceNyquist(int cutoffHz)
+            => Math.Abs(cutoffHz - 22050) <= WallMarginHz
+            || Math.Abs(cutoffHz - 24000) <= WallMarginHz;
+
+        // ═══════════════════════════════════════════════════════
+        //  Codec Family
+        //
+        //  The cutoff-to-bitrate curves describe ENCODERS, but the file extension
+        //  names a CONTAINER. Keying the curves off the extension meant a .m4b or
+        //  .m4r — plain AAC, same as .m4a — missed the AAC curve and was judged
+        //  against LAME's, so identical audio got different verdicts depending only
+        //  on what the file was called.
+        // ═══════════════════════════════════════════════════════
+
+        /// <summary>Maps a file to the encoder family whose lowpass behaviour it actually follows.</summary>
+        private static string CodecFamily(AudioFileInfo info)
+        {
+            if (info.IsAlac) return "alac";
+
+            return info.Extension switch
+            {
+                ".m4a" or ".m4b" or ".m4r" or ".mp4" or ".aac" or ".3gp" or ".3g2" => "aac",
+                ".opus" or ".webm" => "opus",   // WebM audio is Opus in practice
+                ".ogg" or ".oga"                                                   => "ogg",
+                ".mp2"                                                             => "mp2",
+                _ => info.Extension.TrimStart('.')
+            };
+        }
+
+        /// <summary>
+        /// Whether we have a cutoff curve actually calibrated for this encoder.
+        ///
+        /// Everything else falls through to the LAME/MP3 curve, which is a reasonable default but
+        /// not evidence. MPEG Layer II, AC-3, AMR and Speex all roll off far lower than MP3 at the
+        /// same bitrate, so measuring them against LAME's numbers accuses correctly-encoded files —
+        /// a legitimate 192 kbps MP2 was being reported as Fake. Uncalibrated codecs are therefore
+        /// capped at Unknown: we can say we are unsure, but not that the file is wrong.
+        /// </summary>
+        private static bool HasCalibratedCutoffCurve(string codec)
+            => codec is "mp3" or "wma" or "aac" or "opus" or "ogg" or "alac"
+                     or "flac" or "wav" or "aiff" or "aif" or "bwf";
 
         // ═══════════════════════════════════════════════════════
         //  Bitrate Estimation from Cutoff Frequency
@@ -252,30 +448,25 @@ namespace AudioQualityChecker.Services
         //     32 kbps  →  ~8 kHz
         // ═══════════════════════════════════════════════════════
 
-        private static int EstimateBitrateFromCutoff(int cutoffHz, int sampleRate, bool isLossless, string codec)
+        /// <param name="fullBandLossless">
+        /// Result of <see cref="IsFullBandLossless"/> for this file. The caller owns that decision —
+        /// this method must not second-guess it, or a measured brick wall gets overridden here and
+        /// the file reports 1411 kbps again.
+        /// </param>
+        private static int EstimateBitrateFromCutoff(int cutoffHz, int sampleRate, bool fullBandLossless, string codec)
         {
-            int nyquist = sampleRate / 2;
-
-            if (isLossless)
-            {
-                // Content at 20 kHz+ can't be from a sub-320 kbps transcode.
-                // Using both percentage and absolute floor prevents hi-res files
-                // (96/192 kHz) from false-flagging due to no ultrasonic content.
-                if (cutoffHz >= (int)(nyquist * 0.90) || cutoffHz >= 20000)
-                    return 1411;
-                // Otherwise fall through — it's an upconvert from lossy
-            }
+            if (fullBandLossless)
+                return 1411;
 
             // Codec-aware cutoff-to-bitrate mapping.
             // Different encoders apply different lowpass filters at each bitrate.
 
             // AAC encoders (FDK-AAC, Apple AAC) generally preserve higher frequencies
             // at lower bitrates compared to MP3/LAME.
-            // ALAC is lossless — use lossless estimation, not AAC lowpass mapping
+            // ALAC is lossless — reaching here means the full-band gate already rejected it,
+            // so every rung below describes the lossy source it was upconverted from.
             if (codec is "alac")
             {
-                if (cutoffHz >= (int)(nyquist * 0.90) || cutoffHz >= 20000) return 1411;
-                // Below threshold = upconvert from lossy source
                 if (cutoffHz >= 20000) return 320;
                 if (cutoffHz >= 19500) return 256;
                 if (cutoffHz >= 18500) return 192;
@@ -358,7 +549,6 @@ namespace AudioQualityChecker.Services
             int reported = info.ReportedBitrate;
             int actual = info.ActualBitrate;
             int cutoff = info.EffectiveFrequency;
-            int nyquist = info.SampleRate / 2;
             bool isLossless = IsLosslessFile(info);
 
             // ── Frequency cutoff allow-listing ──
@@ -373,18 +563,31 @@ namespace AudioQualityChecker.Services
             // ── Lossless ──
             if (isLossless)
             {
-                // Absolute floor: content at 20 kHz+ can't be from a sub-320 kbps
-                // transcode. Prevents hi-res (96/192 kHz) and 48 kHz false positives.
-                if (cutoff >= (int)(nyquist * 0.90) || cutoff >= 20000)
+                // AnalysisSampleRate, not SampleRate: the cutoff was measured against the decoder's
+                // output rate. For DSD the container declares 2.8 MHz while the spectrum came from
+                // a ~176 kHz PCM decode, so judging it against the declared Nyquist is nonsense.
+                int measuredRate = info.AnalysisSampleRate > 0 ? info.AnalysisSampleRate : info.SampleRate;
+                if (IsFullBandLossless(cutoff, info.CutoffDropDb, measuredRate))
                 {
                     info.Status = AudioStatus.Valid;
                     return;
                 }
-                // Spectral content stops well short of expected range → upconvert
-                // Use the estimated original bitrate to judge severity.
-                // Flag as Fake for clearly low-quality sources (≤192 kbps);
-                // only moderate-high bitrates get Unknown since natural rolloff
-                // varies by genre and could mimic a 224-256 kbps lowpass.
+
+                // A brick wall was measured below Nyquist: an encoder lowpass survived into a
+                // lossless container. That is the evidence, so the estimated source bitrate is
+                // descriptive here rather than a reason to acquit — a 20.5 kHz wall estimates
+                // 320 kbps, and a 320 kbps MP3 decoded to AIFF is still not lossless.
+                if (info.CutoffDropDb >= LossyWallDropDb)
+                {
+                    info.Status = AudioStatus.Fake;
+                    if (info.EstimatedSourceBitrate <= 0) info.EstimatedSourceBitrate = actual;
+                    return;
+                }
+
+                // No wall — content merely stops short of the expected range. Judge severity by
+                // the estimated original bitrate: flag clearly low-quality sources (≤192 kbps),
+                // and leave moderate-high ones Unknown, since natural rolloff varies by genre
+                // and can mimic a 224-256 kbps lowpass.
                 if (actual <= 192)
                     info.Status = AudioStatus.Fake;
                 else if (actual <= 256)
@@ -402,7 +605,8 @@ namespace AudioQualityChecker.Services
             }
 
             // What cutoff frequency would we EXPECT for the reported bitrate?
-            int expectedCutoff = ExpectedCutoffForBitrate(reported, info.Extension.TrimStart('.'));
+            string codec = CodecFamily(info);
+            int expectedCutoff = ExpectedCutoffForBitrate(reported, codec);
 
             // Compare actual cutoff against expected cutoff for the claimed bitrate
             if (expectedCutoff > 0 && cutoff > 0)
@@ -417,6 +621,12 @@ namespace AudioQualityChecker.Services
                 else if (freqRatio >= 0.70)
                 {
                     // Moderately low — could be VBR, different encoder, or mild transcode
+                    info.Status = AudioStatus.Unknown;
+                }
+                else if (!HasCalibratedCutoffCurve(codec))
+                {
+                    // Below the LAME curve, but that curve was never meant to describe this
+                    // encoder. Not enough to accuse the file — say unsure instead.
                     info.Status = AudioStatus.Unknown;
                 }
                 else

@@ -129,7 +129,12 @@ namespace AudioQualityChecker
                 dates.Add(today);
                 File.WriteAllLines(UsageDaysFile, dates.OrderBy(d => d));
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // usage-days.txt drives the 30-day prompt. If this write keeps failing the day
+                // count never advances and the feature just never fires, with nothing to show why.
+                if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
         }
 
         private void ShowDonationOverlay()
@@ -370,7 +375,12 @@ namespace AudioQualityChecker
 
                 RestoreSessionOverlay.Visibility = Visibility.Visible;
             }
-            catch { /* never let restore offer break startup */ }
+            catch (Exception ex)
+            {
+                // Never let the restore offer break startup — but swallowing a Load() failure
+                // means the prompt simply never appears, which reads as the feature being broken.
+                if (ThemeManager.CrashLoggingEnabled) LocalCrashLogger.Write(ex);
+            }
         }
 
         private void HideRestoreSessionOverlay()
@@ -421,7 +431,7 @@ namespace AudioQualityChecker
             FcChkClipping.IsChecked = ThemeManager.ClippingDetectionEnabled;
             FcChkMqa.IsChecked = ThemeManager.MqaDetectionEnabled;
             FcChkBpm.IsChecked = ThemeManager.BpmDetectionEnabled;
-            FcChkRipQuality.IsChecked = ThemeManager.RipQualityEnabled;
+            FcChkRipLog.IsChecked = ThemeManager.RipLogCheckEnabled;
             FcChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
             FcChkExperimentalAi.IsChecked = ThemeManager.ExperimentalAiDetection;
             FcChkSHLabs.IsChecked = ThemeManager.SHLabsAiDetection;
@@ -470,9 +480,8 @@ namespace AudioQualityChecker
             ThemeManager.ExperimentalAiDetection = FcChkExperimentalAi.IsChecked == true;
             AudioAnalyzer.EnableExperimentalAi = ThemeManager.ExperimentalAiDetection;
 
-            // Persist Rip Quality opt-in
-            ThemeManager.RipQualityEnabled = FcChkRipQuality.IsChecked == true;
-            AudioAnalyzer.EnableRipQuality = ThemeManager.RipQualityEnabled;
+            // Persist CD Rip Checker (scan-time log check) opt-in
+            ThemeManager.RipLogCheckEnabled = FcChkRipLog.IsChecked == true;
 
             bool wantsSHLabs = FcChkSHLabs.IsChecked == true;
 
@@ -562,31 +571,32 @@ namespace AudioQualityChecker
             SHLabsPrivacyDecline_Click(sender, e);
         }
 
-        /// <summary>
-        /// Called from SettingsWindow when user enables SH Labs and needs privacy confirmation.
-        /// </summary>
-        public void RequestSHLabsPrivacyFromSettings()
-        {
-            ShowSHLabsPrivacyOverlay();
-        }
-
         // ═══════════════════════════════════════════
         //  SH Labs Scan Limit Overlay
         // ═══════════════════════════════════════════
 
         private Task<bool> ShowSHLabsLimitOverlayAsync(string message, bool showCancel)
         {
-            _shLabsLimitTcs = new TaskCompletionSource<bool>();
+            // AnalyzeAndAddFiles is fire-and-forget from most call sites, so a second scan can
+            // reach this while the first overlay is still up. Overwriting the field used to orphan
+            // the first awaiter — it never resumed, and its whole batch was silently never added.
+            // Resolve the outgoing one as cancelled so that batch ends deliberately instead.
+            _shLabsLimitTcs?.TrySetResult(false);
+
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _shLabsLimitTcs = tcs;
             SHLabsLimitMessage.Text = message;
             SHLabsLimitCancelBtn.Visibility = showCancel ? Visibility.Visible : Visibility.Collapsed;
             SHLabsLimitOverlay.Visibility = Visibility.Visible;
-            return _shLabsLimitTcs.Task;
+            return tcs.Task;
         }
 
         private void HideSHLabsLimitOverlay(bool result)
         {
             SHLabsLimitOverlay.Visibility = Visibility.Collapsed;
-            _shLabsLimitTcs?.TrySetResult(result);
+            var tcs = _shLabsLimitTcs;
+            _shLabsLimitTcs = null;
+            tcs?.TrySetResult(result);
         }
 
         private void SHLabsLimitOk_Click(object sender, RoutedEventArgs e)

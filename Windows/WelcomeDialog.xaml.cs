@@ -23,7 +23,7 @@ public partial class WelcomeDialog : Window
     public bool EnableMqaDetection { get; private set; } = true;
     public bool EnableDefaultAiDetection { get; private set; } = true;
     public bool EnableExperimentalAi { get; private set; } = false;
-    public bool EnableRipQuality { get; private set; } = false;
+    public bool EnableRipLogCheck { get; private set; } = false;
     public bool EnableSHLabs { get; private set; } = false;
 
     public WelcomeDialog()
@@ -87,7 +87,7 @@ public partial class WelcomeDialog : Window
         EnableMqaDetection = ChkMqa.IsChecked == true;
         EnableDefaultAiDetection = ChkDefaultAi.IsChecked == true;
         EnableExperimentalAi = ChkExperimentalAi.IsChecked == true;
-        EnableRipQuality = ChkRipQuality.IsChecked == true;
+        EnableRipLogCheck = ChkRipLog.IsChecked == true;
         EnableSHLabs = ChkSHLabs.IsChecked == true;
 
         DialogResult = true;
@@ -96,6 +96,6 @@ public partial class WelcomeDialog : Window
     private void Window_MouseDown(object sender, MouseButtonEventArgs e)
     {
         if (e.LeftButton == MouseButtonState.Pressed)
-            DragMove();
+            this.SafeDragMove();
     }
 }

@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using AudioQualityChecker.Models;
 using AudioQualityChecker.Services;
@@ -38,6 +40,7 @@ namespace AudioQualityChecker
         private bool _acoustIdKeyVisible = false;
         private string _realAcoustIdKey = "";
         private DispatcherTimer? _crossfadePreviewTimer;
+        private string? _customFontPath; // full path backing whatever custom-font display name sits in AppFontCombo
         private CustomThemeDefinition _customThemeEditorBase = CustomThemeDefinition.CreateDefault();
 
         /// <summary>When true, MainWindow should show the SH Labs privacy overlay after Settings closes.</summary>
@@ -60,6 +63,23 @@ namespace AudioQualityChecker
             foreach (var theme in ThemeManager.GetAvailableThemeNames())
                 ThemeCombo.Items.Add(theme);
             ThemeCombo.SelectedItem = ThemeManager.CurrentTheme;
+
+            // Populate font combo — built-in names, plus the current custom font's file name if set.
+            // Filtered to what's actually installed: WPF silently falls back for a missing family,
+            // so an unfiltered entry (e.g. Segoe UI Variable on Windows 10) would do nothing when picked.
+            var installedFonts = new HashSet<string>(
+                Fonts.SystemFontFamilies.Select(f => f.Source), StringComparer.OrdinalIgnoreCase);
+            foreach (var font in ThemeManager.BuiltInFontFamilies.Where(installedFonts.Contains))
+                AppFontCombo.Items.Add(font);
+            bool isCustomFont = Path.IsPathRooted(ThemeManager.AppFontFamily) && File.Exists(ThemeManager.AppFontFamily);
+            if (isCustomFont)
+            {
+                _customFontPath = ThemeManager.AppFontFamily;
+                AppFontCombo.Items.Add(Path.GetFileName(ThemeManager.AppFontFamily));
+            }
+            AppFontCombo.SelectedItem = isCustomFont
+                ? Path.GetFileName(ThemeManager.AppFontFamily)
+                : (AppFontCombo.Items.Contains(ThemeManager.AppFontFamily) ? ThemeManager.AppFontFamily : "Segoe UI");
 
             // Populate playbar theme combo
             foreach (var pt in ThemeManager.AvailablePlaybarThemes)
@@ -181,7 +201,6 @@ namespace AudioQualityChecker
             ChkOfflineMode.IsChecked = ThemeManager.OfflineModeEnabled;
 
             // Streaming region settings
-            ChkRegionAwareSearch.IsChecked = ThemeManager.RegionAwareSearchEnabled;
             ComboStreamingRegion.SelectedItem = ThemeManager.StreamingRegion;
 
             // Discord RPC
@@ -240,6 +259,7 @@ namespace AudioQualityChecker
             ScrobbleAtSecondsBox.Text = ThemeManager.ScrobbleAtSeconds.ToString();
             MinScrobbleTrackSecondsBox.Text = ThemeManager.MinScrobbleTrackSeconds.ToString();
             ChkPauseScrobbling.IsChecked = ThemeManager.PauseScrobbling;
+            ChkSystemMediaControls.IsChecked = ThemeManager.SystemMediaControlsEnabled;
             _suppressScrobbleTextEvents = false;
 
             // Hide API keys by default (use dot masking)
@@ -361,9 +381,17 @@ namespace AudioQualityChecker
             // Preload next track
             ChkPreloadNextTrack.IsChecked = ThemeManager.PreloadNextTrackEnabled;
 
+            // ColorMatch scope
+            ChkNpColorMatchBackgrounds.IsChecked = ThemeManager.NpColorMatchTargets.HasFlag(ColorMatchTarget.Backgrounds);
+            ChkNpColorMatchButtons.IsChecked = ThemeManager.NpColorMatchTargets.HasFlag(ColorMatchTarget.ButtonsAndIcons);
+            ChkNpColorMatchText.IsChecked = ThemeManager.NpColorMatchTargets.HasFlag(ColorMatchTarget.Text);
+            ChkMainColorMatchBackgrounds.IsChecked = ThemeManager.MainColorMatchTargets.HasFlag(ColorMatchTarget.Backgrounds);
+            ChkMainColorMatchButtons.IsChecked = ThemeManager.MainColorMatchTargets.HasFlag(ColorMatchTarget.ButtonsAndIcons);
+            ChkMainColorMatchText.IsChecked = ThemeManager.MainColorMatchTargets.HasFlag(ColorMatchTarget.Text);
+            ChkQueueColorMatch.IsChecked = ThemeManager.QueueColorMatchEnabled;
+            ChkSettingsColorMatch.IsChecked = ThemeManager.SettingsColorMatchEnabled;
+
             // NP color cache
-            ChkNpColorCache.IsChecked = ThemeManager.NpColorCacheEnabled;
-            ChkNpColorCachePersist.IsChecked = ThemeManager.NpColorCachePersist;
             ChkNpRememberManualColors.IsChecked = ThemeManager.NpRememberManualColorPicks;
             ChkNpAlbumBackdrop.IsChecked = ThemeManager.NpAlbumBackdropEnabled;
             UpdateNpColorCacheStatus();
@@ -388,6 +416,7 @@ namespace AudioQualityChecker
 
             // Crash logging
             ChkCrashLogging.IsChecked = ThemeManager.CrashLoggingEnabled;
+            UpdateCrashLogStatus();
 
             // Close to tray
             ChkCloseToTray.IsChecked = ThemeManager.CloseToTray;
@@ -426,7 +455,7 @@ namespace AudioQualityChecker
                 LatestVersionText.Text = UpdateChecker.LatestVersion;
             else
                 LatestVersionText.Text = "checking...";
-            _ = LoadLatestVersionAsync(currentVersion);
+            LoadLatestVersionAsync(currentVersion).Observe(nameof(LoadLatestVersionAsync));
 
             // Column visibility checkboxes — checked = visible/enabled
             ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
@@ -460,7 +489,7 @@ namespace AudioQualityChecker
             ColDateCreatedCb.IsChecked = Visible("Date Created");
             ColTruePeakCb.IsChecked = Visible("True Peak");
             ColLufsCb.IsChecked = Visible("LUFS");
-            ColRipQualityCb.IsChecked = Visible("Rip Quality");
+            ColRipLogCb.IsChecked = Visible("Rip Log");
 
             // Hz cutoff allow (F13)
             ChkFreqCutoffAllow.IsChecked = ThemeManager.FrequencyCutoffAllowEnabled;
@@ -532,7 +561,7 @@ namespace AudioQualityChecker
         {
             if (e.ChangedButton != MouseButton.Left) return;
             if (IsInteractiveOriginalSource(e.OriginalSource as DependencyObject)) return;
-            try { DragMove(); } catch { /* DragMove throws if the button was already released */ }
+            this.SafeDragMove();
         }
 
         private static bool IsInteractiveOriginalSource(DependencyObject? src)
@@ -556,6 +585,30 @@ namespace AudioQualityChecker
                       ?? (src as FrameworkElement)?.Parent;
             }
             return false;
+        }
+
+        private void AppFontCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_initializing) return;
+            if (AppFontCombo.SelectedItem is not string selected) return;
+            bool isCustomEntry = _customFontPath != null && selected == Path.GetFileName(_customFontPath);
+            ThemeManager.ApplyFont(isCustomEntry ? _customFontPath! : selected);
+        }
+
+        private void BrowseCustomFont_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new OpenFileDialog
+            {
+                Filter = "Font files (*.ttf;*.otf)|*.ttf;*.otf",
+                Title = "Choose a font file"
+            };
+            if (dlg.ShowDialog(this) != true) return;
+
+            _customFontPath = dlg.FileName;
+            string displayName = Path.GetFileName(dlg.FileName);
+            if (!AppFontCombo.Items.Contains(displayName))
+                AppFontCombo.Items.Add(displayName);
+            AppFontCombo.SelectedItem = displayName; // triggers AppFontCombo_SelectionChanged -> ApplyFont
         }
 
         private void ThemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -661,7 +714,7 @@ namespace AudioQualityChecker
             CrossfadeDurationLabel.Text = $"{val}s";
             CrossfadeDurationBox.Text = val.ToString();
             ThemeManager.CrossfadeDuration = val;
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
         }
 
         private void CrossfadeDurationBox_LostFocus(object sender, RoutedEventArgs e) =>
@@ -798,7 +851,7 @@ namespace AudioQualityChecker
             int val = (int)CycleSpeedSlider.Value;
             CycleSpeedLabel.Text = $"{val}s";
             ThemeManager.VisualizerCycleSpeed = val;
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
         }
 
         private void CycleStyleCheck_Changed(object sender, RoutedEventArgs e)
@@ -921,7 +974,7 @@ namespace AudioQualityChecker
                 : "Online mode allows AudioAuditor to use internet-connected features including lyrics lookup, update checks, AI detection, Last.fm scrobbling, lyric translation, and Discord Rich Presence album art.\n\nEnable online mode?";
             string title = wantsOffline ? "Enable Offline Mode" : "Enable Online Mode";
 
-            if (MessageBox.Show(msg, title, MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            if (ErrorDialog.Confirm(title, msg, this))
             {
                 ThemeManager.OfflineModeEnabled = wantsOffline;
                 ThemeManager.SavePlayOptions();
@@ -933,13 +986,6 @@ namespace AudioQualityChecker
             {
                 ChkOfflineMode.IsChecked = ThemeManager.OfflineModeEnabled; // revert
             }
-        }
-
-        private void RegionAwareSearch_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_initializing) return;
-            ThemeManager.RegionAwareSearchEnabled = ChkRegionAwareSearch.IsChecked == true;
-            ThemeManager.SavePlayOptions();
         }
 
         private void StreamingRegion_Changed(object sender, SelectionChangedEventArgs e)
@@ -993,7 +1039,7 @@ namespace AudioQualityChecker
             SetFeature("Silence", ColSilenceCb.IsChecked == true);
             SetFeature("True Peak", ColTruePeakCb.IsChecked == true);
             SetFeature("LUFS", ColLufsCb.IsChecked == true);
-            SetFeature("Rip Quality", ColRipQualityCb.IsChecked == true);
+            SetFeature("Rip Log", ColRipLogCb.IsChecked == true);
             ChkDefaultAi.IsChecked = ThemeManager.DefaultAiDetectionEnabled;
 
             // Build comma-separated list of hidden column headers
@@ -1037,7 +1083,7 @@ namespace AudioQualityChecker
             Check(ColDateCreatedCb, "Date Created");
             Check(ColTruePeakCb, "True Peak");
             Check(ColLufsCb, "LUFS");
-            Check(ColRipQualityCb, "Rip Quality");
+            Check(ColRipLogCb, "Rip Log");
 
             ThemeManager.HiddenColumns = string.Join(",", hidden);
             ThemeManager.SyncHiddenColumnsWithAnalysisOptions();
@@ -1075,6 +1121,231 @@ namespace AudioQualityChecker
             if (e.Source is not System.Windows.Controls.TabControl tc) return;
             ThemeManager.LastSettingsTab = tc.SelectedIndex;
             ThemeManager.SavePlayOptions();
+        }
+
+        // ── Settings search: jump to any setting by name across all tabs ──
+        //
+        // The index is built from the LOGICAL tree, not the visual one. A WPF TabControl realizes
+        // only the selected tab, so a visual-tree walk finds zero children for every other tab —
+        // which is why search used to only ever match settings on whichever tab happened to be open.
+        // Logical children exist regardless of realization, so this reaches all seven tabs and the
+        // contents of collapsed Expanders too.
+        internal sealed class SettingsSearchHit
+        {
+            public TabItem Tab = null!;
+            public string TabName = "";
+            public string Label = "";
+            public FrameworkElement Target = null!;
+            /// <summary>Collapsed Expander the target lives in, expanded on jump so it's visible.</summary>
+            public Expander? Owner;
+        }
+
+        private readonly List<SettingsSearchHit> _settingsSearchIndex = new();
+
+        /// <summary>Test hook: builds the index and hands it back, no UI interaction needed.</summary>
+        internal IReadOnlyList<SettingsSearchHit> BuildSearchIndexForTest()
+        {
+            BuildSettingsSearchIndex();
+            return _settingsSearchIndex;
+        }
+        // Section headers and one-line labels are useful results; the long explanatory paragraphs
+        // under a setting are not — they'd bury the actual settings in the result list.
+        private const int MaxSearchLabelLength = 60;
+        private const int MaxSearchResults = 12;
+
+        private void BuildSettingsSearchIndex()
+        {
+            _settingsSearchIndex.Clear();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in SettingsTabControl.Items)
+            {
+                if (item is not TabItem tab) continue;
+                string tabName = tab.Header as string ?? "";
+                IndexSettingsSearchTree(tab, tabName, tab.Content, null, seen);
+            }
+        }
+
+        private void IndexSettingsSearchTree(TabItem tab, string tabName, object? node, Expander? owner,
+                                             HashSet<string> seen)
+        {
+            if (node is not DependencyObject dep) return;
+
+            if (node is Expander expander)
+            {
+                if (expander.Header is string header)
+                    AddSearchHit(tab, tabName, header, expander, owner, seen);
+                owner = expander;
+            }
+
+            switch (node)
+            {
+                case TextBlock tb when !string.IsNullOrWhiteSpace(tb.Text):
+                    AddSearchHit(tab, tabName, tb.Text, ResolveLabelTarget(tb), owner, seen);
+                    break;
+                case CheckBox cb when cb.Content is string cbText:
+                    AddSearchHit(tab, tabName, cbText, cb, owner, seen);
+                    break;
+                case RadioButton rb when rb.Content is string rbText:
+                    AddSearchHit(tab, tabName, rbText, rb, owner, seen);
+                    break;
+                case Button btn when btn.Content is string btnText:
+                    AddSearchHit(tab, tabName, btnText, btn, owner, seen);
+                    break;
+            }
+
+            foreach (var child in LogicalTreeHelper.GetChildren(dep))
+                IndexSettingsSearchTree(tab, tabName, child, owner, seen);
+        }
+
+        /// <summary>
+        /// A label in column 0 of a Grid names the control sitting beside it, so jumping should
+        /// land on (and flash) that control rather than the text.
+        /// </summary>
+        private static FrameworkElement ResolveLabelTarget(TextBlock tb)
+        {
+            if (tb.Parent is not Grid grid || Grid.GetColumn(tb) != 0) return tb;
+            int row = Grid.GetRow(tb);
+            foreach (var sib in grid.Children.OfType<FrameworkElement>())
+            {
+                if (sib != tb && Grid.GetRow(sib) == row && Grid.GetColumn(sib) > 0)
+                    return sib;
+            }
+            return tb;
+        }
+
+        private void AddSearchHit(TabItem tab, string tabName, string label, FrameworkElement target,
+                                  Expander? owner, HashSet<string> seen)
+        {
+            label = label.Trim();
+            if (label.Length == 0 || label.Length > MaxSearchLabelLength) return;
+            if (!seen.Add(tabName + "\0" + label)) return;
+
+            _settingsSearchIndex.Add(new SettingsSearchHit
+            {
+                Tab = tab,
+                TabName = tabName,
+                Label = label,
+                Target = target,
+                Owner = owner,
+            });
+        }
+
+        private void SettingsSearchBox_FocusChanged(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            UpdateSearchPlaceholder();
+        }
+
+        /// <summary>Placeholder clears the moment the box is focused, not only once text is typed.</summary>
+        private void UpdateSearchPlaceholder()
+        {
+            bool show = string.IsNullOrEmpty(SettingsSearchBox.Text)
+                        && !SettingsSearchBox.IsKeyboardFocusWithin;
+            SettingsSearchPlaceholder.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            UpdateSearchPlaceholder();
+
+            var query = SettingsSearchBox.Text?.Trim() ?? "";
+            if (query.Length == 0)
+            {
+                CloseSearchResults();
+                return;
+            }
+
+            if (_settingsSearchIndex.Count == 0) BuildSettingsSearchIndex();
+
+            // Starts-with beats contains, so typing "cross" surfaces "Crossfade duration" ahead of
+            // "Enable crossfade". OrderBy is stable, so declaration order breaks ties.
+            var matches = _settingsSearchIndex
+                .Select(h => (Hit: h, Index: h.Label.IndexOf(query, StringComparison.OrdinalIgnoreCase)))
+                .Where(m => m.Index >= 0)
+                .OrderBy(m => m.Index == 0 ? 0 : 1)
+                .ThenBy(m => m.Index)
+                .Take(MaxSearchResults)
+                .Select(m => m.Hit)
+                .ToList();
+
+            SettingsSearchResults.ItemsSource = matches;
+            if (matches.Count == 0)
+            {
+                CloseSearchResults();
+                return;
+            }
+
+            SettingsSearchResults.SelectedIndex = 0;
+            SettingsSearchPopup.IsOpen = true;
+        }
+
+        private void SettingsSearchBox_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            switch (e.Key)
+            {
+                case Key.Down:
+                    MoveSearchSelection(1);
+                    e.Handled = true;
+                    break;
+                case Key.Up:
+                    MoveSearchSelection(-1);
+                    e.Handled = true;
+                    break;
+                case Key.Enter:
+                    if (SettingsSearchPopup.IsOpen && SettingsSearchResults.SelectedItem is SettingsSearchHit hit)
+                    {
+                        JumpToSearchHit(hit);
+                        e.Handled = true;
+                    }
+                    break;
+                case Key.Escape:
+                    if (SettingsSearchPopup.IsOpen) CloseSearchResults();
+                    else SettingsSearchBox.Clear();
+                    e.Handled = true;
+                    break;
+            }
+        }
+
+        private void MoveSearchSelection(int delta)
+        {
+            int count = SettingsSearchResults.Items.Count;
+            if (!SettingsSearchPopup.IsOpen || count == 0) return;
+            int next = (SettingsSearchResults.SelectedIndex + delta + count) % count;
+            SettingsSearchResults.SelectedIndex = next;
+            SettingsSearchResults.ScrollIntoView(SettingsSearchResults.SelectedItem);
+        }
+
+        private void SettingsSearchResults_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (SettingsSearchResults.SelectedItem is SettingsSearchHit hit)
+                JumpToSearchHit(hit);
+        }
+
+        private void CloseSearchResults()
+        {
+            SettingsSearchPopup.IsOpen = false;
+            SettingsSearchResults.ItemsSource = null;
+        }
+
+        private void JumpToSearchHit(SettingsSearchHit hit)
+        {
+            CloseSearchResults();
+            SettingsTabControl.SelectedItem = hit.Tab;
+            if (hit.Owner != null) hit.Owner.IsExpanded = true;
+
+            // The tab's content is only realized once the switch (and the expand) have laid out, so
+            // BringIntoView has to wait for that pass — otherwise it scrolls an unmeasured element.
+            var target = hit.Target;
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                target.BringIntoView();
+                var flash = new DoubleAnimation(1.0, 0.25, TimeSpan.FromMilliseconds(150))
+                {
+                    AutoReverse = true,
+                    RepeatBehavior = new RepeatBehavior(3),
+                    FillBehavior = FillBehavior.Stop
+                };
+                target.BeginAnimation(OpacityProperty, flash);
+            }), DispatcherPriority.ContextIdle);
         }
 
         private async Task LoadLatestVersionAsync(string currentVersion)
@@ -1368,6 +1639,36 @@ namespace AudioQualityChecker
             ThemeManager.SavePlayOptions();
         }
 
+        private void ViewCrashLogs_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                LocalCrashLogger.EnsureDirectory();
+                System.Diagnostics.Process.Start("explorer.exe", LocalCrashLogger.GetLogDirectory());
+            }
+            catch { }
+        }
+
+        private void ClearCrashLogs_Click(object sender, RoutedEventArgs e)
+        {
+            LocalCrashLogger.ClearAllLogs();
+            UpdateCrashLogStatus();
+        }
+
+        private void UpdateCrashLogStatus()
+        {
+            var (count, totalBytes) = LocalCrashLogger.GetLogStats();
+            if (count == 0)
+                CrashLogStatusText.Text = "No crash logs";
+            else
+            {
+                string size = totalBytes < 1024 * 1024
+                    ? $"{totalBytes / 1024.0:F1} KB"
+                    : $"{totalBytes / (1024.0 * 1024.0):F1} MB";
+                CrashLogStatusText.Text = $"{count} log{(count == 1 ? "" : "s")} ({size})";
+            }
+        }
+
         private void CloseToTray_Changed(object sender, RoutedEventArgs e)
         {
             if (_initializing) return;
@@ -1393,8 +1694,11 @@ namespace AudioQualityChecker
             if (_initializing) return;
 
             ThemeManager.SilenceMinGapEnabled = ChkSilenceMinGap.IsChecked == true;
+            // NumberStyles.Float, NOT .Any: .Any allows thousands separators, and the invariant
+            // group separator is ',' — so a comma-decimal locale user typing "0,5" silently got 5.0
+            // (and "1,5" got 15) with no error, straight into the analyzer.
             if (double.TryParse(TxtSilenceMinGapSec.Text,
-                    System.Globalization.NumberStyles.Any,
+                    System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var gapSec) && gapSec > 0)
             {
                 ThemeManager.SilenceMinGapSeconds = gapSec;
@@ -1403,7 +1707,7 @@ namespace AudioQualityChecker
 
             ThemeManager.SilenceSkipEdgesEnabled = ChkSilenceSkipEdges.IsChecked == true;
             if (double.TryParse(TxtSilenceSkipEdgeSec.Text,
-                    System.Globalization.NumberStyles.Any,
+                    System.Globalization.NumberStyles.Float,
                     System.Globalization.CultureInfo.InvariantCulture, out var edgeSec) && edgeSec > 0)
             {
                 ThemeManager.SilenceSkipEdgeSeconds = edgeSec;
@@ -1447,7 +1751,16 @@ namespace AudioQualityChecker
             }
             else
             {
-                CacheStatusText.Text = "Disabled";
+                long sizeBytes = ScanCacheService.GetCacheSizeBytes();
+                if (sizeBytes > 0)
+                {
+                    string sizeStr = sizeBytes < 1024 * 1024
+                        ? $"{sizeBytes / 1024.0:F1} KB"
+                        : $"{sizeBytes / (1024.0 * 1024.0):F1} MB";
+                    CacheStatusText.Text = sizeStr + " on disk";
+                }
+                else
+                    CacheStatusText.Text = "No cache file";
             }
         }
 
@@ -1489,8 +1802,8 @@ namespace AudioQualityChecker
                 var streamInfo = System.Windows.Application.GetResourceStream(resourceUri);
                 if (streamInfo == null)
                 {
-                    MessageBox.Show("Could not find the AudioAuditor logo in Resources.", "Logo Not Found",
-                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ErrorDialog.ShowWarning("Logo Not Found",
+                        "Could not find the AudioAuditor logo in Resources.", this);
                     return;
                 }
 
@@ -1500,13 +1813,12 @@ namespace AudioQualityChecker
                     source.CopyTo(dest);
                 }
 
-                MessageBox.Show($"Logo saved to:\n{destPath}\n\nUpload this as a Rich Presence asset named \"audioauditor\" on the Discord Developer Portal.",
-                    "Logo Downloaded", MessageBoxButton.OK, MessageBoxImage.Information);
+                ErrorDialog.ShowInfo("Logo Downloaded",
+                    $"Logo saved to:\n{destPath}\n\nUpload this as a Rich Presence asset named \"audioauditor\" on the Discord Developer Portal.", this);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to save logo: {ex.Message}", "Error",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                ErrorDialog.Show("Error", $"Failed to save logo: {ex.Message}", this);
             }
         }
 
@@ -1562,23 +1874,24 @@ namespace AudioQualityChecker
 
         private void ApplyDiscordIdVisibility()
         {
+            // Restore, never clear: the constructor calls this while still populating controls,
+            // and clearing the guard here leaves every later assignment un-guarded.
+            var wasInitializing = _initializing;
+            _initializing = true;
             if (_discordIdVisible)
             {
-                _initializing = true;
                 DiscordAppIdBox.Text = _realDiscordAppId;
                 DiscordAppIdBox.IsReadOnly = false;
                 DiscordEyeSlash.Visibility = Visibility.Collapsed;
-                _initializing = false;
             }
             else
             {
-                _initializing = true;
                 string dots = _realDiscordAppId.Length > 0 ? new string('●', Math.Max(_realDiscordAppId.Length, 20)) : "";
                 DiscordAppIdBox.Text = dots;
                 DiscordAppIdBox.IsReadOnly = true;
                 DiscordEyeSlash.Visibility = Visibility.Visible;
-                _initializing = false;
             }
+            _initializing = wasInitializing;
         }
 
         private void UpdateDiscordStatus()
@@ -1690,6 +2003,15 @@ namespace AudioQualityChecker
             catch { }
         }
 
+        private void Author_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("https://angelmakes.software/") { UseShellExecute = true });
+            }
+            catch { }
+        }
+
         private void Hyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
         {
             try
@@ -1721,19 +2043,56 @@ namespace AudioQualityChecker
         //  F4 — Edit Cache
         // ═══════════════════════════════════════════
 
-        private void EditCache_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// Opens the scan cache in Notepad and folds any edits back in on close.
+        ///
+        /// The cache is stored gzipped, so it can't be handed to a text editor directly any more.
+        /// Instead it's written out as readable JSON to a temp file, and re-imported once Notepad
+        /// exits — which also makes this work properly for the first time: previously an edit only
+        /// stuck until the next in-memory save overwrote the file.
+        /// </summary>
+        private async void EditCache_Click(object sender, RoutedEventArgs e)
         {
-            string path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "AudioAuditor", "scan_cache.json");
-            if (!File.Exists(path))
+            if (ScanCacheService.EntryCount == 0 && ScanCacheService.GetCacheSizeBytes() == 0)
             {
-                MessageBox.Show("Cache file not found. Scan some files first to create it.", "Edit Cache",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                ErrorDialog.ShowInfo("Edit Cache",
+                    "Cache file not found. Scan some files first to create it.", this);
                 return;
             }
-            try { Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { path }, UseShellExecute = true }); }
-            catch (Exception ex) { MessageBox.Show($"Could not open Notepad: {ex.Message}", "Edit Cache"); }
+
+            string temp = Path.Combine(Path.GetTempPath(), "AudioAuditor-scan_cache.json");
+            if (!ScanCacheService.ExportPlainJson(temp))
+            {
+                ErrorDialog.Show("Edit Cache", "Could not read the scan cache.", this);
+                return;
+            }
+
+            try
+            {
+                using var proc = Process.Start(new ProcessStartInfo("notepad.exe")
+                {
+                    ArgumentList = { temp },
+                    UseShellExecute = true
+                });
+
+                if (proc == null) return;
+                await proc.WaitForExitAsync();
+
+                if (!ScanCacheService.ImportPlainJson(temp))
+                {
+                    ErrorDialog.Show("Edit Cache",
+                        "The edited cache was not valid JSON, so it was discarded and the existing cache kept.",
+                        this);
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.Show("Edit Cache", $"Could not open Notepad: {ex.Message}", this);
+            }
+            finally
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+            }
         }
 
         // ═══════════════════════════════════════════
@@ -1742,12 +2101,10 @@ namespace AudioQualityChecker
 
         private void ClearFavorites_Click(object sender, RoutedEventArgs e)
         {
-            var result = MessageBox.Show(
+            bool result = ErrorDialog.Confirm("Clear All Favorites",
                 "This will permanently remove all starred files from your favorites list.\n\nAre you sure?",
-                "Clear All Favorites",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
-            if (result != MessageBoxResult.Yes) return;
+                this, confirmLabel: "Clear all", severity: AlertSeverity.Warning);
+            if (!result) return;
             FavoritesService.ClearAll();
             (Owner as MainWindow)?.RefreshFavoriteSort();
         }
@@ -1759,12 +2116,11 @@ namespace AudioQualityChecker
                 "AudioAuditor", "favorites.json");
             if (!File.Exists(path))
             {
-                MessageBox.Show("No favorites saved yet.", "Favorites",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                ErrorDialog.ShowInfo("Favorites", "No favorites saved yet.", this);
                 return;
             }
             try { Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { path }, UseShellExecute = true }); }
-            catch (Exception ex) { MessageBox.Show($"Could not open Notepad: {ex.Message}", "Favorites"); }
+            catch (Exception ex) { ErrorDialog.Show("Favorites", $"Could not open Notepad: {ex.Message}", this); }
         }
 
         // ═══════════════════════════════════════════

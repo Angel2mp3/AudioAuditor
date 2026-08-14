@@ -21,17 +21,42 @@ namespace AudioQualityChecker
     // Underwater). Extracted verbatim from SettingsWindow.xaml.cs (2026-06-05 split).
     public partial class SettingsWindow
     {
-        private void NpColorCache_Changed(object sender, RoutedEventArgs e)
+        private ColorMatchTarget ReadColorMatchTargets(CheckBox backgrounds, CheckBox buttons, CheckBox text)
+        {
+            var t = ColorMatchTarget.None;
+            if (backgrounds.IsChecked == true) t |= ColorMatchTarget.Backgrounds;
+            if (buttons.IsChecked == true) t |= ColorMatchTarget.ButtonsAndIcons;
+            if (text.IsChecked == true) t |= ColorMatchTarget.Text;
+            return t;
+        }
+
+        private void NpColorMatchTargets_Changed(object sender, RoutedEventArgs e)
         {
             if (_initializing) return;
-            ThemeManager.NpColorCacheEnabled = ChkNpColorCache.IsChecked == true;
+            ThemeManager.NpColorMatchTargets = ReadColorMatchTargets(ChkNpColorMatchBackgrounds, ChkNpColorMatchButtons, ChkNpColorMatchText);
+            ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw) mw.NpRefreshColorMatchFromSettings();
+        }
+
+        private void MainColorMatchTargets_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.MainColorMatchTargets = ReadColorMatchTargets(ChkMainColorMatchBackgrounds, ChkMainColorMatchButtons, ChkMainColorMatchText);
+            ThemeManager.SavePlayOptions();
+            if (Owner is MainWindow mw) mw.MainRefreshColorMatchFromSettings();
+        }
+
+        private void QueueColorMatch_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_initializing) return;
+            ThemeManager.QueueColorMatchEnabled = ChkQueueColorMatch.IsChecked == true;
             ThemeManager.SavePlayOptions();
         }
 
-        private void NpColorCachePersist_Changed(object sender, RoutedEventArgs e)
+        private void SettingsColorMatch_Changed(object sender, RoutedEventArgs e)
         {
             if (_initializing) return;
-            ThemeManager.NpColorCachePersist = ChkNpColorCachePersist.IsChecked == true;
+            ThemeManager.SettingsColorMatchEnabled = ChkSettingsColorMatch.IsChecked == true;
             ThemeManager.SavePlayOptions();
         }
 
@@ -136,7 +161,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpBackgroundCycleSpeed = Math.Clamp(NpBackgroundCycleSpeedSlider.Value, 0.25, 3.0);
             NpBackgroundCycleSpeedLabel.Text = $"{ThemeManager.NpBackgroundCycleSpeed:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -153,7 +178,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpStarDensity = ThemeManager.ClampNpStarDensity(NpStarDensitySlider.Value);
             NpStarDensityLabel.Text = $"{ThemeManager.NpStarDensity:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -172,7 +197,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpShootingStarDensity = ThemeManager.ClampNpShootingStarDensity(NpShootingStarDensitySlider.Value);
             NpShootingStarDensityLabel.Text = $"{ThemeManager.NpShootingStarDensity:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -183,7 +208,7 @@ namespace AudioQualityChecker
             ThemeManager.NpBackgroundAnimationSpeed =
                 ThemeManager.ClampNpBackgroundAnimationSpeed(NpAnimationSpeedSlider.Value);
             NpAnimationSpeedLabel.Text = $"{ThemeManager.NpBackgroundAnimationSpeed:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -193,7 +218,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpRainIntensity = ThemeManager.ClampNpRainIntensity(NpRainIntensitySlider.Value);
             NpRainIntensityLabel.Text = $"{ThemeManager.NpRainIntensity:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -214,7 +239,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpRainLightningAmount = ThemeManager.ClampNpRainLightningAmount(NpRainLightningSlider.Value);
             NpRainLightningLabel.Text = $"{ThemeManager.NpRainLightningAmount:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -224,7 +249,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpSnowDensity = ThemeManager.ClampNpSnowDensity(NpSnowDensitySlider.Value);
             NpSnowDensityLabel.Text = $"{ThemeManager.NpSnowDensity:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -234,7 +259,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpSnowflakeAmount = ThemeManager.ClampNpSnowflakeAmount(NpSnowflakeSlider.Value);
             NpSnowflakeLabel.Text = $"{ThemeManager.NpSnowflakeAmount:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -244,7 +269,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpUnderwaterBubbleDensity = ThemeManager.ClampNpUnderwaterBubbleDensity(NpUnderwaterBubbleSlider.Value);
             NpUnderwaterBubbleLabel.Text = $"{ThemeManager.NpUnderwaterBubbleDensity:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }
@@ -254,7 +279,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.NpUnderwaterCausticIntensity = ThemeManager.ClampNpUnderwaterCausticIntensity(NpUnderwaterCausticSlider.Value);
             NpUnderwaterCausticLabel.Text = $"{ThemeManager.NpUnderwaterCausticIntensity:0.0}x";
-            ThemeManager.SavePlayOptions();
+            ThemeManager.SavePlayOptionsDebounced();
             if (Owner is MainWindow mw)
                 mw.ApplyAnimationsEnabledState();
         }

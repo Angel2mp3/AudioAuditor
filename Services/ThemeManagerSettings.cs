@@ -32,7 +32,6 @@ namespace AudioQualityChecker.Services
 
         public bool EnableBpmDetection => ThemeManager.BpmDetectionEnabled;
         public bool EnableExperimentalAi => ThemeManager.ExperimentalAiDetection;
-        public bool EnableRipQuality => ThemeManager.RipQualityEnabled;
         public bool EnableSilenceDetection => ThemeManager.SilenceDetectionEnabled;
         public bool EnableFakeStereoDetection => ThemeManager.FakeStereoDetectionEnabled;
         public bool EnableDynamicRange => ThemeManager.DynamicRangeEnabled;

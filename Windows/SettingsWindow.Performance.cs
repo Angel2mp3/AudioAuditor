@@ -20,12 +20,6 @@ namespace AudioQualityChecker
         private void InitPerformanceControls()
         {
             ChkBatterySaver.IsChecked = ThemeManager.BatterySaverEnabled;
-            ChkBatteryEntireProgram.IsChecked = ThemeManager.BatterySaverEntireProgram;
-            ChkBatteryNpBackground.IsChecked = ThemeManager.BatterySaverNpBackground;
-            ChkBatteryVisualizer.IsChecked = ThemeManager.BatterySaverVisualizer;
-            ChkBatteryCoverGlow.IsChecked = ThemeManager.BatterySaverCoverGlow;
-            ChkBatteryLyrics.IsChecked = ThemeManager.BatterySaverLyrics;
-            ChkBatteryPlaybar.IsChecked = ThemeManager.BatterySaverPlaybar;
             ChkBatteryKeepVisualizer.IsChecked = ThemeManager.BatterySaverKeepVisualizer;
 
             GpuRenderModeCombo.Items.Clear();
@@ -47,27 +41,12 @@ namespace AudioQualityChecker
             };
             GpuRenderTierText.Text = $"Detected render tier: {tier} — {tierDesc}.";
 
-            UpdateBatterySaverAreasEnabled();
+            UpdateBatterySaverOverrideEnabled();
         }
 
-        // Per-area checkboxes only matter when the master is on and not targeting the
-        // whole program; grey them out otherwise so the UI reflects what's active.
-        private void UpdateBatterySaverAreasEnabled()
-        {
-            bool master = ChkBatterySaver.IsChecked == true;
-            ChkBatteryEntireProgram.IsEnabled = master;
-
-            bool perArea = master && ChkBatteryEntireProgram.IsChecked != true;
-            ChkBatteryNpBackground.IsEnabled = perArea;
-            ChkBatteryVisualizer.IsEnabled = perArea;
-            ChkBatteryCoverGlow.IsEnabled = perArea;
-            ChkBatteryLyrics.IsEnabled = perArea;
-            ChkBatteryPlaybar.IsEnabled = perArea;
-
-            // The visualizer override stays available whenever Battery Saver is on — it exists
-            // specifically to win over "Entire program" mode.
-            ChkBatteryKeepVisualizer.IsEnabled = master;
-        }
+        // The visualizer override only means anything while Battery Saver is on.
+        private void UpdateBatterySaverOverrideEnabled()
+            => ChkBatteryKeepVisualizer.IsEnabled = ChkBatterySaver.IsChecked == true;
 
         private void BatterySaverKeepVisualizer_Changed(object sender, RoutedEventArgs e)
         {
@@ -82,21 +61,7 @@ namespace AudioQualityChecker
             if (_initializing) return;
             ThemeManager.BatterySaverEnabled = ChkBatterySaver.IsChecked == true;
             ThemeManager.SavePlayOptions();
-            UpdateBatterySaverAreasEnabled();
-            ApplyPerformancePolicyToMain();
-        }
-
-        private void BatterySaverArea_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_initializing) return;
-            ThemeManager.BatterySaverEntireProgram = ChkBatteryEntireProgram.IsChecked == true;
-            ThemeManager.BatterySaverNpBackground = ChkBatteryNpBackground.IsChecked == true;
-            ThemeManager.BatterySaverVisualizer = ChkBatteryVisualizer.IsChecked == true;
-            ThemeManager.BatterySaverCoverGlow = ChkBatteryCoverGlow.IsChecked == true;
-            ThemeManager.BatterySaverLyrics = ChkBatteryLyrics.IsChecked == true;
-            ThemeManager.BatterySaverPlaybar = ChkBatteryPlaybar.IsChecked == true;
-            ThemeManager.SavePlayOptions();
-            UpdateBatterySaverAreasEnabled();
+            UpdateBatterySaverOverrideEnabled();
             ApplyPerformancePolicyToMain();
         }
 

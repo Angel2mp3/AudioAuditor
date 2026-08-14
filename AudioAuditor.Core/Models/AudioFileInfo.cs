@@ -41,8 +41,23 @@ namespace AudioQualityChecker.Models
         public long FileSizeBytes { get; set; }
         public int ReportedBitrate { get; set; }
         public int ActualBitrate { get; set; }
+        public int EstimatedSourceBitrate { get; set; }
         public string Extension { get; set; } = "";
         public int EffectiveFrequency { get; set; }
+        /// <summary>
+        /// How steeply the spectrum falls across <see cref="EffectiveFrequency"/>, in dB.
+        /// 0 means no discrete cutoff was found. A large value in a lossless container is the
+        /// signature of an encoder lowpass that survived the conversion.
+        /// </summary>
+        public double CutoffDropDb { get; set; }
+        /// <summary>
+        /// Sample rate the spectrum was actually measured at, which is the decoder's output rate
+        /// and not always <see cref="SampleRate"/> (that one is what the container declares).
+        /// DSD declares its 1-bit rate but decodes to PCM; Opus always decodes at 48 kHz. Comparing
+        /// <see cref="EffectiveFrequency"/> against the wrong Nyquist is meaningless, so anything
+        /// judging the cutoff must use this. 0 means unmeasured — fall back to SampleRate.
+        /// </summary>
+        public int AnalysisSampleRate { get; set; }
         public int Channels { get; set; }
 
         // File dates
@@ -75,7 +90,10 @@ namespace AudioQualityChecker.Models
             set { _hasReplayGain = value; OnPropertyChanged(); OnPropertyChanged(nameof(ReplayGainDisplay)); }
         }
 
-        public int Frequency { get; set; } // dominant/fundamental frequency
+        // NOT a dominant/fundamental frequency despite the name — AudioAnalyzer assigns the
+        // container's sample rate here, so this duplicates SampleRate. Left in place because the
+        // scan cache persists it, but nothing should present it as a pitch measurement.
+        public int Frequency { get; set; }
 
         // Error info for corrupt files
         public string ErrorMessage { get; set; } = "";
@@ -90,6 +108,13 @@ namespace AudioQualityChecker.Models
         public bool IsAiGenerated { get; set; }
         public string AiSource { get; set; } = "";
         public List<string> AiSources { get; set; } = new();
+
+        /// <summary>
+        /// Marker-strength-weighted confidence (0–1) from <c>AiWatermarkDetector</c>. Strong,
+        /// named-service or watermark markers score far higher than generic phrases, so this is
+        /// not the same as "how many markers were found".
+        /// </summary>
+        public double AiConfidence { get; set; }
 
         // Experimental AI detection (spectral analysis)
         public bool ExperimentalAiSuspicious { get; set; }
@@ -123,7 +148,9 @@ namespace AudioQualityChecker.Models
         // Fake stereo detection
         public bool IsFakeStereo { get; set; }
         public string FakeStereoType { get; set; } = ""; // "Mono Duplicate", "Artificially Widened", ""
-        public double StereoCorrelation { get; set; } // 0.0–1.0 (1.0 = identical channels)
+        // Pearson coefficient, -1.0–1.0 (1.0 = identical channels, negative = out of phase).
+        // 0.0 also means "not measured" — there is no separate Has* flag for this one.
+        public double StereoCorrelation { get; set; }
 
         // Cue sheet virtual track
         public bool IsCueVirtualTrack { get; set; }
@@ -140,10 +167,10 @@ namespace AudioQualityChecker.Models
         public double IntegratedLufs { get; set; } // e.g. -14.0 LUFS
         public bool HasLufs { get; set; }
 
-        // Rip/Encode Quality
-        public string RipQuality { get; set; } = ""; // "Good", "Suspect", "Bad"
-        public string RipQualityDetail { get; set; } = ""; // description of issues found
-        public bool HasRipQuality { get; set; }
+        // CD Rip Checker — verdict for the rip log found next to this file (cambia-scored)
+        public int RipLogScore { get; set; } = -1; // 0–100 OPS score; -1 = no log
+        public string RipLogVerdict { get; set; } = ""; // "Perfect", "Good", "Suspect", "Bad"
+        public bool HasRipLog { get; set; }
 
         // Display properties
         public string DateModifiedDisplay => DateModified != default ? DateModified.ToString("yyyy-MM-dd HH:mm") : "-";
@@ -185,7 +212,15 @@ namespace AudioQualityChecker.Models
         public string DynamicRangeDisplay => HasDynamicRange ? $"DR-{DynamicRange:F0}" : "-";
         public string TruePeakDisplay => HasTruePeak ? $"{TruePeakDbTP:F1} dBTP" : "-";
         public string LufsDisplay => HasLufs ? $"{IntegratedLufs:F1} LUFS" : "-";
-        public string RipQualityDisplay => HasRipQuality ? (string.IsNullOrEmpty(RipQualityDetail) ? RipQuality : $"{RipQuality}: {RipQualityDetail}") : "-";
+        public string RipLogDisplay => HasRipLog ? $"{RipLogVerdict} ({RipLogScore})" : "-";
+
+        /// <summary>
+        /// Tooltip clarifying that rip accuracy is judged from the ripper's LOG (via cambia), never
+        /// inferred from the audio itself — so "no log" means "not verified", not "bad rip".
+        /// </summary>
+        public string RipLogTooltip => HasRipLog
+            ? $"Rip log scored {RipLogVerdict} ({RipLogScore}/100) by cambia, read from the EAC / XLD / whipper log."
+            : "No rip log found in this file's folder. Rip accuracy can only be verified from the ripper's log — it is never judged from the audio itself.";
 
         private static string FormatMs(double ms)
         {
@@ -206,33 +241,88 @@ namespace AudioQualityChecker.Models
             }
         }
 
-        /// <summary>Numeric combined confidence (0–100) averaged across whichever detectors are enabled and triggered.</summary>
+        // How far each detector is allowed to move the verdict. These sources are not equally
+        // trustworthy and must not be pooled as if they were: a watermark is verifiable evidence,
+        // the SH Labs model is a trained-but-opaque second opinion, and the spectral checks are
+        // proxies for "sounds over-processed" — which heavily-limited human masters also trip.
+        private const double WatermarkWeight = 1.0;
+        private const double ShLabsWeight = 0.8;
+        private const double SpectralWeight = 0.5;
+
+        /// <summary>
+        /// Combined confidence (0–100) that this file is AI generated.
+        ///
+        /// Detectors are combined with noisy-OR (<c>1 - Π(1 - pᵢ)</c>) rather than averaged.
+        /// Averaging let weak evidence *drag down* strong evidence — a confirmed watermark next to
+        /// a barely-triggered spectral flag scored lower than the watermark alone. Independent
+        /// evidence should reinforce, so adding a signal can now only raise the score.
+        ///
+        /// Because the spectral detector is capped at <see cref="SpectralWeight"/>, heuristics on
+        /// their own can reach "Possible" but never a confident "Yes". Only verifiable evidence or
+        /// the trained model can accuse a file outright. <see cref="SelfCheck"/> pins that down.
+        /// </summary>
         public double AiCombinedConfidence
         {
             get
             {
-                var scores = new List<double>();
+                // SH Labs reports probability_ai_generated directly, so a low value is real
+                // evidence the file is human — not a reason to ignore the result, which is what
+                // the old `Prediction != "Human Made"` string gate did.
+                bool shLabsExonerates = SHLabsScanned
+                    && SHLabsProbability < 35.0
+                    && SHLabsConfidence >= 70.0;
+
+                double notAi = 1.0;
                 if (IsAiGenerated)
                 {
-                    double wmConf = AiSources.Count > 0 ? Math.Min(AiSources.Count * 0.35 + 0.3, 1.0) : 0.5;
-                    scores.Add(wmConf * 100.0);
+                    // Fall back to the reporting threshold for entries cached before AiConfidence
+                    // existed, so a stale row degrades to "weakly detected" rather than to zero.
+                    double conf = AiConfidence > 0 ? AiConfidence : 0.5;
+                    notAi *= 1.0 - Clamp01(conf * WatermarkWeight);
                 }
-                if (ExperimentalAiSuspicious)
-                    scores.Add(ExperimentalAiConfidence * 100.0);
-                if (SHLabsScanned && SHLabsPrediction != "Human Made")
-                    scores.Add(SHLabsProbability);
-                return scores.Count > 0 ? scores.Average() : 0.0;
+                if (SHLabsScanned)
+                    notAi *= 1.0 - Clamp01(SHLabsProbability / 100.0 * ShLabsWeight);
+
+                // A model that actually listened to the file outranks a proxy heuristic, so when it
+                // confidently says "human" the spectral term is dropped rather than fudged down.
+                // Hard watermark evidence is deliberately left untouched by this.
+                if (ExperimentalAiSuspicious && !shLabsExonerates)
+                    notAi *= 1.0 - Clamp01(ExperimentalAiConfidence * SpectralWeight);
+
+                return (1.0 - notAi) * 100.0;
             }
         }
 
-        /// <summary>Single-line display: "Yes (73%)" / "Possible (52%)" / "No" — keeps grid row height compact.</summary>
+        private static double Clamp01(double value) => value < 0 ? 0 : value > 1 ? 1 : value;
+
+        /// <summary>
+        /// True when the verdict rests on verifiable evidence — an embedded watermark, a named
+        /// generator tag, or a C2PA manifest — rather than on heuristics alone. Worth surfacing:
+        /// a spectral guess and a cryptographic watermark used to render identically.
+        /// </summary>
+        public bool HasVerifiableAiEvidence => IsAiGenerated;
+
+        /// <summary>Which tier of evidence the verdict rests on: "watermark", "model", or "heuristic".</summary>
+        public string AiEvidenceKind =>
+            HasVerifiableAiEvidence ? "watermark"
+            : (SHLabsScanned && SHLabsProbability >= 35.0) ? "model"
+            : ExperimentalAiSuspicious ? "heuristic"
+            : "";
+
+        /// <summary>
+        /// Single-line display: "Yes - watermark (86%)" / "Possible - heuristic (52%)" / "No".
+        /// Naming the evidence tier keeps a heuristic guess from reading like proof, and still fits
+        /// one grid line.
+        /// </summary>
         public string AiDisplay
         {
             get
             {
                 string verdict = AiVerdict;
                 if (verdict == "No") return "No";
-                return $"{verdict} ({AiCombinedConfidence:F0}%)";
+                string kind = AiEvidenceKind;
+                string tier = kind.Length > 0 ? $" - {kind}" : "";
+                return $"{verdict}{tier} ({AiCombinedConfidence:F0}%)";
             }
         }
 
@@ -256,9 +346,15 @@ namespace AudioQualityChecker.Models
             {
                 var parts = new List<string>();
                 if (IsAiGenerated)
-                    parts.Add(AiSource);
+                    parts.Add($"Verified marker: {AiSource} ({AiConfidence:P0})");
                 if (ExperimentalAiSuspicious)
-                    parts.Add($"Spectral ({ExperimentalAiConfidence:P0})");
+                    parts.Add($"Heuristic — spectral ({ExperimentalAiConfidence:P0})");
+
+                // Name the checks that fired. "Heuristic — spectral (52%)" tells a user nothing they
+                // can act on or argue with; "Spectral grid peaks (Δf=118 Hz)" does. This tooltip is
+                // the only place the WPF grid surfaces spectral evidence at all.
+                if (ExperimentalAiFlags.Count > 0)
+                    parts.Add($"Spectral checks: {string.Join(", ", ExperimentalAiFlags)}");
                 if (SHLabsScanned && SHLabsPrediction != "Human Made")
                 {
                     string label = !string.IsNullOrEmpty(SHLabsAiType)
@@ -274,11 +370,15 @@ namespace AudioQualityChecker.Models
             }
         }
 
-        /// <summary>True when ANY AI detection model flags this file (standard, experimental, or SH Labs).</summary>
+        /// <summary>
+        /// True when ANY AI detector flagged this file (watermark, spectral, or SH Labs). The
+        /// SH Labs arm keys off the reported probability rather than the prediction string, so an
+        /// unexpected or renamed label from the API can't silently suppress a high-probability hit.
+        /// </summary>
         public bool IsAnyAiDetected =>
             IsAiGenerated
             || ExperimentalAiSuspicious
-            || (SHLabsScanned && SHLabsPrediction != "Human Made");
+            || (SHLabsScanned && SHLabsProbability >= 35.0);
 
         // Favorites
         private bool _isFavorite;
@@ -334,6 +434,18 @@ namespace AudioQualityChecker.Models
             // Empty/null name tells WPF "all bindings on this object may have changed", which
             // refreshes the display-only columns (BpmDisplay, MqaDisplay, …) that don't notify.
             OnPropertyChanged(string.Empty);
+        }
+
+        /// <summary>Stamps the CD Rip Checker verdict for this row and refreshes its grid cell.</summary>
+        public void SetRipLog(int score, string verdict)
+        {
+            RipLogScore = score;
+            RipLogVerdict = verdict ?? "";
+            HasRipLog = true;
+            OnPropertyChanged(nameof(RipLogScore));
+            OnPropertyChanged(nameof(RipLogVerdict));
+            OnPropertyChanged(nameof(HasRipLog));
+            OnPropertyChanged(nameof(RipLogDisplay));
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

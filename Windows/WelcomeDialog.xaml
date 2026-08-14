@@ -63,9 +63,9 @@
                 <Image Source="/Resources/icon.png" Width="40" Height="40" HorizontalAlignment="Center"
                        Margin="0,0,0,10" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <TextBlock x:Name="WelcomeTitle" Text="Welcome to AudioAuditor" FontSize="20" FontWeight="Bold"
-                           FontFamily="Segoe UI" Foreground="#FFEEEEEE" HorizontalAlignment="Center"/>
+                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFEEEEEE" HorizontalAlignment="Center"/>
                 <TextBlock Text="Complete audio analysis, playback, and management for Windows."
-                           FontSize="12" FontFamily="Segoe UI" Foreground="#FF888888"
+                           FontSize="12" FontFamily="{DynamicResource AppFontFamily}" Foreground="#FF888888"
                            HorizontalAlignment="Center" Margin="0,6,0,0"/>
             </StackPanel>
 
@@ -78,7 +78,7 @@
 
                     <!-- Online / Offline choice -->
                     <TextBlock Text="Connection Mode" FontSize="13" FontWeight="SemiBold"
-                               FontFamily="Segoe UI" Foreground="#FFCCCCCC" Margin="0,0,0,8"/>
+                               FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFCCCCCC" Margin="0,0,0,8"/>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -100,15 +100,15 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Online Mode" FontSize="14" FontWeight="Bold"
-                                               FontFamily="Segoe UI" Foreground="#FF88AAFF"/>
+                                               FontFamily="{DynamicResource AppFontFamily}" Foreground="#FF88AAFF"/>
                                     <Border Grid.Column="1" Background="#FF223355" CornerRadius="3"
                                             Padding="5,1" VerticalAlignment="Center">
-                                        <TextBlock Text="★ Recommended" FontSize="10" FontFamily="Segoe UI"
+                                        <TextBlock Text="★ Recommended" FontSize="10" FontFamily="{DynamicResource AppFontFamily}"
                                                    Foreground="#FF88AAFF" FontWeight="SemiBold"/>
                                     </Border>
                                 </Grid>
                                 <TextBlock Text="Full features: lyrics, AI detection, updates, Last.fm, Discord, AcoustID."
-                                           FontSize="11" Foreground="#FF9999BB" FontFamily="Segoe UI"
+                                           FontSize="11" Foreground="#FF9999BB" FontFamily="{DynamicResource AppFontFamily}"
                                            TextWrapping="Wrap" Margin="0,4,0,0"/>
                             </StackPanel>
                         </Border>
@@ -119,23 +119,23 @@
                                 Cursor="Hand" MouseLeftButtonDown="OfflinePanel_Click">
                             <StackPanel Margin="14,12">
                                 <TextBlock Text="Offline Mode" FontSize="14" FontWeight="Bold"
-                                           FontFamily="Segoe UI" Foreground="#FF888888" Margin="0,0,0,4"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FF888888" Margin="0,0,0,4"/>
                                 <TextBlock Text="No network. All local features work: scanning, playback, EQ, metadata, spectrograms."
-                                           FontSize="11" Foreground="#FF777777" FontFamily="Segoe UI"
+                                           FontSize="11" Foreground="#FF777777" FontFamily="{DynamicResource AppFontFamily}"
                                            TextWrapping="Wrap" Margin="0,4,0,0"/>
                             </StackPanel>
                         </Border>
                     </Grid>
 
                     <TextBlock Text="You can switch modes anytime in Settings."
-                               FontSize="11" Foreground="#FF555577" FontFamily="Segoe UI"
+                               FontSize="11" Foreground="#FF555577" FontFamily="{DynamicResource AppFontFamily}"
                                HorizontalAlignment="Center" Margin="0,8,0,0"/>
 
                     <!-- Feature Highlights -->
                     <TextBlock Text="Feature Highlights" FontSize="13" FontWeight="SemiBold"
-                               FontFamily="Segoe UI" Foreground="#FFCCCCCC" Margin="0,16,0,8"/>
+                               FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFCCCCCC" Margin="0,16,0,8"/>
                     <TextBlock Text="Toggle features you want enabled. More enabled analysis options can slow scanning."
-                               FontSize="11" Foreground="#FF888888" FontFamily="Segoe UI"
+                               FontSize="11" Foreground="#FF888888" FontFamily="{DynamicResource AppFontFamily}"
                                Margin="0,0,0,8"/>
 
                     <Grid>
@@ -149,27 +149,27 @@
                         <StackPanel Grid.Column="0">
                             <CheckBox x:Name="ChkSilence" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="Silence Detection" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkFakeStereo" IsChecked="True" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="Fake Stereo Detection" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkDR" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="Dynamic Range (DR Score)" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkTruePeak" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="True Peak" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkLufs" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="LUFS" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkClipping" IsChecked="True" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="Clipping Detection" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                         </StackPanel>
 
@@ -177,27 +177,27 @@
                         <StackPanel Grid.Column="2">
                             <CheckBox x:Name="ChkMqa" IsChecked="True" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="MQA Detection" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkBpm" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="BPM Detection" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkDefaultAi" IsChecked="True" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="AI Detection (Watermark)" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkExperimentalAi" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="Aggressive AI Detection" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
-                            <CheckBox x:Name="ChkRipQuality" IsChecked="False" Margin="0,5" Cursor="Hand">
-                                <TextBlock Text="Rip Quality Check" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                            <CheckBox x:Name="ChkRipLog" IsChecked="False" Margin="0,5" Cursor="Hand">
+                                <TextBlock Text="CD Rip Checker (scan rip logs)" FontSize="12.5" FontWeight="SemiBold"
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                             <CheckBox x:Name="ChkSHLabs" IsChecked="False" Margin="0,5" Cursor="Hand">
                                 <TextBlock Text="SH Labs AI Detection" FontSize="12.5" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI" Foreground="#FFBBBBDD"/>
+                                           FontFamily="{DynamicResource AppFontFamily}" Foreground="#FFBBBBDD"/>
                             </CheckBox>
                         </StackPanel>
                     </Grid>
@@ -211,12 +211,12 @@
                     <Border Height="1" Background="#FF2A2A2A" Margin="0,0,0,8"/>
                     <CheckBox x:Name="ChkStatsCollection" IsChecked="True" Margin="0,3" Cursor="Hand">
                         <TextBlock Text="Collect listening &amp; analysis stats locally (100% offline, optional)"
-                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="#FF9999AA"
+                                   FontSize="11.5" FontFamily="{DynamicResource AppFontFamily}" Foreground="#FF9999AA"
                                    TextWrapping="Wrap"/>
                     </CheckBox>
                     <CheckBox x:Name="ChkCrashLogging" IsChecked="True" Margin="0,3" Cursor="Hand">
                         <TextBlock Text="Save crash logs locally to help diagnose crashes (100% offline, paths redacted — uncheck to disable)"
-                                   FontSize="11.5" FontFamily="Segoe UI" Foreground="#FF9999AA"
+                                   FontSize="11.5" FontFamily="{DynamicResource AppFontFamily}" Foreground="#FF9999AA"
                                    TextWrapping="Wrap"/>
                     </CheckBox>
                 </StackPanel>
@@ -240,7 +240,7 @@
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Button.Template>
-                    <TextBlock Text="Get Started" FontFamily="Segoe UI" FontSize="14"
+                    <TextBlock Text="Get Started" FontFamily="{DynamicResource AppFontFamily}" FontSize="14"
                                FontWeight="SemiBold" Foreground="#FFEEEEFF"/>
                 </Button>
             </Grid>

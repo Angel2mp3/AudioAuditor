@@ -130,6 +130,109 @@ namespace AudioQualityChecker
             NpStopStarfield();
         }
 
+        // ─── Ambient-motion freeze (pause on song-pause / during active resize) ───
+
+        // Applies a particle Forever-animation through a retained clock so it can be paused/resumed
+        // in place. Replaces direct BeginAnimation in the particle builders. New clocks created while
+        // motion is frozen start paused, so a rebuild-while-frozen (e.g. resize) doesn't kick motion.
+        private void NpBeginParticleAnim(System.Windows.Media.Animation.IAnimatable target,
+            System.Windows.DependencyProperty dp, System.Windows.Media.Animation.AnimationTimeline anim)
+        {
+            var clock = anim.CreateClock();
+            target.ApplyAnimationClock(dp, clock);
+            _npParticleClocks.Add(clock);
+            if (_npMotionFrozen) clock.Controller?.Pause();
+        }
+
+        /// <summary>
+        /// Single source of truth for whether ambient NP motion (Color Drift, cover glow, the
+        /// particle field, and the sporadic schedulers) should be running. Frozen — not torn down —
+        /// when playback is paused or the view is being actively resized, so it resumes seamlessly.
+        /// Idempotent; safe to call after the start methods (re)create the timers.
+        /// </summary>
+        private void NpRefreshAmbientMotionState()
+        {
+            if (!_npVisible) return;
+            bool playing = _player?.IsPlaying == true;
+            _npMotionFrozen = !playing || _npResizeActive || _npTransitionFreeze;
+
+            if (_npMotionFrozen)
+            {
+                _npBgAnimTimer?.Stop();
+                _npGlowPulseTimer?.Stop();
+                _npShootingStarTimer?.Stop();
+                _npLightningTimer?.Stop();
+                _npFishTimer?.Stop();
+                _npBackgroundCycleTimer?.Stop();
+                foreach (var clock in _npParticleClocks) clock.Controller?.Pause();
+            }
+            else
+            {
+                // Only resume timers that exist (i.e. their effect is active); null = not running.
+                _npBgAnimTimer?.Start();
+                if (_npGlowPulseTimer != null && _npCoverGlowSize > 0) _npGlowPulseTimer.Start();
+                _npShootingStarTimer?.Start();
+                _npLightningTimer?.Start();
+                _npFishTimer?.Start();
+                _npBackgroundCycleTimer?.Start();
+                foreach (var clock in _npParticleClocks) clock.Controller?.Resume();
+            }
+        }
+
+        // Called from NpUpdatePlayState on a play/pause edge so every pause source (NP button, main
+        // playbar, media keys, mini player) freezes/thaws ambient motion through one path.
+        private void NpSyncAmbientMotionToPlayback()
+        {
+            bool playing = _player?.IsPlaying == true;
+            if (_npAmbientMotionPlaying == playing) return;
+            _npAmbientMotionPlaying = playing;
+            NpRefreshAmbientMotionState();
+        }
+
+        /// <summary>
+        /// Pauses ambient motion (particle clocks + all FX timers) in place without tearing the field
+        /// down or resetting transforms. Used when Now Playing is suspended (hidden / minimized) so it
+        /// resumes seamlessly instead of rebuilding — which was the visible "restart on reopen".
+        /// Safe to call regardless of <c>_npVisible</c>.
+        /// </summary>
+        private void NpFreezeParticleMotion()
+        {
+            _npBgAnimTimer?.Stop();
+            _npGlowPulseTimer?.Stop();
+            _npShootingStarTimer?.Stop();
+            _npLightningTimer?.Stop();
+            _npFishTimer?.Stop();
+            _npBackgroundCycleTimer?.Stop();
+            foreach (var clock in _npParticleClocks) clock.Controller?.Pause();
+            _npMotionFrozen = true;
+        }
+
+        /// <summary>
+        /// Brief, deliberate "settle" pause on a track transition (skip / next / prev / gapless): the
+        /// existing field is frozen for a moment, then thawed — instead of the old per-track rebuild
+        /// that snapped particles back and lagged. No-op when Now Playing isn't visible.
+        /// </summary>
+        private void NpPulseAmbientMotionForTransition()
+        {
+            if (!_npVisible) return;
+            _npTransitionFreeze = true;
+            NpRefreshAmbientMotionState(); // pauses now
+
+            _npTransitionPauseTimer ??= new DispatcherTimer();
+            _npTransitionPauseTimer.Stop();
+            _npTransitionPauseTimer.Interval = TimeSpan.FromMilliseconds(450);
+            _npTransitionPauseTimer.Tick -= NpTransitionPause_Tick;
+            _npTransitionPauseTimer.Tick += NpTransitionPause_Tick;
+            _npTransitionPauseTimer.Start();
+        }
+
+        private void NpTransitionPause_Tick(object? sender, EventArgs e)
+        {
+            _npTransitionPauseTimer?.Stop();
+            _npTransitionFreeze = false;
+            NpRefreshAmbientMotionState(); // thaw (no-op if still paused for playback)
+        }
+
         private void NpBgAnim_Tick(object? sender, EventArgs e)
         {
             if (!AnimationPolicy.IsMotionAllowed(AnimationArea.NpBackground))
@@ -293,8 +396,12 @@ namespace AudioQualityChecker
             bool shootingStars = ThemeManager.NpShootingStarsEnabled;
             string paletteKey = NpGetBackgroundAnimationPaletteKey();
 
+            // NOTE: the album-color palette key is deliberately NOT part of the dirty test. It changes
+            // on every track (album colors), and rebuilding the field per track is exactly the visible
+            // "restart / fly sideways" the user reported. Colors refresh on a real rebuild (mode/size
+            // change or reopen) instead. Per-track recoloring is dropped on purpose; revisit only if
+            // smooth in-place recoloring is ever needed.
             bool dirty = _npBgFxMode != mode ||
-                _npBgFxPaletteKey != paletteKey ||
                 _npStarShapes.Count == 0 ||
                 Math.Abs(_npStarfieldWidth - width) > 1 ||
                 Math.Abs(_npStarfieldHeight - height) > 1 ||
@@ -306,6 +413,7 @@ namespace AudioQualityChecker
             {
                 NpStopParticleTimers();
                 _npStarShapes.Clear();
+                _npParticleClocks.Clear(); // old clocks die with the cleared shapes; drop our refs
                 _npShootingStarPool.Clear();
                 _npLightningOverlay = null;
                 NpStarsCanvas.Children.Clear();
@@ -474,7 +582,7 @@ namespace AudioQualityChecker
                     {
                         Begin = (el, spd, rng) =>
                         {
-                            el.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation
+                            NpBeginParticleAnim(el, UIElement.OpacityProperty, new DoubleAnimation
                             {
                                 From = dimA,
                                 To = brightA,
@@ -490,9 +598,9 @@ namespace AudioQualityChecker
                             double dx = (rng.NextDouble() - 0.5) * driftSpeed;
                             double dy = (rng.NextDouble() - 0.5) * driftSpeed;
                             double durMs = (16000 + rng.Next(14000)) / spd;
-                            t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, dx, TimeSpan.FromMilliseconds(durMs))
+                            NpBeginParticleAnim(t, TranslateTransform.XProperty, new DoubleAnimation(0, dx, TimeSpan.FromMilliseconds(durMs))
                             { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
-                            t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, dy, TimeSpan.FromMilliseconds(durMs * 1.3))
+                            NpBeginParticleAnim(t, TranslateTransform.YProperty, new DoubleAnimation(0, dy, TimeSpan.FromMilliseconds(durMs * 1.3))
                             { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
                         }
                     };
@@ -572,7 +680,7 @@ namespace AudioQualityChecker
                         if (tt == null) return;
                         // Single fall animation per streak (half the animation clocks of the old
                         // two-axis version). The wind slant is baked into the streak geometry (X2).
-                        tt.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, fallPx, TimeSpan.FromMilliseconds(durMs))
+                        NpBeginParticleAnim(tt, TranslateTransform.YProperty, new DoubleAnimation(0, fallPx, TimeSpan.FromMilliseconds(durMs))
                         { BeginTime = TimeSpan.FromMilliseconds(rng.Next((int)Math.Max(1, durMs))), RepeatBehavior = RepeatBehavior.Forever });
                     }
                 };
@@ -640,9 +748,9 @@ namespace AudioQualityChecker
                         var t = ((FrameworkElement)el).RenderTransform as TranslateTransform;
                         if (t == null) return;
                         double durMs = baseMs / Math.Max(0.35, spd);
-                        t.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, fallPx, TimeSpan.FromMilliseconds(durMs))
+                        NpBeginParticleAnim(t, TranslateTransform.YProperty, new DoubleAnimation(0, fallPx, TimeSpan.FromMilliseconds(durMs))
                         { BeginTime = TimeSpan.FromMilliseconds(rng.Next((int)Math.Max(1, durMs))), RepeatBehavior = RepeatBehavior.Forever });
-                        t.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-swayAmp, swayAmp, TimeSpan.FromMilliseconds(swayMs / Math.Max(0.35, spd)))
+                        NpBeginParticleAnim(t, TranslateTransform.XProperty, new DoubleAnimation(-swayAmp, swayAmp, TimeSpan.FromMilliseconds(swayMs / Math.Max(0.35, spd)))
                         { BeginTime = TimeSpan.FromMilliseconds(swayDelay), AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
                     }
                 };
@@ -705,19 +813,19 @@ namespace AudioQualityChecker
                     {
                         double speed = Math.Max(0.35, spd);
                         double fallMs = baseMs / speed;
-                        fall.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, fallPx, TimeSpan.FromMilliseconds(fallMs))
+                        NpBeginParticleAnim(fall, TranslateTransform.YProperty, new DoubleAnimation(0, fallPx, TimeSpan.FromMilliseconds(fallMs))
                         {
                             BeginTime = TimeSpan.FromMilliseconds(rng.Next((int)Math.Max(1, fallMs))),
                             RepeatBehavior = RepeatBehavior.Forever
                         });
-                        sway.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-swayAmp, swayAmp, TimeSpan.FromMilliseconds(swayMs / speed))
+                        NpBeginParticleAnim(sway, TranslateTransform.XProperty, new DoubleAnimation(-swayAmp, swayAmp, TimeSpan.FromMilliseconds(swayMs / speed))
                         {
                             BeginTime = TimeSpan.FromMilliseconds(delayMs),
                             AutoReverse = true,
                             RepeatBehavior = RepeatBehavior.Forever,
                             EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
                         });
-                        rotate.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(spinMs / speed))
+                        NpBeginParticleAnim(rotate, RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromMilliseconds(spinMs / speed))
                         {
                             BeginTime = TimeSpan.FromMilliseconds(delayMs * 0.5),
                             RepeatBehavior = RepeatBehavior.Forever
@@ -974,6 +1082,11 @@ namespace AudioQualityChecker
                 Math.Abs(e.NewSize.Height - _npStarfieldHeight) < NpSizeRebuildThreshold)
                 return;
 
+            // Freeze ambient motion for the duration of an active resize so the field doesn't
+            // visibly reset/restart on every layout pass; the debounce thaws it once size settles.
+            _npResizeActive = true;
+            NpRefreshAmbientMotionState();
+
             _npSizeDebounceTimer?.Stop();
             _npSizeDebounceTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(170) };
             _npSizeDebounceTimer.Tick -= NpSizeDebounce_Tick;
@@ -985,11 +1098,15 @@ namespace AudioQualityChecker
         {
             _npSizeDebounceTimer?.Stop();
             string mode = ThemeManager.NormalizeNpBackgroundAnimationMode(ThemeManager.NpBackgroundAnimationMode);
-            if (mode is not ("Stars" or "Rain" or "Snow" or "Leaves" or "Underwater") || !IsNowPlayingUiActive())
-                return;
-            // NpStartParticleField's own dirty check (size delta) will do the
-            // single rebuild now that the size has settled.
-            NpStartParticleField(mode);
+            if (mode is ("Stars" or "Rain" or "Snow" or "Leaves" or "Underwater") && IsNowPlayingUiActive())
+            {
+                // NpStartParticleField's own dirty check (size delta) will do the
+                // single rebuild now that the size has settled.
+                NpStartParticleField(mode);
+            }
+            // Resize finished — thaw ambient motion (no-op if still paused for playback).
+            _npResizeActive = false;
+            NpRefreshAmbientMotionState();
         }
 
         private void NpStopStarfield()
@@ -1038,6 +1155,7 @@ namespace AudioQualityChecker
             }
             _npLightningOverlay?.BeginAnimation(UIElement.OpacityProperty, null);
             if (_npLightningOverlay != null) _npLightningOverlay.Opacity = 0;
+            _npParticleClocks.Clear();
             _npBgFxMode = "Off";
             _npParticleFieldStarted = false;
             NpStarsCanvas.Opacity = 0;

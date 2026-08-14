@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AudioQualityChecker</RootNamespace>
     <AssemblyName>AudioAuditor.Core</AssemblyName>
-    <Version>1.8.0</Version>
+    <Version>2.0.0</Version>
     <DefineConstants>CROSS_PLATFORM</DefineConstants>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -18,14 +18,32 @@
     <PackageReference Include="NLayer" Version="1.16.0" />
 
     <PackageReference Include="SharpCompress" Version="0.48.0" />
+    <!-- DPAPI. Windows-only at runtime (the API throws elsewhere), which is why
+         SecretProtection only reaches for it on Windows. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
     <PackageReference Include="ClosedXML" Version="0.104.2" />
+    <!-- Discord Rich Presence moved here from the WPF project so Avalonia gets it too;
+         the library itself is platform-agnostic. -->
+    <PackageReference Include="DiscordRichPresence" Version="1.2.1.24" />
   </ItemGroup>
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>AudioAuditor.Core.Tests</_Parameter1>
     </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- Services/SHLabsSecrets.cs holds the proxy HMAC key and is gitignored, but
+       SHLabsDetectionService references it unconditionally. Public clones don't have it, so fall
+       back to an empty key: the build succeeds and proxy requests simply fail signature
+       verification, which is correct for a fork. Fallbacks/ is kept out of the default glob so
+       the two never compile together, and is named to dodge the gitignored build/ pattern. -->
+  <ItemGroup>
+    <Compile Remove="Fallbacks\**" />
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('$(MSBuildProjectDirectory)\Services\SHLabsSecrets.cs')">
+    <Compile Include="Fallbacks\SHLabsSecrets.Fallback.cs" />
   </ItemGroup>
 
 </Project>

@@ -15,7 +15,9 @@ namespace AudioQualityChecker.Services.Scrobbling
     /// </summary>
     public sealed class MalojaScrobbler : IScrobbler
     {
-        private readonly HttpClient _http = new();
+        // See LastFmScrobbler. Maloja is self-hosted, so an unreachable or half-up server is the
+        // common case rather than the exceptional one — the timeout matters more here than anywhere.
+        private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
         private string _serverUrl = "";
         private string _apiKey = "";
         private string _username = "";
@@ -43,7 +45,11 @@ namespace AudioQualityChecker.Services.Scrobbling
         {
             var s = url?.Trim() ?? "";
             while (s.EndsWith("/", StringComparison.Ordinal)) s = s[..^1];
-            return s;
+            return Uri.TryCreate(s, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttps ||
+                    (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
+                ? uri.AbsoluteUri.TrimEnd('/')
+                : "";
         }
 
         private string SubmitUrl => _serverUrl + "/apis/listenbrainz/1/submit-listens";

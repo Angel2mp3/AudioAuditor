@@ -108,7 +108,7 @@ namespace AudioQualityChecker
                         var tt = grp?.Children.OfType<TranslateTransform>().FirstOrDefault();
                         if (tt != null)
                         {
-                            tt.BeginAnimation(TranslateTransform.XProperty,
+                            NpBeginParticleAnim(tt, TranslateTransform.XProperty,
                                 new DoubleAnimation(-driftAmp, driftAmp, TimeSpan.FromMilliseconds(driftMs / Math.Max(0.35, spd)))
                                 {
                                     AutoReverse = true,
@@ -116,7 +116,7 @@ namespace AudioQualityChecker
                                     EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
                                 });
                         }
-                        el.BeginAnimation(UIElement.OpacityProperty,
+                        NpBeginParticleAnim(el, UIElement.OpacityProperty,
                             new DoubleAnimation(holdOpacity * 0.25, holdOpacity, TimeSpan.FromMilliseconds(fadeMs / Math.Max(0.35, spd)))
                             {
                                 BeginTime = TimeSpan.FromMilliseconds(fadeDelay),
@@ -178,13 +178,13 @@ namespace AudioQualityChecker
                     Begin = (el, spd, rng) =>
                     {
                         double durMs = baseMs / Math.Max(0.35, spd);
-                        rise.BeginAnimation(TranslateTransform.YProperty,
+                        NpBeginParticleAnim(rise, TranslateTransform.YProperty,
                             new DoubleAnimation(0, -risePx, TimeSpan.FromMilliseconds(durMs))
                             {
                                 BeginTime = TimeSpan.FromMilliseconds(rng.Next((int)Math.Max(1, durMs))),
                                 RepeatBehavior = RepeatBehavior.Forever
                             });
-                        sway.BeginAnimation(TranslateTransform.XProperty,
+                        NpBeginParticleAnim(sway, TranslateTransform.XProperty,
                             new DoubleAnimation(-swayAmp, swayAmp, TimeSpan.FromMilliseconds(swayMs / Math.Max(0.35, spd)))
                             {
                                 BeginTime = TimeSpan.FromMilliseconds(swayDelay),
@@ -265,7 +265,7 @@ namespace AudioQualityChecker
                         var grp = ((FrameworkElement)el).RenderTransform as TransformGroup;
                         var r = grp?.Children.OfType<RotateTransform>().FirstOrDefault();
                         if (r == null) return;
-                        r.BeginAnimation(RotateTransform.AngleProperty,
+                        NpBeginParticleAnim(r, RotateTransform.AngleProperty,
                             new DoubleAnimation(-swayDeg, swayDeg, TimeSpan.FromMilliseconds(swayMs / Math.Max(0.35, spd)))
                             {
                                 BeginTime = TimeSpan.FromMilliseconds(swayDelay),

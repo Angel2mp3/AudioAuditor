@@ -20,7 +20,10 @@ namespace AudioQualityChecker.Services.Scrobbling
         public virtual string ProfileUrl =>
             string.IsNullOrEmpty(_username) ? "https://www.last.fm" : $"https://www.last.fm/user/{Uri.EscapeDataString(_username)}";
 
-        private readonly HttpClient _http = new();
+        // A bare HttpClient defaults to a 100s timeout, which lets one unreachable endpoint stall a
+        // submission (and the queue behind it) for over a minute. Every other network service here
+        // sets an explicit budget; scrobbles are small POSTs, so 10s is generous.
+        private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
         private string _apiKey = "";
         private string _apiSecret = "";
         private string _sessionKey = "";

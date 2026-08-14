@@ -1,0 +1,141 @@
+<Window x:Class="AudioQualityChecker.SheetMusicResultsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Find Sheet Music"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        Width="440" Height="380"
+        WindowStartupLocation="CenterOwner"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Foreground="{DynamicResource TextPrimary}"
+        MouseLeftButtonDown="Window_MouseDown">
+
+    <Window.Resources>
+        <!-- One template for all four footer buttons — they only differ by caption. -->
+        <Style x:Key="DialogButton" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource ButtonBg}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource ButtonHover}"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource AccentColor}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{DynamicResource GlassFloatingBg}"
+            BorderBrush="{DynamicResource GlassBorderBrush}" BorderThickness="1" CornerRadius="10">
+        <Grid Margin="20,16,20,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="Find Sheet Music" FontSize="16" FontWeight="Bold"
+                       FontFamily="{DynamicResource AppFontFamily}"
+                       Foreground="{DynamicResource TextPrimary}"/>
+
+            <TextBlock x:Name="TrackLabel" Grid.Row="1" Text="" FontSize="13"
+                       FontFamily="{DynamicResource AppFontFamily}"
+                       Foreground="{DynamicResource TextMuted}"
+                       Margin="0,6,0,10" TextWrapping="Wrap"/>
+
+            <Border Grid.Row="2" Background="{DynamicResource GridBg}"
+                    BorderBrush="{DynamicResource BorderColor}" BorderThickness="1" CornerRadius="3">
+                <ListBox x:Name="ResultsList"
+                         Background="Transparent" BorderThickness="0"
+                         Foreground="{DynamicResource TextPrimary}"
+                         FontFamily="{DynamicResource AppFontFamily}" FontSize="12"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         MouseDoubleClick="ResultsList_MouseDoubleClick">
+                    <!-- SheetMusicResult has no ToString override, so without this every row
+                         rendered as its fully-qualified type name. -->
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Title}" TextWrapping="Wrap" Margin="2,3"
+                                       ToolTip="{Binding PageUrl}"/>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            <Setter Property="Padding" Value="6,2"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="bd" Background="Transparent" CornerRadius="3"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="Background"
+                                                        Value="{DynamicResource ButtonHover}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="bd" Property="Background"
+                                                        Value="{DynamicResource AccentColor}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </Border>
+
+            <TextBlock x:Name="StatusText" Grid.Row="3" Text="Searching IMSLP..." FontSize="11"
+                       FontFamily="{DynamicResource AppFontFamily}"
+                       Foreground="{DynamicResource TextMuted}"
+                       Margin="0,8,0,8" TextWrapping="Wrap"/>
+
+            <Grid Grid.Row="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0" x:Name="PrevBtn" Content="&lt; Prev" Margin="0,0,6,0"
+                        Style="{StaticResource DialogButton}" Click="PrevBtn_Click"/>
+                <Button Grid.Column="1" x:Name="NextBtn" Content="Next &gt;"
+                        Style="{StaticResource DialogButton}" Click="NextBtn_Click"/>
+
+                <Button Grid.Column="3" Content="Search the web instead" Margin="0,0,8,0"
+                        Style="{StaticResource DialogButton}" Click="SearchWeb_Click"/>
+                <Button Grid.Column="4" Content="Close" Padding="14,5"
+                        Style="{StaticResource DialogButton}" Click="Close_Click"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

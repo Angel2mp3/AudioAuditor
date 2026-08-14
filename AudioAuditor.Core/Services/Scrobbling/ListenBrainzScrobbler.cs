@@ -12,7 +12,8 @@ namespace AudioQualityChecker.Services.Scrobbling
     {
         private const string ApiUrl = "https://api.listenbrainz.org/1/submit-listens";
 
-        private readonly HttpClient _http = new();
+        // See LastFmScrobbler: the 100s HttpClient default is far too long for a small POST.
+        private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
         private string _userToken = "";
         private string _username = "";
         private bool _enabled;

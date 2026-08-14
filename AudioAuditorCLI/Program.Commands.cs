@@ -17,12 +17,225 @@ namespace AudioQualityChecker.CLI
 {
     partial class Program
     {        // ═══════════════════════════════════════════
+        //  Credits
+        // ═══════════════════════════════════════════
+
+        /// <summary>
+        /// Runs the Core self-checks — smoke-tests the tag/rename/junk/AI-scoring logic against the
+        /// build in hand. Listed in --help because the changelog tells users to run it to confirm a
+        /// portable download isn't corrupt.
+        /// </summary>
+        /// <summary>
+        /// Guards <see cref="RejoinArgs"/>, which reassembles an unquoted path the shell already
+        /// split on spaces. Two ways it has broken: a "-" inside "Artist - Title.flac" read as a
+        /// flag, and a real flag swallowed into the path. Both fail silently as "Path not found",
+        /// so the check uses real temp files — the rejoin logic probes the filesystem.
+        /// </summary>
+        static void ArgParsingSelfCheck()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "aa-argcheck-" + Guid.NewGuid().ToString("N"));
+            string nested = Path.Combine(dir, "My Music");
+            Directory.CreateDirectory(nested);
+            string file = Path.Combine(nested, "Some Artist - A Title.flac");
+            File.WriteAllBytes(file, Array.Empty<byte>());
+
+            try
+            {
+                // How the shell hands over `analyze <dir>\My Music\Some Artist - A Title.flac -v`.
+                var rejoined = RejoinArgs(new[]
+                {
+                    "analyze", Path.Combine(dir, "My"), "Music\\Some", "Artist", "-", "A", "Title.flac", "-v"
+                });
+
+                if (rejoined.Length != 3)
+                    throw new Exception($"expected command + path + flag, got [{string.Join("] [", rejoined)}]");
+                if (rejoined[1] != file)
+                    throw new Exception($"path not reassembled: '{rejoined[1]}' != '{file}'");
+                if (rejoined[2] != "-v")
+                    throw new Exception($"flag lost: '{rejoined[2]}'");
+
+                if (!IsFlagToken("--json") || !IsFlagToken("-o"))
+                    throw new Exception("real flags must be recognised");
+                if (IsFlagToken("-") || IsFlagToken("--"))
+                    throw new Exception("a bare dash is path text, not a flag");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, recursive: true); } catch { /* temp cleanup is best-effort */ }
+            }
+        }
+
+        static int RunSelfCheck(string[] args)
+        {
+            var failures = new List<string>(AudioQualityChecker.Services.SelfChecks.RunAll());
+            try { ArgParsingSelfCheck(); }
+            catch (Exception ex) { failures.Add($"ArgParsing: {ex.Message}"); }
+
+            if (failures.Count == 0)
+            {
+                SetColor(ConsoleColor.Green);
+                Console.WriteLine("  All self-checks passed.");
+                ResetColor();
+                return 0;
+            }
+
+            SetColor(ConsoleColor.Red);
+            Console.WriteLine($"  {failures.Count} self-check failure(s):");
+            ResetColor();
+            foreach (var failure in failures)
+                Console.WriteLine($"    {failure}");
+            return 1;
+        }
+
+        static int RunCredits(string[] args)
+        {
+            if (args.Contains("--help"))
+            {
+                Console.WriteLine(@"
+USAGE: audioauditorcli credits
+
+Show the open-source libraries AudioAuditor ships with, their authors,
+licenses, and project links. Covers the whole project, so some entries
+(WPF, Discord Rich Presence) belong to the Windows GUI rather than the CLI.
+");
+                return 0;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("  Open-Source Credits & Licenses");
+            Console.WriteLine("  ───────────────────────────────");
+            Console.WriteLine("  Everything AudioAuditor ships, across both the CLI and the Windows GUI.");
+            Console.WriteLine();
+
+            foreach (var credit in OpenSourceCredit.All)
+            {
+                SetColor(ConsoleColor.Cyan);
+                Console.Write($"  {credit.Name}");
+                ResetColor();
+                SetColor(ConsoleColor.DarkGray);
+                Console.WriteLine($"  [{credit.License}]");
+                ResetColor();
+                Console.WriteLine($"    by {credit.By}");
+                Console.WriteLine($"    {credit.Usage}");
+                SetColor(ConsoleColor.DarkCyan);
+                Console.WriteLine($"    {credit.Url}");
+                ResetColor();
+                Console.WriteLine();
+            }
+
+            return 0;
+        }
+
+        // ═══════════════════════════════════════════
+        //  CD Rip Checker (checklog)
+        // ═══════════════════════════════════════════
+
+        static async Task<int> RunCheckLog(string[] args)
+        {
+            var paths = args.Where(a => !a.StartsWith("-")).ToArray();
+            if (paths.Length == 0 || args.Contains("--help"))
+            {
+                Console.WriteLine(@"
+USAGE: audioauditorcli checklog <log-or-folder> [options]
+
+Score a CD ripping log (EAC / XLD / whipper) using the bundled cambia checker.
+Pass a .log file, or a folder to check the first rip log found inside it.
+
+OPTIONS:
+  --json            Output the raw cambia JSON instead of a formatted report
+  --help            Show this help
+
+ALIASES: riplog
+");
+                return 0;
+            }
+
+            if (!RipLogCheckService.IsAvailable)
+                return Error("cambia was not found. It ships with the Windows build under third-party/cambia/.");
+
+            bool json = args.Contains("--json");
+            int worst = 0;
+
+            foreach (var path in paths)
+            {
+                RipLogResult? result;
+                if (Directory.Exists(path))
+                    result = await RipLogCheckService.CheckFolderAsync(path);
+                else
+                    result = await RipLogCheckService.CheckLogAsync(path);
+
+                if (result == null)
+                {
+                    SetColor(ConsoleColor.DarkGray);
+                    Console.WriteLine($"  {path}: no rip log found");
+                    ResetColor();
+                    continue;
+                }
+
+                if (json)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                    continue;
+                }
+
+                Console.WriteLine();
+                Console.WriteLine($"  {Path.GetFileName(result.SourceFile)}");
+                if (!result.IsParsed)
+                {
+                    SetColor(ConsoleColor.Yellow);
+                    Console.WriteLine($"    {result.Error}");
+                    ResetColor();
+                    worst = Math.Max(worst, 1);
+                    continue;
+                }
+
+                var verdictColor = result.Verdict switch
+                {
+                    "Perfect" or "Good" => ConsoleColor.Green,
+                    "Suspect" => ConsoleColor.Yellow,
+                    _ => ConsoleColor.Red
+                };
+                SetColor(verdictColor);
+                Console.WriteLine($"    Score: {result.Score}/100  ({result.Verdict})");
+                ResetColor();
+                if (!string.IsNullOrEmpty(result.Ripper))
+                    Console.WriteLine($"    Ripper: {result.Ripper} {result.RipperVersion}".TrimEnd());
+                if (!string.IsNullOrEmpty(result.Drive))
+                    Console.WriteLine($"    Drive: {result.Drive}");
+
+                if (result.Deductions.Count > 0)
+                {
+                    Console.WriteLine("    Findings:");
+                    foreach (var d in result.Deductions)
+                    {
+                        var c = d.Class switch
+                        {
+                            "Critical" or "Bad" => ConsoleColor.Red,
+                            "Neutral" => ConsoleColor.DarkGray,
+                            _ => ConsoleColor.Green
+                        };
+                        SetColor(c);
+                        Console.WriteLine($"      [{d.Score}] {d.Message}");
+                        ResetColor();
+                    }
+                }
+
+                if (result.Verdict == "Bad") worst = Math.Max(worst, 1);
+            }
+
+            return worst;
+        }
+
+        // ═══════════════════════════════════════════
         //  Analyze
         // ═══════════════════════════════════════════
 
         static async Task<int> RunAnalyze(string[] args)
         {
-            if (args.Length == 0 || args.Contains("--help"))
+            // `find . -name '*.flac' | audioauditorcli analyze` — a documented startup tip — passes
+            // no arguments at all; the paths arrive on stdin and are read further down. Printing
+            // help for an empty argv made that unreachable and left the stdin reader as dead code.
+            if ((args.Length == 0 && !Console.IsInputRedirected) || args.Contains("--help"))
             {
                 Console.WriteLine(@"
 USAGE: audioauditorcli analyze <path> [options]
@@ -38,6 +251,9 @@ OPTIONS:
   --recursive, -r   Recurse into subdirectories (default for folders)
   --no-recursive    Do not recurse into subdirectories
   --json            Output results as JSON
+  --rip-log         Score the EAC/XLD/whipper log next to the files and show a Rip Log
+                    column. One cambia run per folder; silently skipped if cambia
+                    isn't bundled with this build.
 
   UTILITY:
   --no-config       Ignore saved CLI config defaults for this run
@@ -49,14 +265,13 @@ OPTIONS:
 
   ANALYSIS TOGGLES:
   Fast scan is the default. Full-track detectors are opt-in.
-  --thorough        Enable silence, DR, true peak, LUFS, BPM, and rip quality analysis
+  --thorough        Enable silence, DR, true peak, LUFS, and BPM analysis
   --silence         Enable silence detection
   --dynamic-range   Enable dynamic range measurement
   --true-peak       Enable true peak measurement
   --lufs            Enable integrated LUFS measurement
   --bpm             Enable BPM detection
   --experimental-ai Enable experimental spectral AI detection (off by default)
-  --rip-quality     Enable rip/encode quality detection (off by default)
   --shlabs          Enable SH Labs AI detection (uses quota: 15/day, 100/month)
   --no-ai           Disable the standard AI watermark detector
   --always-full     Always run a full-file pass even when detectors are off
@@ -175,6 +390,8 @@ OPTIONS:
                 }
             }
 
+            await BackfillRipLogsAsync(results, cf.RipLog, json);
+
             // Apply status filter
             if (cf.StatusFilter != null)
             {
@@ -196,6 +413,35 @@ OPTIONS:
             ScanCacheService.SaveToDisk();
             CleanupTempDirs();
             return 0;
+        }
+
+        /// <summary>
+        /// Stamps the CD rip-log verdict onto every scanned row, mirroring the GUI's post-scan
+        /// backfill (Windows/Refresh.cs BackfillRipLogsAsync). cambia is run once per distinct
+        /// folder, not once per file. No-op when the flag is off or the binary isn't bundled.
+        /// </summary>
+        static async Task BackfillRipLogsAsync(IReadOnlyList<AudioFileInfo> results, bool enabled, bool quiet)
+        {
+            if (!enabled || results.Count == 0) return;
+            if (!RipLogCheckService.IsAvailable)
+            {
+                if (!quiet) Console.WriteLine("Rip log: cambia not found — skipping (--rip-log).");
+                return;
+            }
+
+            var folders = results.Select(r => r.FolderPath)
+                                 .Where(s => !string.IsNullOrEmpty(s))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                                 .ToList();
+            if (folders.Count == 0) return;
+
+            Dictionary<string, RipLogResult> map;
+            try { map = await RipLogCheckService.CheckFoldersAsync(folders); }
+            catch { return; }
+
+            foreach (var r in results)
+                if (!string.IsNullOrEmpty(r.FolderPath) && map.TryGetValue(r.FolderPath, out var res))
+                    r.SetRipLog(res.Score, res.Verdict);
         }
 
         // ═══════════════════════════════════════════
@@ -220,6 +466,8 @@ OPTIONS:
   --memory <mb>         Memory limit in MB (512-8192), or preset: auto, low, medium, high, max
   --recursive, -r       Recurse into subdirectories (default)
   --no-recursive        Do not recurse
+  --rip-log             Fill the Rip Log Score column from the EAC/XLD/whipper log
+                        next to the files (one cambia run per folder)
 ");
                 return 0;
             }
@@ -273,6 +521,8 @@ OPTIONS:
             Console.WriteLine($"Analyzing {files.Count} file(s)...");
             var results = AnalyzeFiles(files, CreateAnalysisSettingsSnapshot(), cf.Threads, true, cf.MemoryLimitMb, out _);
 
+            BackfillRipLogsAsync(results, cf.RipLog, quiet: false).GetAwaiter().GetResult();
+
             // Apply status filter
             if (cf.StatusFilter != null)
             {
@@ -287,7 +537,7 @@ OPTIONS:
             try
             {
                 string outputPath = Path.GetFullPath(output);
-                ExportService.Export(results, outputPath);
+                ExportService.Export(results, outputPath, columns: null, format: format);
                 Console.WriteLine($"Exported {results.Count} results to {outputPath}");
             }
             catch (Exception ex)
@@ -319,6 +569,14 @@ ACTIONS:
   enrich <path> [options]  Auto-fill missing tags from online sources (MusicBrainz, Cover Art)
   remove-cover <file>      Remove embedded album cover
   strip <file>             Remove ALL metadata tags
+  backups <path>           List the .audioauditor-backup-* copies taken before past edits
+  restore <path> [options] Put a file back from its backup copy
+
+RESTORE OPTIONS:
+  --newest                 Restore the most recent backup (default: the oldest, i.e. the original)
+  --dry-run                Show what would be restored without writing
+  -y, --yes                Restore without the confirmation prompt
+  --no-recursive           Do not recurse into subfolders
 
 ENRICH OPTIONS:
   --all                    Overwrite existing tags too (default: missing only)
@@ -326,7 +584,21 @@ ENRICH OPTIONS:
   --api-key <key>          AcoustID API key
   --dry-run                Preview proposed changes without writing
   -y, --yes                Apply without the confirmation prompt
+  --include-uncertain      Also write matches that need review (default: high-confidence only)
+  --backup                 Copy each file to a .audioauditor-backup-* sibling before writing
   --no-recursive           Do not recurse into subfolders
+
+  Extra metadata sources (MusicBrainz + iTunes + Cover Art Archive are always on):
+  --deezer                 Also search Deezer (no key needed)
+  --theaudiodb             Also search TheAudioDB (no key needed)
+  --discogs-token <t>      Enable Discogs with this token (env: DISCOGS_TOKEN)
+  --fanarttv-key <k>       Enable fanart.tv with this key (env: FANARTTV_API_KEY)
+
+  Streaming link -> Comment field (opt-in, appended without clobbering an existing comment):
+  --streaming-link <p>     Platform: deezer, apple, spotify, or youtube
+  --spotify-id <id>        Spotify Client ID     (env: SPOTIFY_CLIENT_ID)
+  --spotify-secret <s>     Spotify Client Secret (env: SPOTIFY_CLIENT_SECRET)
+  --youtube-key <k>        YouTube Data API key  (env: YOUTUBE_API_KEY)
 
 SET OPTIONS:
   --title <text>           Set title
@@ -360,6 +632,11 @@ SET OPTIONS:
             // 'enrich' supports a file or a folder and runs online lookups (async).
             if (action == "enrich")
                 return RunMetadataEnrich(filePath, args.Skip(2).ToArray());
+
+            // 'backups' and 'restore' take a file or a folder: a bad batch edit is the case that
+            // needs undoing, and that is never one file.
+            if (action is "backups" or "restore")
+                return RunMetadataRestore(filePath, action == "backups", args.Skip(2).ToArray());
 
             // For 'set' action, support directories for batch editing
             if (action == "set" && Directory.Exists(filePath))
@@ -600,14 +877,13 @@ USAGE: audioauditorcli info <file> [options]
 Show detailed analysis for a single audio file.
 
 OPTIONS:
-  --thorough         Enable silence, DR, true peak, LUFS, BPM, and rip quality analysis
+  --thorough         Enable silence, DR, true peak, LUFS, and BPM analysis
   --silence          Enable silence detection
   --dynamic-range    Enable dynamic range measurement
   --true-peak        Enable true peak measurement
   --lufs             Enable LUFS measurement
   --bpm              Enable BPM detection
   --experimental-ai  Enable experimental spectral AI detection
-  --rip-quality      Enable rip/encode quality detection
   --shlabs           Enable SH Labs AI detection
   --no-ai            Disable the standard AI watermark detector
   --always-full      Always run a full-file pass even when detectors are off
@@ -697,9 +973,6 @@ OPTIONS:
                 case "--experimental-ai":
                     settings = settings with { EnableExperimentalAi = true };
                     return true;
-                case "--rip-quality":
-                    settings = settings with { EnableRipQuality = true };
-                    return true;
                 case "--shlabs":
                     enableShLabs = true;
                     return true;
@@ -725,8 +998,7 @@ OPTIONS:
                         EnableDynamicRange = true,
                         EnableTruePeak = true,
                         EnableLufs = true,
-                        EnableBpmDetection = true,
-                        EnableRipQuality = true
+                        EnableBpmDetection = true
                     };
                     return true;
                 case "--no-clipping":
@@ -768,7 +1040,6 @@ OPTIONS:
                         EnableDynamicRange = false,
                         EnableTruePeak = false,
                         EnableLufs = false,
-                        EnableRipQuality = false,
                         EnableSilenceDetection = false,
                         EnableBpmDetection = false
                     };

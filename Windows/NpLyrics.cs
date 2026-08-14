@@ -381,7 +381,7 @@ namespace AudioQualityChecker
 
             // If translate was just enabled, kick off translation
             if (_npTranslateEnabled && _npTranslatedLines == null && !_npTranslationInProgress)
-                _ = NpTranslateLyricsAsync();
+                NpTranslateLyricsAsync().Observe(nameof(NpTranslateLyricsAsync));
 
             NpApplyFocusedLyricsEffects();
         }
@@ -929,7 +929,7 @@ namespace AudioQualityChecker
                     return;
                 }
                 NpTranslateSettingsBtn.Visibility = Visibility.Visible;
-                _ = NpTranslateLyricsAsync();
+                NpTranslateLyricsAsync().Observe(nameof(NpTranslateLyricsAsync));
             }
             else
             {
@@ -1190,7 +1190,7 @@ namespace AudioQualityChecker
                         return;
                     }
                     _npTranslatedLines = null;
-                    _ = NpTranslateLyricsAsync();
+                    NpTranslateLyricsAsync().Observe(nameof(NpTranslateLyricsAsync));
                 }
             }
         }
@@ -1208,7 +1208,7 @@ namespace AudioQualityChecker
                         return;
                     }
                     _npTranslatedLines = null;
-                    _ = NpTranslateLyricsAsync();
+                    NpTranslateLyricsAsync().Observe(nameof(NpTranslateLyricsAsync));
                 }
             }
         }
@@ -1397,7 +1397,7 @@ namespace AudioQualityChecker
 
             if (string.IsNullOrWhiteSpace(artist) && string.IsNullOrWhiteSpace(title)) return;
 
-            NpSongSpecs.Text = "Searching lyrics...";
+            NpShowSongInfoStatus("Searching lyrics...");
 
             try
             {
@@ -1413,8 +1413,7 @@ namespace AudioQualityChecker
                         NpBuildLyricLines();
                         NpResyncLyricsAfterRebuild();
                         NpUpdateSaveLyricsButton();
-                        // Restore specs text
-                        NpSongSpecs.Text = "";
+                        // Restore the info row (NpSetTrack rebuilds it and hides the status line).
                         if (_player.CurrentFile != null)
                         {
                             var cf = _files.FirstOrDefault(f =>
@@ -1424,11 +1423,11 @@ namespace AudioQualityChecker
                         return;
                     }
                 }
-                NpSongSpecs.Text = "No lyrics found";
+                NpShowSongInfoStatus("No lyrics found");
             }
             catch
             {
-                NpSongSpecs.Text = "Search failed";
+                NpShowSongInfoStatus("Search failed");
             }
         }
 
