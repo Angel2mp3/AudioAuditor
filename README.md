@@ -14,18 +14,10 @@
   <img src="https://img.shields.io/badge/.NET-8.0-512BD5?style=round" alt=".NET 8"/>
   <img src="https://img.shields.io/badge/License-Apache%202.0-89276f?style=round" alt="Apache 2.0 License"/>
   <br/>
-  <a href="https://github.com/Angel2mp3/AudioAuditor/releases">
-    <img src="https://img.shields.io/github/downloads/Angel2mp3/AudioAuditor/total?style=round&color=4F50C6" alt="Downloads"/>
-  </a>
-  <a href="https://ko-fi.com/angelsoftware">
-    <img src="https://img.shields.io/badge/Support-Ko--fi-f26b2e?style=round&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/>
-  </a>
-  <a href="https://github.com/Angel2mp3/AudioAuditor">
-    <img src="https://img.shields.io/badge/GUI-Windows-0060BF?style=round" alt="GUI: Windows"/>
-  </a>
-  <a href="https://github.com/Angel2mp3/AudioAuditor/tree/main/AudioAuditorCLI">
-    <img src="https://img.shields.io/badge/CLI-Windows%20%2B%20Linux-1B1C31?style=round" alt="CLI: Windows + Linux"/>
-  </a>
+  <a href="https://github.com/Angel2mp3/AudioAuditor/releases"><img src="https://img.shields.io/github/downloads/Angel2mp3/AudioAuditor/total?style=round&color=4F50C6" alt="Downloads"/></a>
+  <a href="https://ko-fi.com/angelsoftware"><img src="https://img.shields.io/badge/Support-Ko--fi-f26b2e?style=round&logo=ko-fi&logoColor=white" alt="Support on Ko-fi"/></a>
+  <a href="https://github.com/Angel2mp3/AudioAuditor"><img src="https://img.shields.io/badge/GUI-Windows-0060BF?style=round" alt="GUI: Windows"/></a>
+  <a href="https://github.com/Angel2mp3/AudioAuditor/tree/main/AudioAuditorCLI"><img src="https://img.shields.io/badge/CLI-Windows%20%2B%20Linux-1B1C31?style=round" alt="CLI: Windows + Linux"/></a>
 </p>
 
 <br/>
@@ -35,15 +27,9 @@
 </p>
 
 <p align="center">
-  <a href="https://www.softpedia.com/get/Multimedia/Audio/AudioAuditor.shtml" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.shields.io/badge/Softpedia-5%2F5%20editorial%20review-00205C?style=round" alt="Softpedia — 5/5 Editorial Review"/>
-  </a>
-  <a href="https://bedroomproducersblog.com/2026/07/28/audioauditor/" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.shields.io/badge/BPB-Featured%20article-33373A?style=round" alt="Bedroom Producers Blog — Featured Article"/>
-  </a>
-  <a href="https://fmhy.net/audio#spectrum-analyzers" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.shields.io/badge/FMHY-Curated%20listing-6B65AE?style=round" alt="FMHY — Curated Listing"/>
-  </a>
+  <a href="https://www.softpedia.com/get/Multimedia/Audio/AudioAuditor.shtml" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/Softpedia-5%2F5%20editorial%20review-00205C?style=round" alt="Softpedia — 5/5 Editorial Review"/></a>
+  <a href="https://bedroomproducersblog.com/2026/07/28/audioauditor/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/BPB-Featured%20article-33373A?style=round" alt="Bedroom Producers Blog — Featured Article"/></a>
+  <a href="https://fmhy.net/audio#spectrum-analyzers" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/FMHY-Curated%20listing-6B65AE?style=round" alt="FMHY — Curated Listing"/></a>
 </p>
 
 <p align="center">
